@@ -252,7 +252,7 @@
       key.position.set(0.3, 1.3, 0.5); key.castShadow = true; key.shadow.mapSize.set(2048, 2048); key.shadow.bias = -0.0004; key.shadow.radius = 4;
       key.target.position.set(0, 0, 0); this.scene.add(key); this.scene.add(key.target);
       const fill = new T.DirectionalLight(0xc9d8ff, 0.35); fill.position.set(-0.8, 0.6, -0.4); this.scene.add(fill);
-      this.flameLight = new T.PointLight(0xff8a2a, 0, 0.6, 2); this.flameLight.position.set(0, 0.02, 0); this.scene.add(this.flameLight);
+      this.flameLight = new T.PointLight(0xff8a2a, 0, 0.6, 2); this.flameLight.position.set(0, 0.022, 0); this.scene.add(this.flameLight);
       this.key = key;
     }
     _buildKitchen() {
@@ -266,20 +266,35 @@
       const g = new T.Group(); this.stove = g;
       const top = new T.Mesh(new T.BoxGeometry(1.2, 0.03, 0.7), new T.MeshStandardMaterial({ color: 0x15130f, roughness: 0.3, metalness: 0.7 }));
       top.position.y = -0.015; top.receiveShadow = true; g.add(top);
-      // grate
+      // pan support (grate): cast-iron frame with radial fingers and feet; the pan rests on top
+      // of it, ~3.5 cm above the stovetop, with the burner flames underneath in the gap.
+      this.PAN_Y = 0.036;               // underside of the pan
+      const grateTop = this.PAN_Y - 0.0005, barH = 0.010, barY = grateTop - barH / 2;
       const grateMat = new T.MeshStandardMaterial({ color: 0x141312, roughness: 0.9, metalness: 0.3 });
+      const grate = new T.Group(); g.add(grate);
+      const addBox = (w, h, d, x, y, z, ry) => { const m = new T.Mesh(new T.BoxGeometry(w, h, d), grateMat); m.position.set(x, y, z); m.rotation.y = ry || 0; m.castShadow = true; m.receiveShadow = true; grate.add(m); return m; };
+      // outer square frame with feet at the corners
+      const half = 0.175;
+      addBox(2 * half + 0.012, barH, 0.012, 0, barY, half); addBox(2 * half + 0.012, barH, 0.012, 0, barY, -half);
+      addBox(0.012, barH, 2 * half + 0.012, half, barY, 0); addBox(0.012, barH, 2 * half + 0.012, -half, barY, 0);
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) addBox(0.014, grateTop, 0.014, sx * half, grateTop / 2, sz * half);
+      // radial fingers from the frame in toward the burner, ending on an inner ring
       for (let i = 0; i < 4; i++) {
-        const bar = new T.Mesh(new T.BoxGeometry(0.30, 0.012, 0.012), grateMat);
-        bar.position.y = 0.012; bar.rotation.y = (i * Math.PI) / 4; bar.castShadow = true; g.add(bar);
+        const a = Math.PI / 4 + (i * Math.PI) / 2; const r0 = 0.06, r1 = half * Math.SQRT2 - 0.004; const L = r1 - r0;
+        addBox(L, barH, 0.012, Math.cos(a) * (r0 + L / 2), barY, Math.sin(a) * (r0 + L / 2), -a);
       }
-      const ring = new T.Mesh(new T.TorusGeometry(0.15, 0.007, 8, 48), grateMat); ring.rotation.x = Math.PI / 2; ring.position.y = 0.012; g.add(ring);
-      // burner cap & flame ring
-      const cap = new T.Mesh(new T.CylinderGeometry(0.045, 0.05, 0.012, 32), new T.MeshStandardMaterial({ color: 0x1b1b1b, roughness: 0.7 })); cap.position.y = 0.004; g.add(cap);
+      const ring = new T.Mesh(new T.TorusGeometry(0.06, 0.006, 8, 40), grateMat); ring.rotation.x = Math.PI / 2; ring.position.y = barY; ring.castShadow = true; grate.add(ring);
+      // burner: base, cap, ports, and a ring of flames whose tips stay below the pan
+      const base = new T.Mesh(new T.CylinderGeometry(0.052, 0.056, 0.008, 40), new T.MeshStandardMaterial({ color: 0x2a2724, roughness: 0.6, metalness: 0.5 })); base.position.y = 0.004; g.add(base);
+      const cap = new T.Mesh(new T.CylinderGeometry(0.038, 0.048, 0.006, 40), new T.MeshStandardMaterial({ color: 0x1b1b1b, roughness: 0.7 })); cap.position.y = 0.011; cap.castShadow = true; g.add(cap);
+      this.flameBaseY = 0.009; this.flameMaxLen = this.PAN_Y - this.flameBaseY - 0.003;
       this.flames = [];
       const fm = new T.MeshBasicMaterial({ color: 0x3f7cff, transparent: true, opacity: 0.85, blending: T.AdditiveBlending, depthWrite: false });
-      for (let i = 0; i < 24; i++) {
-        const f = new T.Mesh(new T.ConeGeometry(0.006, 0.03, 6), fm.clone());
-        const a = (i / 24) * Math.PI * 2; f.position.set(Math.cos(a) * 0.05, 0.012, Math.sin(a) * 0.05); f.rotation.z = -Math.cos(a) * 0.5; f.rotation.x = Math.sin(a) * 0.5;
+      const coneGeo = new T.ConeGeometry(0.0055, 1, 6); coneGeo.translate(0, 0.5, 0); // unit-length cone, base at the origin
+      for (let i = 0; i < 28; i++) {
+        const f = new T.Mesh(coneGeo, fm.clone());
+        const a = (i / 28) * Math.PI * 2; f.position.set(Math.cos(a) * 0.047, this.flameBaseY, Math.sin(a) * 0.047);
+        f.userData.a = a; f.rotation.order = 'YXZ'; f.rotation.y = -a; f.rotation.z = -0.55; // lean outward from the port
         g.add(f); this.flames.push(f);
       }
       // pan
@@ -305,11 +320,11 @@
       const geo = buildLathe(prof, 96, Math.PI * 2);
       const look = { castiron: [0x17140f, 0.55, 0.5], carbonsteel: [0x23201d, 0.4, 0.8], stainless: [0x9ea2a6, 0.25, 0.95], nonstick: [0x141416, 0.35, 0.3] }[id] || [0x17140f, 0.55, 0.5];
       this.panMat.color.setHex(look[0]); this.panMat.roughness = look[1]; this.panMat.metalness = look[2];
-      const m = new T.Mesh(geo, this.panMat); m.castShadow = true; m.receiveShadow = true; m.position.y = 0.02;
+      const m = new T.Mesh(geo, this.panMat); m.castShadow = true; m.receiveShadow = true; m.position.y = this.PAN_Y;
       const handle = new T.Mesh(new T.BoxGeometry(0.22, 0.014, 0.03), this.panMat); handle.position.set(-R - 0.14, 0.045, 0); handle.rotation.z = -0.15; handle.castShadow = true; m.add(handle);
       if (id === 'nonstick' || id === 'stainless') { const grip = new T.Mesh(new T.BoxGeometry(0.16, 0.02, 0.034), new T.MeshStandardMaterial({ color: 0x111111, roughness: 0.8 })); grip.position.set(-R - 0.17, 0.045, 0); grip.rotation.z = -0.15; m.add(grip); }
       this.panMesh = m; this.panGroup.add(m);
-      this.panFloorY = 0.024; this.panR = R * 0.95;
+      this.panFloorY = this.PAN_Y + 0.004; this.panR = R * 0.95;
       this.oil.position.y = this.panFloorY + 0.0007; this.fond.position.y = this.panFloorY + 0.0004;
     }
     _buildBoard() {
@@ -502,7 +517,10 @@
       const knob = state.stove.knob / 10;
       for (let i = 0; i < this.flames.length; i++) {
         const f = this.flames[i]; const fl = 0.6 + 0.4 * Math.sin(this.clock * 37 + i * 1.7) * Math.random();
-        f.visible = knob > 0.02; f.scale.set(0.6 + knob, 0.3 + knob * 1.5 * fl, 0.6 + knob);
+        // flame length grows with the knob but is capped so the tips never reach the pan underside
+        const len = this.flameMaxLen * clamp((0.25 + 0.75 * knob) * (0.85 + 0.15 * fl), 0, 1);
+        f.visible = knob > 0.02; f.scale.set(0.7 + 0.6 * knob, len, 0.7 + 0.6 * knob);
+        f.rotation.z = -0.35 - 0.35 * knob; // higher gas: flames fan further outward
         f.material.color.setRGB(0.25 + knob * 0.3, 0.45, 1.0);
         f.material.opacity = 0.5 + 0.4 * knob;
       }
@@ -630,7 +648,7 @@
     reset(mode) {
       this.zoomStack = null;
       if (mode === 'board') { this.goal = { target: new T.Vector3(0, 0.01, 0), azimuth: -0.7, polar: 0.95, dist: 0.36 }; }
-      else { this.goal = { target: new T.Vector3(0, 0.03, 0), azimuth: -1.0, polar: 1.0, dist: 0.6 }; }
+      else { this.goal = { target: new T.Vector3(0, 0.045, 0), azimuth: -1.0, polar: 1.0, dist: 0.6 }; }
     }
     preset(name) {
       this.zoomStack = null;
