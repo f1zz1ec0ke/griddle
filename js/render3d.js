@@ -273,8 +273,16 @@
       this.panMat = new T.MeshStandardMaterial({ color: 0x2b2725, roughness: 0.55, metalness: 0.7 });
       this.oilMat = new T.MeshPhysicalMaterial({ color: 0xb07a20, transparent: true, opacity: 0.3, roughness: 0.04, metalness: 0.15, clearcoat: 1, clearcoatRoughness: 0.03, depthWrite: false });
       this.oil = new T.Mesh(new T.CircleGeometry(1, 64), this.oilMat); this.oil.rotation.x = -Math.PI / 2; this.oil.position.y = 0.0007; this.oil.receiveShadow = true; this.panGroup.add(this.oil);
-      this.fondMat = new T.MeshStandardMaterial({ color: 0x4a2a12, transparent: true, opacity: 0, roughness: 0.9 });
-      this.fond = new T.Mesh(new T.CircleGeometry(1, 48), this.fondMat); this.fond.rotation.x = -Math.PI / 2; this.fond.position.y = 0.0004; this.panGroup.add(this.fond);
+      // residue on the pan floor: a canvas texture of fond blotches, burnt specks, welded cheese
+      // and meat bits, and a carbon haze, painted from the pan state (positions come from a fixed
+      // random sequence so dirt accumulates in place rather than jumping around)
+      this.dirtCv = document.createElement('canvas'); this.dirtCv.width = this.dirtCv.height = 512;
+      this.dirtTex = new T.CanvasTexture(this.dirtCv);
+      this.fondMat = new T.MeshStandardMaterial({ map: this.dirtTex, transparent: true, opacity: 1, roughness: 0.85, depthWrite: false });
+      this.fond = new T.Mesh(new T.CircleGeometry(1, 64), this.fondMat); this.fond.rotation.x = -Math.PI / 2; this.fond.position.y = 0.0004; this.panGroup.add(this.fond);
+      let seed = 12345; const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+      this.dirtSpots = []; for (let i = 0; i < 1400; i++) { const a = rnd() * Math.PI * 2, rr = Math.sqrt(rnd()); this.dirtSpots.push({ x: 256 + 236 * rr * Math.cos(a), y: 256 + 236 * rr * Math.sin(a), s: 0.5 + rnd(), e: 0.6 + rnd() * 0.8, rot: rnd() * 3 }); }
+      this.dirtSig = ''; this.dirtClock = 0;
       // fat that overflowed the pan, spreading on the stovetop
       this.spillMat = new T.MeshPhysicalMaterial({ color: 0x8a5a16, transparent: true, opacity: 0.7, roughness: 0.05, clearcoat: 1, depthWrite: false });
       this.spill = new T.Mesh(new T.CircleGeometry(1, 64), this.spillMat); this.spill.rotation.x = -Math.PI / 2; this.spill.visible = false; g.add(this.spill);
@@ -646,11 +654,9 @@
         }
       }
       if (flare > 0) { this.flameLight.color.setHex(0xff7a10); this.flameLight.intensity = 3 * (0.7 + 0.3 * Math.random()); }
-      const fondT = clamp(pan.fond / 0.02, 0, 1);
+      const fondT = clamp((pan.fond + pan.fondBurnt + (pan.carbon || 0)) / 0.003, 0, 1);
       this.oilMat.color.setRGB(lerp(0.85, 0.6, Math.max(deep, fondT * 0.5)), lerp(0.63, 0.34, Math.max(deep, fondT)), lerp(0.22, 0.07, deep));
-      const fondA = clamp(pan.fond / 0.015, 0, 0.7) + clamp(pan.fondBurnt / 0.01, 0, 0.3);
-      this.fond.visible = fondA > 0.02; this.fondMat.opacity = fondA; this.fond.scale.set(this.panR * 0.7, this.panR * 0.7, 1);
-      this.fondMat.color.setRGB(0.3 - 0.25 * clamp(pan.fondBurnt / 0.01, 0, 1), 0.17 - 0.12 * clamp(pan.fondBurnt / 0.01, 0, 1), 0.07);
+      this._paintDirt(pan, dt);
 
       // patty placement
       if (p && this.patty !== p) this.setPatty(p);
@@ -756,6 +762,35 @@
 
       this.controls.update(dt);
       this.renderer.render(this.scene, this.camera);
+    }
+    _paintDirt(pan, dt) {
+      this.dirtClock += dt;
+      const n = (v, u) => Math.min(this.dirtSpots.length, Math.round(v / u));
+      const counts = [n(pan.fond, 0.00002), n(pan.fondBurnt, 0.000015), n(pan.cheeseBits || 0, 0.00015), n(pan.meatBits || 0, 0.0001), clamp((pan.carbon || 0) / 0.004, 0, 1)];
+      const sig = counts.map((c) => c.toFixed(2)).join('|') + (pan.T > 180 ? 'h' : 'c');
+      const any = counts[0] + counts[1] + counts[2] + counts[3] > 0 || counts[4] > 0.01;
+      this.fond.visible = any; this.fond.scale.set(this.panR, this.panR, 1);
+      if (!any || sig === this.dirtSig || this.dirtClock < 0.5) return;
+      this.dirtSig = sig; this.dirtClock = 0;
+      const c = this.dirtCv.getContext('2d'); c.clearRect(0, 0, 512, 512);
+      const blob = (sp, r, fill) => { c.save(); c.translate(sp.x, sp.y); c.rotate(sp.rot); c.scale(1, sp.e); c.fillStyle = fill; c.beginPath(); c.arc(0, 0, r * sp.s, 0, Math.PI * 2); c.fill(); c.restore(); };
+      // carbon: a smooth darkening plus fine black speckle
+      if (counts[4] > 0.01) {
+        c.fillStyle = `rgba(22,15,10,${0.4 * counts[4]})`; c.beginPath(); c.arc(256, 256, 250, 0, Math.PI * 2); c.fill();
+        for (let i = 0; i < 700 * counts[4]; i++) blob(this.dirtSpots[(i * 7) % this.dirtSpots.length], 2.5, `rgba(8,6,4,${0.7 * counts[4]})`);
+      }
+      // fond: brown translucent blotches where juice boiled down
+      for (let i = 0; i < counts[0]; i++) blob(this.dirtSpots[i], 4.5, 'rgba(92,50,14,0.5)');
+      // burnt fond: small near-black specks
+      for (let i = 0; i < counts[1]; i++) blob(this.dirtSpots[(i * 3 + 1) % this.dirtSpots.length], 2.8, 'rgba(20,12,7,0.85)');
+      // welded cheese: yellow-brown patches that darken while the pan is hot
+      const cheeseCol = pan.T > 180 ? 'rgba(140,85,25,0.85)' : 'rgba(200,150,55,0.85)';
+      for (let i = 0; i < counts[2]; i++) blob(this.dirtSpots[(i * 5 + 2) % this.dirtSpots.length], 7, cheeseCol);
+      // torn crust: dark red-brown flecks
+      for (let i = 0; i < counts[3]; i++) blob(this.dirtSpots[(i * 11 + 3) % this.dirtSpots.length], 3.5, 'rgba(70,32,18,0.9)');
+      // a little grain so nothing reads as a clean disc
+      c.globalCompositeOperation = 'multiply'; c.globalAlpha = 0.25; c.drawImage(this.noiseFine, 0, 0, 512, 512); c.globalAlpha = 1; c.globalCompositeOperation = 'source-over';
+      this.dirtTex.needsUpdate = true;
     }
     _addStain(x, z, s) {
       if (this.stains.length > 150) { const old = this.stains.shift(); this.stainGroup.remove(old); }

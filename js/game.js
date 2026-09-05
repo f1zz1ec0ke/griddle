@@ -126,6 +126,8 @@
       $('btn-lid').onclick = () => { P.toggleLid(s.state); $('btn-lid').textContent = s.state.lid ? 'Lid off' : 'Lid on'; };
       $('btn-cheese').onclick = () => { P.addCheese(s.state); s.refreshButtons(); };
       $('btn-baste').onclick = () => { P.basteButter(s.state); s.audio.hiss(0.4); };
+      $('btn-wash').onclick = () => { if (P.washPan(s.state)) { s.audio.hiss(Math.min(1, (s.state.pan.T - 30) / 100)); s.vp.forceTex = true; } };
+      $('btn-wipe').onclick = () => { P.wipeStove(s.state); s.vp.clearStains(); };
       $('btn-remove').onclick = () => {
         P.removePatty(s.state);
         // Burner off with the patty: the pan (and its fat) cools in real time while the meat rests.
@@ -171,6 +173,7 @@
       for (const id of ['btn-flip', 'btn-press', 'btn-smash', 'btn-lid', 'btn-cheese', 'btn-baste', 'btn-remove']) $(id).disabled = !placed;
       if (placed) { const raw = this.patty.dM.reduce((a, b) => a + b, 0) / this.patty.N < 0.25; $('btn-smash').disabled = !raw || this.patty.h < 0.006; $('btn-cheese').disabled = this.patty.cheeses.length >= 24; }
       $('btn-probe').disabled = !(placed || this.phase === 'rest');
+      $('btn-wash').disabled = !on || placed; $('btn-wipe').disabled = !on;
       $('e-stove').disabled = $('e-pan').disabled = this.placed;
     }
     // ------------------------------------------------------------ loop

@@ -203,3 +203,21 @@ test('flipping a cheeseburger puts the cheese under the meat: it fries, welds, a
   assert.ok(s.pan.fond > fondBefore, 'some fried cheese should weld to the pan');
   assert.ok(p.cheeses.length === 0 || p.cheeses[0].fried);
 });
+
+test('the pan dirties over tickets, dirt costs contact and crust, and washing resets it', () => {
+  const s = P.createState({ pan: 'stainless' }); preheat(s, 220);
+  const p = std(); P.placePatty(s, p); cookHeld(s, 15, 220); P.flipPatty(s); // tears: meat bits
+  P.addCheese(s); cookHeld(s, 60, 220); P.flipPatty(s); cookHeld(s, 240, 220); P.flipPatty(s); // cheese welds
+  P.removePatty(s);
+  assert.ok(s.pan.meatBits > 0 && s.pan.cheeseBits > 0, `meat=${s.pan.meatBits} cheese=${s.pan.cheeseBits}`);
+  P.setKnob(s, 9); cookFor(s, 600); // left on the heat: residue carbonises
+  assert.ok(s.pan.carbon > 0.0005, `carbon=${s.pan.carbon}`);
+  const dirt = P.panDirt(s.pan); assert.ok(dirt > 0.002, `dirt=${dirt}`);
+  const p2 = std(); P.placePatty(s, p2); assert.ok(p2.dirtAtStart > 0.002);
+  cookHeld(s, 5, 220); assert.ok(s.diag.hc < 400, `hc=${s.diag.hc}`);
+  assert.equal(P.washPan(s), false, 'cannot wash with the patty in the pan');
+  P.removePatty(s); s.where = 'cut';
+  const hot = s.pan.T, carbonBefore = s.pan.carbon; assert.equal(P.washPan(s), true);
+  assert.ok(s.pan.T < hot * 0.5, `T=${s.pan.T} from ${hot}`); assert.ok(s.pan.fond === 0 && s.pan.cheeseBits === 0 && s.pan.water > 0);
+  assert.ok(s.pan.carbon < carbonBefore * 0.1, `carbon ${carbonBefore} -> ${s.pan.carbon}`);
+});

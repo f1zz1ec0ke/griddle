@@ -189,6 +189,7 @@
       pan: {
         ...pan, T: Tamb, C: pan.mass * pan.cp,
         oil: 0, oilKind: 'none', oilSmoke: Infinity, water: 0, fond: 0, fondBurnt: 0,
+        cheeseBits: 0, meatBits: 0, carbon: 0, washes: 0,
         floorR: pan.diam / 2 * 0.95, oilDepth: 0, overflow: 0, flare: 0,
         smoke: 0, smokeOil: 0, smokeChar: 0, smokeFond: 0,
         lostSpatter: 0, area: Math.PI * (pan.diam / 2) ** 2,
@@ -216,7 +217,7 @@
     const m = grams / 1000;
     s.pan.water += m * f.water;
     s.pan.oil += m * (1 - f.water - f.solids);
-    s.pan.fond += m * f.solids * 5;
+    s.pan.fond += m * f.solids;
     s.pan.oilKind = s.pan.oil > 0 && s.pan.oilKind !== 'none' && s.pan.oilKind !== kind ? 'mixed' : kind;
     s.pan.oilSmoke = Math.min(s.pan.oilSmoke, f.smoke);
     const depth = s.pan.oil / 920 / (Math.PI * s.pan.floorR ** 2);
@@ -227,6 +228,8 @@
     s.patty = patty; s.where = 'pan';
     patty.faceDown.stuck = true;
     patty.timeDown = 0;
+    patty.dirtAtStart = panDirt(s.pan);
+    if (patty.dirtAtStart > 0.002) logEvent(s, 'The pan is dirty: burnt bits from earlier tickets will stick to this crust and smoke.', 'warn');
     logEvent(s, `Patty (${(patty.massKg0 * 1000).toFixed(0)} g, ${(patty.h0 * 1000).toFixed(0)} mm, ${(patty.fatFrac * 100).toFixed(0)} % fat, ${patty.T0.toFixed(0)} °C) hits the pan at ${s.pan.T.toFixed(0)} °C.`, 'action');
     if (s.pan.T < 120) logEvent(s, 'The pan is not hot enough. The meat will steam in its own juice and go grey.', 'warn');
   }
@@ -241,7 +244,7 @@
       torn = clamp(0.25 * (1 - fd.brown / relThr), 0.03, 0.25);
       const m0 = nodeMass(p, 0);
       for (const k of ['w', 'fs', 'fl', 'fr', 'p']) { p.lostStuck += p[k][0] * torn; p[k][0] *= (1 - torn); }
-      s.pan.fond += m0 * torn * 20;
+      s.pan.fond += m0 * torn * 0.3; s.pan.meatBits += m0 * torn;
       fd.torn += torn;
       logEvent(s, `It stuck. ${(torn * 100).toFixed(0)} % of the bottom face tore off and stayed welded to the pan. Meat releases on its own once the crust sets.`, 'warn');
     }
@@ -262,7 +265,7 @@
     {
       const up = p.cheeses, under = p.cheeseUnder; let welded = 0;
       for (const ch of under) { const sk = ch.skirt; const lossF = sk ? clamp(0.3 * sk.dry + 0.6 * sk.char, 0, 0.9) : 0; const lost = ch.mass * lossF; ch.mass -= lost; welded += lost; ch.fried = true; }
-      s.pan.fond += welded * 4;
+      s.pan.fond += welded * 0.3; s.pan.cheeseBits += welded;
       p.cheeses = under.filter((ch) => ch.mass > 0.003);
       p.cheeseUnder = up;
       if (up.length) logEvent(s, `Flipped with ${up.length} slice${up.length > 1 ? 's' : ''} of cheese on it. The cheese is now between the meat and the pan: it will fry, weld to the metal, and insulate that side.`, 'warn');
@@ -688,7 +691,7 @@
       m = Math.min(m, maxByEnergy);
       pan.water -= m; evapPan = m / dt;
       qLoss += (m * C.Lvap) / dt;
-      pan.fond += m * 0.3; // dissolved solids left behind
+      pan.fond += m * 0.05; // dissolved solids (≈5 % of the juice) left behind
     }
     // oil level: a film until the floor is covered, then a rising pool; past the rim it spills
     const floorA = Math.PI * pan.floorR * pan.floorR;
@@ -704,14 +707,21 @@
       }
     }
     if (pan.flare > 0) { pan.flare = Math.max(0, pan.flare - dt); qLoss -= 1500; } // the fire heats the pan too
-    // fond browns then burns
+    // fond browns then burns; burnt residue, welded bits and over-smoked oil polymerise into carbon
     if (pan.fond > 0 && pan.T > 180) { const b = pan.fond * 0.01 * clamp((pan.T - 180) / 60, 0, 2) * dt; pan.fond -= b; pan.fondBurnt += b; }
+    if (pan.T > 200) {
+      const hot = clamp((pan.T - 200) / 80, 0, 2);
+      const c1 = pan.fondBurnt * 0.004 * hot * dt; pan.fondBurnt -= c1;
+      const c2 = pan.cheeseBits * 0.003 * hot * dt; pan.cheeseBits -= c2;
+      const c3 = pan.meatBits * 0.003 * hot * dt; pan.meatBits -= c3;
+      pan.carbon += 0.25 * (c1 + c2 + c3); // most of the mass leaves as smoke; a quarter stays as carbon
+    }
     // oil oxidises / smokes away slowly above smoke point
     const smokeT = Math.min(pan.oilSmoke, pan.oilKind === 'none' || pan.oilKind === 'tallow' || pan.oilKind === 'mixed' ? TALLOW_SMOKE : Infinity);
     const overSmoke = pan.oil > 1e-5 ? Math.max(0, pan.T - Math.min(smokeT, TALLOW_SMOKE + (pan.oilSmoke === Infinity ? 0 : 0))) : 0;
     pan.smokeOil = pan.oil > 1e-5 ? clamp(overSmoke / 40, 0, 2) * clamp(pan.oil / 0.004, 0.2, 1) : 0;
-    if (overSmoke > 0) pan.oil = Math.max(0, pan.oil - pan.oil * 0.0004 * (overSmoke / 40) * dt);
-    pan.smokeFond = clamp(pan.fondBurnt / 0.01, 0, 1) * clamp((pan.T - 200) / 60, 0, 1.5);
+    if (overSmoke > 0) { const gone = pan.oil * 0.0004 * (overSmoke / 40) * dt; pan.oil = Math.max(0, pan.oil - gone); pan.carbon += gone * 0.15; }
+    pan.smokeFond = clamp(pan.fondBurnt / 0.002, 0, 1) * clamp((pan.T - 200) / 60, 0, 1.5) + clamp((pan.cheeseBits + pan.meatBits) / 0.01, 0, 1) * clamp((pan.T - 180) / 60, 0, 1) * 0.6;
 
     // ---- patty
     let pr = null;
@@ -720,7 +730,7 @@
       const submerged = pan.oilDepth > p.h * (1 + 0.28 * p.dome) + 0.0005;
       if (submerged && !s._ms.deepfry) { s._ms.deepfry = true; logEvent(s, `The patty is under ${(pan.oilDepth * 1000).toFixed(0)} mm of fat: this is deep frying now. Both faces will brown.`, 'info'); }
       const bc = {
-        bottom: { type: 'pan', T: pan.T, oil: pan.oil, hcMul: pan.hcMul, release: pan.release },
+        bottom: { type: 'pan', T: pan.T, oil: pan.oil, hcMul: pan.hcMul * (1 - 0.3 * clamp(pan.carbon / 0.004, 0, 1)), release: pan.release + 0.2 * clamp(pan.carbon / 0.004, 0, 1) },
         top: submerged ? { h: C.hOil, T: pan.T, RH: 1, oil: true } : { h: s.lid ? C.hLid : C.hAirTop, T: s.lidAirT, RH: s.lid ? clamp((s.lidAirT - 60) / 40, s.env.RH, 1) : s.env.RH },
         side: { T: Tamb + 0.25 * (pan.T - Tamb), oilDepth: pan.oilDepth, oilT: pan.T },
       };
@@ -813,6 +823,20 @@
     }
   }
 
+  function panDirt(pan) { return pan.fond + pan.fondBurnt + pan.cheeseBits + pan.meatBits + pan.carbon; }
+  /** Wash the pan under the tap: everything loose goes, a hot pan gets a thermal shock and comes out
+   *  wet and lukewarm. Cast iron keeps some of its carbon (that's seasoning); steel scrubs clean. */
+  function washPan(s) {
+    const pan = s.pan; if (s.patty && s.where === 'pan') return false;
+    const wasHot = pan.T > 90, dirt = panDirt(pan);
+    pan.oil = 0; pan.oilKind = 'none'; pan.oilSmoke = Infinity; pan.oilDepth = 0; pan.fond = 0; pan.fondBurnt = 0; pan.cheeseBits = 0; pan.meatBits = 0; pan.flare = 0;
+    pan.carbon *= pan.id === 'castiron' || pan.id === 'carbonsteel' ? 0.55 : 0.02;
+    pan.T = 34 + (pan.T - 34) * 0.12; pan.water = 0.003; pan.washes++;
+    logEvent(s, `Washed the pan${dirt > 0.002 ? ' (it needed it)' : ''}. It is wet and at ${pan.T.toFixed(0)} °C now.` + (wasHot && pan.id === 'castiron' ? ' Cold water on hot cast iron: it survived, but that is how they crack.' : wasHot ? ' The steam off it was impressive.' : ''), wasHot ? 'warn' : 'action');
+    return true;
+  }
+  function wipeStove(s) { s.pan.overflow = 0; s._stoveWiped = (s._stoveWiped || 0) + 1; logEvent(s, 'Wiped the stovetop down.', 'action'); }
+
   // ---------------------------------------------------------------- results
   function fmtTime(t) { const m = Math.floor(t / 60), s = Math.floor(t % 60); return `${m}:${String(s).padStart(2, '0')}`; }
 
@@ -833,7 +857,8 @@
       sc *= 0.7 + 0.3 * f.crisp;
       return clamp(sc, 0, 1);
     };
-    const crustScore = 20 * 0.5 * (faceScore(p.faceDown) + faceScore(p.faceUp));
+    const dirtPen = clamp((p.dirtAtStart || 0) / 0.006, 0, 0.35);
+    const crustScore = 20 * 0.5 * (faceScore(p.faceDown) + faceScore(p.faceUp)) * (1 - dirtPen);
     // 3. juiciness (15) — water retained relative to what that doneness inevitably costs
     let wNow = 0; for (let i = 0; i < p.N; i++) wNow += p.w[i];
     const wRet = wNow / (p.w0 * p.N);
@@ -861,6 +886,7 @@
     else if (Math.min(p.faceDown.brown, p.faceUp.brown) < 1) notes.push('One face browned, the other did not — uneven timing between sides.');
     else if (Math.min(p.faceDown.brown, p.faceUp.brown) > 2.2) notes.push('Proper crust on both faces.');
     if (p.faceDown.torn + p.faceUp.torn > 0) notes.push('Some crust tore off and stayed on the pan when it was moved before releasing.');
+    if ((p.dirtAtStart || 0) > 0.002) notes.push('The pan was dirty going in: old burnt bits stuck to the crust and tasted of the last ticket. Wash it.');
     if (p.cheeses.concat(p.cheeseUnder).some((c) => c.fried)) notes.push('It went into the pan cheese-side down at some point: fried cheese where a crust should be, and some of it left behind on the metal.');
     else if (p.cheeses.some((c) => c.skirt && c.skirt.char > 0.3)) notes.push('Burnt cheese lace welded to the edges: acrid.');
     else if (p.cheeses.some((c) => c.skirt && c.skirt.brown > 2)) notes.push('A crisp golden cheese skirt around the edge. Good.');
@@ -884,7 +910,7 @@
   return {
     C, BLENDS, PANS, FATS, STOVES, DONENESS,
     makePatty, createState, step, stepPatty,
-    setKnob, addFat, placePatty, flipPatty, pressPatty, removePatty, addCheese, toggleLid, basteButter,
+    setKnob, addFat, placePatty, flipPatty, pressPatty, removePatty, addCheese, toggleLid, basteButter, washPan, wipeStove, panDirt,
     evaluate, donenessOf, centerT, pattyMass, nodeMass, waterHolding, fmtTime, clamp, lerp, rhoVapSat, logEvent,
   };
 });
