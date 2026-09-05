@@ -109,7 +109,13 @@
       $('btn-lid').onclick = () => { P.toggleLid(s.state); $('btn-lid').textContent = s.state.lid ? 'Lid off' : 'Lid on'; };
       $('btn-cheese').onclick = () => { P.addCheese(s.state); s.refreshButtons(); };
       $('btn-baste').onclick = () => { P.basteButter(s.state); s.audio.hiss(0.4); };
-      $('btn-remove').onclick = () => { P.removePatty(s.state); s.setPhase('rest'); s.refreshButtons(); };
+      $('btn-remove').onclick = () => {
+        P.removePatty(s.state);
+        // Burner off with the patty: the pan (and its fat) cools in real time while the meat rests.
+        P.setKnob(s.state, 0); $('knob').value = 0; $('knob-v').textContent = '0';
+        P.logEvent(s.state, `Burner off. The pan is at ${s.state.pan.T.toFixed(0)} °C and will take a while to come down.`, 'action');
+        s.setPhase('rest'); s.refreshButtons();
+      };
       $('btn-probe').onclick = () => { s.probe.inserted = !s.probe.inserted; s.probe.settle = 0; s.probe.reading = null; $('btn-probe').textContent = s.probe.inserted ? 'Pull probe' : 'Insert probe'; };
       $('probe-depth').addEventListener('input', (e) => { s.probe.depth = Number(e.target.value) / 100; $('probe-depth-v').textContent = e.target.value + ' %'; });
       $('btn-cut').onclick = () => { s.state.where = 'cut'; s.setPhase('result'); };
