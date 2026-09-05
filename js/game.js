@@ -242,8 +242,8 @@
     // ------------------------------------------------------------ results
     showResults() {
       const st = this.state; const r = P.evaluate(st, this.order.id); this.result = r;
-      this.vp.setCutaway(true); $('btn-cutaway').classList.add('on');
       this.vp.controls.preset('serve'); $('inspector').hidden = true;
+      this.vp.setCutaway(true); $('btn-cutaway').classList.add('on');
       const target = r.target;
       $('r-score').textContent = r.total;
       $('r-verdict').textContent = r.dist === 0 ? `${target.label}. Exactly what they asked for.` : r.peak < target.lo ? `Under: ${r.got.label.toLowerCase()} when they wanted ${target.label.toLowerCase()}.` : `Over: ${r.got.label.toLowerCase()} when they wanted ${target.label.toLowerCase()}.`;

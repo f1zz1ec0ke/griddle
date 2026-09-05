@@ -81,7 +81,8 @@
 
   // ------------------------------------------------------------ geometry
   /** Surface of revolution with hard corners and band UVs. profile: [{r,y,v,hard}] */
-  function buildLathe(profile, segs, phiLen) {
+  function buildLathe(profile, segs, phiLen, phiStart) {
+    phiStart = phiStart || 0;
     const pts = [];
     const same = (a, b) => a && b && Math.abs(a.r - b.r) < 1e-7 && Math.abs(a.y - b.y) < 1e-7;
     const tan = (a, b) => { const dr = b.r - a.r, dy = b.y - a.y, l = Math.hypot(dr, dy) || 1; return [dy / l, -dr / l]; };
@@ -99,7 +100,7 @@
     const rows = pts.length, cols = segs + 1;
     const pos = new Float32Array(rows * cols * 3), nor = new Float32Array(rows * cols * 3), uv = new Float32Array(rows * cols * 2);
     for (let i = 0; i < rows; i++) for (let j = 0; j < cols; j++) {
-      const phi = (j / segs) * phiLen; const c = Math.cos(phi), s = Math.sin(phi);
+      const phi = phiStart + (j / segs) * phiLen; const c = Math.cos(phi), s = Math.sin(phi);
       const k = i * cols + j; const p = pts[i];
       pos[3 * k] = p.r * c; pos[3 * k + 1] = p.y; pos[3 * k + 2] = p.r * s;
       nor[3 * k] = p.n[0] * c; nor[3 * k + 1] = p.n[1]; nor[3 * k + 2] = p.n[0] * s;
@@ -395,7 +396,13 @@
       this._rebuildGeometry(true);
       this._paintTextures();
     }
-    setCutaway(on) { this.cutaway = on; if (this.pattyGroup) { this.pattyGroup.rotation.y = on ? -this.controls.goal.azimuth - Math.PI / 2 : 0; this._rebuildGeometry(true); } }
+    /** Slice the patty in half along the plane facing the camera. The patty itself never moves:
+     *  the retained half is built from a start angle, and only the cut-face mesh is rotated. */
+    setCutaway(on) {
+      this.cutaway = on;
+      if (on) this.cutPhi = this.controls.goal.azimuth + Math.PI / 2; // retained half sits away from the camera
+      if (this.pattyGroup) this._rebuildGeometry(true);
+    }
     _rebuildGeometry(force) {
       const p = this.patty; if (!p) return;
       const R = p.D / 2, h = p.h, dome = p.dome;
@@ -404,9 +411,10 @@
       if (!force && key === this.lastGeo) return; this.lastGeo = key;
       const prof = pattyProfile(R, h, dome, p.dimple, raw);
       const phi = this.cutaway ? Math.PI : Math.PI * 2;
-      this.pattyMesh.geometry.dispose(); this.pattyMesh.geometry = buildLathe(prof, 96, phi);
+      this.pattyMesh.geometry.dispose(); this.pattyMesh.geometry = buildLathe(prof, 96, phi, this.cutaway ? this.cutPhi : 0);
       if (this.cutaway) {
         this.cutMesh.geometry.dispose(); this.cutMesh.geometry = new T.ShapeGeometry(crossSectionShape(prof), 4);
+        this.cutMesh.rotation.y = -(this.cutPhi || 0); // the shape lives in the XY plane (phi = 0); turn it onto the cut plane
         this.cutMesh.visible = true;
         this.cutTex.repeat.set(1 / (2 * R * 1.06), 1 / (h * 1.02)); this.cutTex.offset.set(0.5, 0); this.cutTex.wrapS = this.cutTex.wrapT = T.ClampToEdgeWrapping;
       } else this.cutMesh.visible = false;
