@@ -72,14 +72,30 @@
       this.vp.setPatty(p);
     }
     startCook() {
-      this.state = P.createState({ pan: this.equip.pan, stove: this.equip.stove });
-      this.vp.setPan(this.equip.pan); this.vp.clearStains();
+      // The stove persists between tickets: same pan and burner means the pan keeps its heat,
+      // fat, fond and the spatter on the stovetop. A different pan is a cold pan.
+      const st = this.state;
+      const reuse = this.stoveUsed && st && st.pan.id === this.equip.pan && st.stove.id === this.equip.stove;
+      if (reuse) {
+        st.patty = null; st.where = 'board'; st.rest.t = 0; st.lid = false; st.baste = 0;
+        st.trace = []; st.lastTrace = -1; st.events = [];
+        const keep = {}; for (const k of ['preheat150', 'leiden', 'oilsmoke', 'ptfe']) if (st._ms && st._ms[k]) keep[k] = true; st._ms = keep;
+        $('knob').value = st.stove.knob; $('knob-v').textContent = String(st.stove.knob);
+      } else {
+        this.state = P.createState({ pan: this.equip.pan, stove: this.equip.stove });
+        this.vp.setPan(this.equip.pan); this.vp.clearStains();
+        $('knob').value = 0; $('knob-v').textContent = '0';
+      }
+      this.stoveUsed = true;
       this.patty = this.preview; this.state.patty = null; // stays on the board until placed
       this.placed = false; this.vp.setPatty(null);
-      this.probe = { inserted: false, depth: 0.5, reading: null, settle: 0 };
-      this.chart = [];
+      this.probe = { inserted: false, depth: 0.5, reading: null, settle: 0 }; $('btn-probe').textContent = 'Insert probe';
+      $('btn-lid').textContent = 'Lid on';
+      this.chart = []; this.logN = -1;
       $('log').innerHTML = '';
-      P.logEvent(this.state, `Order: ${P.DONENESS.find((d) => d.id === this.order.id).label}. Patty is on the board; the pan is cold (${this.state.pan.T.toFixed(0)} °C).`, 'info');
+      const label = P.DONENESS.find((d) => d.id === this.order.id).label;
+      if (reuse) P.logEvent(this.state, `Order: ${label}. Patty is on the board; the pan is still at ${this.state.pan.T.toFixed(0)} °C from the last ticket` + (this.state.pan.oil > 0.001 ? ` with ${(this.state.pan.oil * 1000).toFixed(1)} g of fat in it.` : '.'), 'info');
+      else P.logEvent(this.state, `Order: ${label}. Patty is on the board; the pan is cold (${this.state.pan.T.toFixed(0)} °C).`, 'info');
       this.setPhase('cook');
       this.setSpeed(1);
     }
@@ -96,8 +112,9 @@
       $('f-dimple').addEventListener('change', (e) => { F.dimple = e.target.checked; s.rebuildPreview(); });
       $('btn-to-stove').onclick = () => s.startCook();
       // equipment
-      $('e-stove').addEventListener('change', (e) => { s.equip.stove = e.target.value; if (!s.placed) { s.state = P.createState({ pan: s.equip.pan, stove: s.equip.stove }); $('knob').value = 0; } });
-      $('e-pan').addEventListener('change', (e) => { s.equip.pan = e.target.value; if (!s.placed) { s.state = P.createState({ pan: s.equip.pan, stove: s.equip.stove }); s.vp.setPan(s.equip.pan); $('knob').value = 0; } });
+      const swapStove = () => { s.state = P.createState({ pan: s.equip.pan, stove: s.equip.stove }); s.vp.setPan(s.equip.pan); s.vp.clearStains(); $('knob').value = 0; $('knob-v').textContent = '0'; P.logEvent(s.state, `Swapped to ${s.state.pan.name.toLowerCase()} on ${s.state.stove.name.split(' (')[0].toLowerCase()}: a cold pan.`, 'action'); s.logN = -1; };
+      $('e-stove').addEventListener('change', (e) => { s.equip.stove = e.target.value; if (s.phase === 'cook' && !s.placed) swapStove(); });
+      $('e-pan').addEventListener('change', (e) => { s.equip.pan = e.target.value; if (s.phase === 'cook' && !s.placed) swapStove(); });
       $('e-fat').addEventListener('change', (e) => { s.equip.fat = e.target.value; });
       $('e-fatg').addEventListener('input', (e) => { s.equip.fatG = Number(e.target.value); $('e-fatg-v').textContent = e.target.value + ' g'; });
       $('btn-fat').onclick = () => { P.addFat(s.state, s.equip.fat, s.equip.fatG); s.audio.click(); };
@@ -160,16 +177,21 @@
     frame(now) {
       const real = Math.min(0.1, (now - this.last) / 1000); this.last = now;
       const st = this.state;
-      if (this.phase === 'cook' || this.phase === 'rest') {
+      const active = this.phase === 'cook' || this.phase === 'rest';
+      if (active || this.stoveUsed) {
+        // Once the stove has been used it keeps running between tickets, so the pan cools (or
+        // keeps heating, if the burner was left on) while the next patty is being formed.
         this.acc += real * this.speed;
         let n = 0;
         while (this.acc >= DT && n < 400) { P.step(st, DT); this.acc -= DT; n++; }
         if (n >= 400) this.acc = 0;
-        this.updateProbe(real * this.speed);
         this.audio.update(st.diag, st.stove.knob / 10, real);
-        this.updateHUD();
-        this.updateLog();
-        if (this.phase === 'rest') { $('rest-t').textContent = P.fmtTime(st.rest.t); $('rest-c').textContent = this.hard ? '—' : fmt(P.centerT(st.patty), 1) + ' °C'; }
+        if (active) {
+          this.updateProbe(real * this.speed);
+          this.updateHUD();
+          this.updateLog();
+          if (this.phase === 'rest') { $('rest-t').textContent = P.fmtTime(st.rest.t); $('rest-c').textContent = this.hard ? '—' : fmt(P.centerT(st.patty), 1) + ' °C'; }
+        }
       } else {
         this.audio.update({ sizzle: 0, spatter: 0 }, 0, real);
       }
