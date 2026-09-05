@@ -354,12 +354,16 @@
       if (bc.bottom.type === 'pan' && over * (0.2 + 1.6 * ch.melt) >= baseY) touchN++;
     }
     ch.overhang = overN / (n * n); ch.contact = overN ? touchN / overN : 0;
+    // deep frying: the whole slice sits in hot fat, so all of it is "skirt"
+    const inOil = !!bc.top.oil;
+    if (inOil) { ch.overhang = 1; ch.contact = 1; ch.melt = clamp(ch.melt + 0.5 * dt, 0, 1); }
+    ch.submerged = inOil;
     const sk = ch.skirt || (ch.skirt = { T: ch.T, water: CHEESE_WATER, melt: 0, brown: 0, char: 0, dry: 0, charRate: 0, mass: 0 });
     const massS = ch.mass * ch.overhang * ch.contact; sk.mass = massS;
     if (massS < 1e-5) { sk.T += (ch.T - sk.T) * Math.min(1, dt / 2); sk.charRate = 0; return; }
     const areaS = CHEESE_SIDE * CHEESE_SIDE * ch.overhang * ch.contact;
     const Cs = massS * (1500 + 4180 * sk.water);
-    const q = 200 * areaS * (bc.bottom.T - sk.T) - 12 * areaS * (sk.T - bc.top.T);
+    const q = inOil ? 2 * C.hOil * areaS * (bc.top.T - sk.T) : 200 * areaS * (bc.bottom.T - sk.T) - 12 * areaS * (sk.T - bc.top.T);
     let Tn = sk.T + (q * dt) / Cs;
     if (Tn > C.Tboil && sk.water > 0) {
       const excess = Cs * (Tn - C.Tboil); const m = Math.min(sk.water * massS, excess / C.Lvap);
@@ -759,7 +763,8 @@
       const c0 = p.cheeses[0];
       once('cheese', c0 && c0.melt > 0.8, 'Cheese fully melted and draping over the edges.', 'good');
       const sk = p.cheeses.map((c) => c.skirt).filter((x) => x && x.mass > 1e-5);
-      once('cheeseTouch', sk.length > 0, 'Cheese has drooped onto the pan. It will melt, boil dry into a lace, then brown.', 'info');
+      once('cheeseTouch', sk.length > 0 && !p.cheeses[0].submerged, 'Cheese has drooped onto the pan. It will melt, boil dry into a lace, then brown.', 'info');
+      once('cheeseFry', p.cheeses.some((c) => c.submerged), 'The cheese is under the fat. It has melted instantly and is frying: it will crisp, brown, then burn.', 'info');
       once('cheeseFrico', sk.some((x) => x.brown > 2), 'The cheese on the pan has gone golden and crisp: frico.', 'good');
       once('cheeseBurn', sk.some((x) => x.char > 0.3), 'The cheese lace is burning: black, bitter, and smoking.', 'warn');
     }

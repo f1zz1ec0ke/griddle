@@ -656,9 +656,9 @@
             let y = base[i + 1] - over * (0.2 + 1.6 * ch.melt);
             const touching = y <= floorLocal;
             let spread = sc;
-            if (touching) { y = floorLocal; spread = sc + (sk ? 0.35 * sk.melt * clamp((floorLocal - y + over) / Math.max(over, 1e-4), 0, 1) : 0) + 0.25 * ch.melt * over / Math.max(rr, 1e-4); }
+            if (touching) { y = floorLocal; spread = sc + (sk ? 0.18 * sk.melt : 0) + 0.1 * ch.melt * over / Math.max(rr, 1e-4); }
             pos[i] = x * spread; pos[i + 2] = z * spread; pos[i + 1] = y;
-            const c = touching ? skirtCol : onTop;
+            const c = touching || ch.submerged ? skirtCol : onTop;
             col[i] = c[0]; col[i + 1] = c[1]; col[i + 2] = c[2];
           }
           geo.attributes.position.needsUpdate = true; geo.attributes.color.needsUpdate = true; geo.computeVertexNormals();

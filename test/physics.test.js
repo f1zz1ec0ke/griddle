@@ -170,3 +170,15 @@ test('cheese: slices stack, corners that reach the pan melt, dry, brown and even
   assert.ok(sk.char > 0.2, `char=${sk.char}`);
   assert.ok(finite(p));
 });
+
+test('cheese under deep-frying oil melts at once, browns within a minute and eventually burns', () => {
+  const s = P.createState({}); P.addFat(s, 'canola', 1400); preheat(s, 190);
+  const p = std({ thicknessMm: 12, massG: 100 }); P.placePatty(s, p); cookHeld(s, 30, 190); P.flipPatty(s);
+  P.addCheese(s); cookHeld(s, 10, 190);
+  const ch = p.cheeses[0];
+  assert.ok(ch.submerged, 'slice should be under the oil'); assert.ok(ch.melt > 0.9, `melt=${ch.melt}`);
+  cookHeld(s, 60, 190);
+  assert.ok(ch.skirt.brown > 1, `brown=${ch.skirt.brown}`);
+  cookHeld(s, 420, 190);
+  assert.ok(ch.skirt.char > 0.2, `char=${ch.skirt.char}`); assert.ok(finite(p));
+});
