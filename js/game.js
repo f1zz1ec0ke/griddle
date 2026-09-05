@@ -137,8 +137,8 @@
       };
       $('btn-probe').onclick = () => { s.probe.inserted = !s.probe.inserted; s.probe.settle = 0; s.probe.reading = null; $('btn-probe').textContent = s.probe.inserted ? 'Pull probe' : 'Insert probe'; };
       $('probe-depth').addEventListener('input', (e) => { s.probe.depth = Number(e.target.value) / 100; $('probe-depth-v').textContent = e.target.value + ' %'; });
-      $('btn-cut').onclick = () => { s.state.where = 'cut'; s.setPhase('result'); };
-      $('btn-again').onclick = () => { s.vp.setCutaway(false); s.vp.setPatty(null); s.newOrder(); };
+      $('btn-cut').onclick = () => { P.serve(s.state); s.setPhase('result'); };
+      $('btn-again').onclick = () => { s.vp.setCutaway(false); s.vp.setPatty(null); s.state.served = false; s.newOrder(); };
       $('btn-cutaway').onclick = () => { s.vp.setCutaway(!s.vp.cutaway); $('btn-cutaway').classList.toggle('on', s.vp.cutaway); };
       for (const b of document.querySelectorAll('[data-speed]')) b.onclick = () => s.setSpeed(Number(b.dataset.speed));
       for (const b of document.querySelectorAll('[data-view]')) b.onclick = () => s.vp.controls.preset(b.dataset.view);
@@ -291,6 +291,7 @@
         ['Mass', `${(r.massStart * 1000).toFixed(0)} g → ${(r.massEnd * 1000).toFixed(0)} g (−${((1 - r.massEnd / r.massStart) * 100).toFixed(0)} %)`],
         ['Water', `${(r.waterRetained * 100).toFixed(0)} % retained · ${(r.waterEvap * 1000).toFixed(1)} g steamed off · ${(r.waterDrip * 1000).toFixed(1)} g ran out`],
         ['Fat rendered into the pan', `${(r.fatLost * 1000).toFixed(1)} g`],
+        ['On the bun', `${r.cheeseSlices ? r.cheeseSlices + ' slice' + (r.cheeseSlices > 1 ? 's' : '') + ' of cheese · ' : ''}${(r.bunSoak * 1000).toFixed(1)} g of juice into the bottom bun`],
         ['Crust (browning index / char)', `A: ${r.faces.down.id === 'A' ? r.faces.down.brown.toFixed(1) : r.faces.up.brown.toFixed(1)} / ${(r.faces.down.id === 'A' ? r.faces.down.char : r.faces.up.char).toFixed(2)} · B: ${r.faces.down.id === 'B' ? r.faces.down.brown.toFixed(1) : r.faces.up.brown.toFixed(1)} / ${(r.faces.down.id === 'B' ? r.faces.down.char : r.faces.up.char).toFixed(2)}`],
         ['Grey band', `${(r.overFrac * 100).toFixed(0)} % of the thickness cooked past target`],
       ].map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');

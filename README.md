@@ -18,7 +18,7 @@ or open `index.html` from any static server. (Opening the file directly works in
 Chrome blocks texture canvases on `file://`, so use a server.)
 
 ```
-npm test             # 15 physics regression tests (node --test)
+npm test             # physics regression tests (node --test)
 npm run calibrate    # prints time-series for a dozen cooking scenarios
 ```
 
@@ -71,8 +71,22 @@ with burner input (gas, lagging electric coil, or induction), natural convection
 losses, juice boil-off with a Leidenfrost regime, fond that browns and then burns, and spatter
 that throws fat out of the pan when water flashes under it.
 
+**Cheese** is a stack of lumped slices (each added slice rotated a little further) with heat
+passing meat → slice → slice → air. The part of a slice hanging past the patty droops as it melts;
+whatever reaches the pan becomes a skirt that boils dry into a lace, browns and burns. Flip a
+cheeseburger and the cheese goes face-down onto the pan, fries, welds, and comes back up as lace.
+Under deep-frying oil the whole slice fries.
+
+**Oil** is a film until it covers the floor, then a level that rises up the wall: cover the patty
+and it deep-fries (hot-oil convection on every face), pour past the rim and it spills, hit a live
+burner and it flares. **The pan persists between tickets** with its heat, fat, fond, welded
+cheese, torn crust and a carbon layer that builds when residue sits on a hot pan; dirt costs
+contact and crust until you wash it (which also cools a hot pan under the tap). Gas, electric and
+induction each have their own burner model and pan height, and the glass lid fogs with steam.
+
 **Doneness** is judged on the *peak* centre temperature, including carry-over while resting.
-Scoring: doneness 50, crust 20, juiciness 15, evenness (grey band) 10, structure 5.
+Scoring: doneness 50, crust 20, juiciness 15, evenness (grey band) 10, structure 5. At service
+the patty goes on a sesame bun; juice that ran out during the rest soaks the bottom bun.
 
 ## Layout
 

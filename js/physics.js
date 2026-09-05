@@ -322,7 +322,7 @@
       logEvent(s, `Scraped it off the pan; the bottom crust stayed behind.`, 'warn');
     }
     s.pan.oil += p.fatTop; p.fatTop = 0;
-    s.where = 'rest'; s.rest.t = 0; p.poolBottom = 0;
+    s.where = 'rest'; s.rest.t = 0; p.poolBottom = 0; p.dripAtRest = p.lostWaterDrip;
     p.peakCenter = Math.max(p.peakCenter, centerT(p));
     logEvent(s, `Off the heat after ${fmtTime(p.cookTime)}. Centre ${centerT(p).toFixed(1)} °C. Resting — carry-over cooking begins.`, 'action');
   }
@@ -835,6 +835,15 @@
     logEvent(s, `Washed the pan${dirt > 0.002 ? ' (it needed it)' : ''}. It is wet and at ${pan.T.toFixed(0)} °C now.` + (wasHot && pan.id === 'castiron' ? ' Cold water on hot cast iron: it survived, but that is how they crack.' : wasHot ? ' The steam off it was impressive.' : ''), wasHot ? 'warn' : 'action');
     return true;
   }
+  /** Build the burger: patty (and cheese) onto a bun on the plate. Juice that ran out during the
+   *  rest, plus whatever is still pooled on the faces, goes into the bottom bun. */
+  function serve(s) {
+    const p = s.patty; if (!p) return;
+    s.where = 'cut'; s.served = true;
+    p.bunSoak = Math.max(0, p.lostWaterDrip - (p.dripAtRest == null ? p.lostWaterDrip : p.dripAtRest)) + p.poolTop + p.poolBottom;
+    p.poolTop = 0; p.poolBottom = 0;
+    logEvent(s, `On a bun.${p.bunSoak > 0.0015 ? ` ${(p.bunSoak * 1000).toFixed(1)} g of juice went straight into the bottom bun.` : ''}${p.cheeses.length ? ` ${p.cheeses.length} slice${p.cheeses.length > 1 ? 's' : ''} of cheese under the lid.` : ''}`, 'action');
+  }
   function wipeStove(s) { s.pan.overflow = 0; s._stoveWiped = (s._stoveWiped || 0) + 1; logEvent(s, 'Wiped the stovetop down.', 'action'); }
 
   // ---------------------------------------------------------------- results
@@ -891,6 +900,7 @@
     else if (p.cheeses.some((c) => c.skirt && c.skirt.char > 0.3)) notes.push('Burnt cheese lace welded to the edges: acrid.');
     else if (p.cheeses.some((c) => c.skirt && c.skirt.brown > 2)) notes.push('A crisp golden cheese skirt around the edge. Good.');
     if (s._ms && s._ms.deepfry) notes.push('It was deep-fried: cooked in enough fat to cover it, so heat came in from every side at once.');
+    if ((p.bunSoak || 0) > 0.004) notes.push(`${(p.bunSoak * 1000).toFixed(0)} g of juice soaked into the bottom bun. It will not survive the walk to the table.`);
     if (p.lostWaterDrip > 0.006) notes.push(`${(p.lostWaterDrip * 1000).toFixed(0)} g of juice ran out onto the pan instead of staying in the meat.`);
     if (p.lostFat > 0.004) notes.push(`${(p.lostFat * 1000).toFixed(0)} g of fat rendered out and pooled in the pan.`);
     if (overFrac > 0.5 && target.hi < 68) notes.push('A wide grey band: the outside went well past target before the centre got there. Thicker patty, lower heat, or flip more often.');
@@ -901,7 +911,7 @@
       total, target, got, peak, dist,
       parts: { doneness: Math.round(doneScore), crust: Math.round(crustScore), juiciness: Math.round(juiceScore), evenness: Math.round(evenScore), structure: Math.round(structScore) },
       massStart: p.massKg0, massEnd: massNow, waterRetained: wRet, waterEvap: p.lostWaterEvap, waterDrip: p.lostWaterDrip, fatLost: p.lostFat, stuck: p.lostStuck,
-      overFrac, notes, cookTime: p.cookTime, restTime: s.rest.t, flips: p.flips,
+      overFrac, notes, cookTime: p.cookTime, restTime: s.rest.t, flips: p.flips, bunSoak: p.bunSoak || 0, cheeseSlices: p.cheeses.length,
       faces: { down: { ...p.faceDown }, up: { ...p.faceUp } },
       profile: p.T.slice(), dG: p.dG.slice(),
     };
@@ -910,7 +920,7 @@
   return {
     C, BLENDS, PANS, FATS, STOVES, DONENESS,
     makePatty, createState, step, stepPatty,
-    setKnob, addFat, placePatty, flipPatty, pressPatty, removePatty, addCheese, toggleLid, basteButter, washPan, wipeStove, panDirt,
+    setKnob, addFat, placePatty, flipPatty, pressPatty, removePatty, addCheese, toggleLid, basteButter, washPan, wipeStove, panDirt, serve,
     evaluate, donenessOf, centerT, pattyMass, nodeMass, waterHolding, fmtTime, clamp, lerp, rhoVapSat, logEvent,
   };
 });

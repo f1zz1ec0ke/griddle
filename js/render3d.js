@@ -463,7 +463,7 @@
       this.cutMat = new T.MeshStandardMaterial({ map: this.cutTex, roughness: 0.6, side: T.DoubleSide });
       this.pattyMesh = new T.Mesh(new T.BufferGeometry(), this.pattyMat); this.pattyMesh.castShadow = true; this.pattyMesh.receiveShadow = true; g.add(this.pattyMesh);
       this.cutMesh = new T.Mesh(new T.BufferGeometry(), this.cutMat); this.cutMesh.visible = false; this.cutMesh.castShadow = true; g.add(this.cutMesh);
-      this.cheeseMeshes = []; this.underMeshes = [];
+      this.cheeseMeshes = []; this.underMeshes = []; this.bunGroup = null; this.bunTop = null; this.served = false;
       this.scene.add(g);
       this.lastGeo = null; this.forceTex = true;
       this._rebuildGeometry(true);
@@ -471,6 +471,49 @@
     }
     /** Slice the patty in half along the plane facing the camera. The patty itself never moves:
      *  the retained half is built from a start angle, and only the cut-face mesh is rotated. */
+    /** Sesame bun in two halves around the patty. Built like the patty: a lathe (half of one when
+     *  cut away) plus a crumb-textured cut face. The bottom bun's crumb darkens with soaked juice. */
+    _buildBuns(p) {
+      const g = this.pattyGroup; if (!g) return;
+      if (this.bunGroup) g.remove(this.bunGroup);
+      const bg = new T.Group(); this.bunGroup = bg; g.add(bg);
+      const Rb = Math.max(0.05, (p.D / 2) * 0.96);
+      const crust = new T.MeshStandardMaterial({ color: 0xc98a45, roughness: 0.75 });
+      const crumbTex = (soak) => {
+        const cv = document.createElement('canvas'); cv.width = 256; cv.height = 128; const c = cv.getContext('2d');
+        c.fillStyle = '#f3e4c4'; c.fillRect(0, 0, 256, 128);
+        c.globalCompositeOperation = 'multiply'; c.globalAlpha = 0.35; c.drawImage(this.noiseFine, 0, 0, 256, 128); c.globalAlpha = 1; c.globalCompositeOperation = 'source-over';
+        for (let i = 0; i < 260; i++) { c.fillStyle = `rgba(200,170,120,${0.3 + Math.random() * 0.4})`; c.beginPath(); c.ellipse(Math.random() * 256, Math.random() * 128, 1 + Math.random() * 3, 1 + Math.random() * 2, Math.random() * 3, 0, Math.PI * 2); c.fill(); }
+        if (soak > 0) { const gr = c.createLinearGradient(0, 0, 0, 128); gr.addColorStop(0, `rgba(120,50,40,${clamp(soak / 0.006, 0, 0.75)})`); gr.addColorStop(0.7, 'rgba(120,50,40,0)'); c.fillStyle = gr; c.fillRect(0, 0, 256, 128); }
+        const t = new T.CanvasTexture(cv); t.wrapS = t.wrapT = T.ClampToEdgeWrapping; return t;
+      };
+      const phi = this.cutaway ? Math.PI : Math.PI * 2, phiStart = this.cutaway ? this.cutPhi : 0;
+      const half = (prof, y0, soak) => {
+        const h = new T.Group(); h.position.y = y0;
+        const m = new T.Mesh(buildLathe(prof, 72, phi, phiStart), crust); m.castShadow = true; m.receiveShadow = true; h.add(m);
+        if (this.cutaway) {
+          const hh = Math.max(...prof.map((q) => q.y)), rr = Math.max(...prof.map((q) => q.r));
+          const tex = crumbTex(soak); tex.repeat.set(1 / (2 * rr), 1 / hh); tex.offset.set(0.5, 0);
+          const face = new T.Mesh(new T.ShapeGeometry(crossSectionShape(prof), 3), new T.MeshStandardMaterial({ map: tex, roughness: 0.9, side: T.DoubleSide }));
+          face.rotation.y = -phiStart; h.add(face);
+        }
+        bg.add(h); return h;
+      };
+      const bottom = [{ r: 0, y: 0, v: 0 }, { r: Rb * 0.92, y: 0, v: 0.2 }, { r: Rb, y: 0.007, v: 0.4 }, { r: Rb * 0.98, y: 0.017, v: 0.6 }, { r: Rb * 0.85, y: 0.022, v: 0.8 }, { r: 0, y: 0.022, v: 1 }];
+      const top = [{ r: 0, y: 0, v: 0 }, { r: Rb * 0.97, y: 0, v: 0.15 }, { r: Rb, y: 0.009, v: 0.3 }, { r: Rb * 0.93, y: 0.022, v: 0.5 }, { r: Rb * 0.72, y: 0.036, v: 0.7 }, { r: Rb * 0.4, y: 0.045, v: 0.85 }, { r: 0, y: 0.048, v: 1 }];
+      this.bunBottomH = 0.022;
+      half(bottom, -this.bunBottomH, p.bunSoak || 0);
+      this.bunTop = half(top, 0, 0);
+      // sesame seeds on the dome (only on the retained half when cut)
+      const seedGeo = new T.SphereGeometry(1, 6, 5); const seedMat = new T.MeshStandardMaterial({ color: 0xf6ead2, roughness: 0.6 });
+      let sd = 7; const rnd = () => { sd = (sd * 1103515245 + 12345) & 0x7fffffff; return sd / 0x7fffffff; };
+      for (let i = 0; i < 70; i++) {
+        const a = rnd() * Math.PI * 2, rr = Math.sqrt(rnd()) * Rb * 0.9;
+        if (this.cutaway) { const rel = ((a - phiStart) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2); if (rel > Math.PI) continue; }
+        let y = 0; for (let k = 1; k < top.length; k++) if (rr <= top[k - 1].r && rr >= top[k].r) { const t = (top[k - 1].r - rr) / (top[k - 1].r - top[k].r + 1e-9); y = lerp(top[k - 1].y, top[k].y, t); }
+        const sm = new T.Mesh(seedGeo, seedMat); sm.position.set(Math.cos(a) * rr, y + 0.0005, Math.sin(a) * rr); sm.scale.set(0.0016, 0.0009, 0.0011); sm.rotation.y = rnd() * 3; this.bunTop.add(sm);
+      }
+    }
     setCutaway(on) {
       this.cutaway = on;
       if (on) this.cutPhi = this.controls.goal.azimuth + Math.PI / 2; // retained half sits away from the camera
@@ -485,6 +528,7 @@
       const prof = pattyProfile(R, h, dome, p.dimple, raw);
       const phi = this.cutaway ? Math.PI : Math.PI * 2;
       this.pattyMesh.geometry.dispose(); this.pattyMesh.geometry = buildLathe(prof, 96, phi, this.cutaway ? this.cutPhi : 0);
+      if (this.served) this._buildBuns(p);
       if (this.cutaway) {
         this.cutMesh.geometry.dispose(); this.cutMesh.geometry = new T.ShapeGeometry(crossSectionShape(prof), 4);
         this.cutMesh.rotation.y = -(this.cutPhi || 0); // the shape lives in the XY plane (phi = 0); turn it onto the cut plane
@@ -665,7 +709,12 @@
         const g = this.pattyGroup;
         if (state.where === 'pan') { g.position.set(0, this.panFloorY + 0.0012 * p.cheeseUnder.length, 0); }
         else if (state.where === 'board') { g.position.set(0, 0, 0); }
-        else { g.position.set(this.mode === 'stove' ? 0.42 : 0, this.mode === 'stove' ? 0.009 : 0, this.mode === 'stove' ? 0.12 : 0); }
+        else {
+          const served = !!state.served;
+          if (served !== this.served) { this.served = served; if (served) this._buildBuns(p); else if (this.bunGroup) { g.remove(this.bunGroup); this.bunGroup = null; } }
+          g.position.set(this.mode === 'stove' ? 0.42 : 0, (this.mode === 'stove' ? 0.009 : 0) + (served ? this.bunBottomH : 0), this.mode === 'stove' ? 0.12 : 0);
+          if (this.bunTop) this.bunTop.position.y = p.h * (1 + 0.28 * p.dome) + p.cheeses.length * 0.0015 + 0.001;
+        }
         this._rebuildGeometry(false);
         if (this.texClock > 0.08 || this.forceTex) { this.texClock = 0; this.forceTex = false; this._paintTextures(); }
         // cheese stack: one draped, vertex-coloured mesh per slice
@@ -695,8 +744,16 @@
           const c = skirtColour(sk, mix3(yellow, melted, ch.melt)); mesh.material.color.setRGB(c[0], c[1], c[2]);
           mesh.material.roughness = clamp(0.5 - 0.3 * ch.melt + (sk ? 0.4 * sk.dry : 0), 0.05, 1);
         }
+        // when the burger is cut away, cheese on the removed half is folded onto the cut plane
+        const TAU = Math.PI * 2;
+        const clipFor = (rot) => {
+          if (!this.cutaway) return null;
+          const cr = Math.cos(rot), sr = Math.sin(rot), cp = this.cutPhi, dx = Math.cos(cp), dz = Math.sin(cp);
+          return (x, z) => { const gx = x * cr + z * sr, gz = -x * sr + z * cr; const rel = ((Math.atan2(gz, gx) - cp) % TAU + TAU) % TAU; if (rel < Math.PI) return null; const t = gx * dx + gz * dz; const px = t * dx, pz = t * dz; return [px * cr - pz * sr, px * sr + pz * cr]; };
+        };
         for (let k = 0; k < this.cheeseMeshes.length; k++) {
           const mesh = this.cheeseMeshes[k], ch = p.cheeses[k], R = p.D / 2, geo = mesh.geometry, pos = geo.attributes.position.array, col = geo.attributes.color.array, base = mesh.userData.base;
+          const clip = clipFor(ch.rot);
           const topY = p.h * (1 + 0.28 * p.dome) + k * 0.0015; mesh.position.y = topY + 0.0008;
           const floorLocal = -mesh.position.y + 0.0006 + k * 0.0004; // pan / plate surface, in mesh coordinates
           const sk = ch.skirt; const sc = 1 + 0.15 * ch.melt + 0.004 * k;
@@ -710,6 +767,7 @@
             let spread = sc;
             if (touching) { y = floorLocal; spread = sc + (sk ? 0.18 * sk.melt : 0) + 0.1 * ch.melt * over / Math.max(rr, 1e-4); }
             pos[i] = x * spread; pos[i + 2] = z * spread; pos[i + 1] = y;
+            if (clip) { const q = clip(pos[i], pos[i + 2]); if (q) { pos[i] = q[0]; pos[i + 2] = q[1]; } }
             const c = touching || ch.submerged || ch.fried ? skirtCol : onTop;
             col[i] = c[0]; col[i + 1] = c[1]; col[i + 2] = c[2];
           }
@@ -839,7 +897,7 @@
       if (name === 'top') this.goal = { target: t, azimuth: this.goal.azimuth, polar: 0.12, dist: 0.5 };
       if (name === 'side') this.goal = { target: t.clone().setY(t.y + 0.01), azimuth: -Math.PI / 2, polar: 1.45, dist: 0.32 };
       if (name === 'close') this.goal = { target: t.clone().setY(t.y + 0.01), azimuth: this.goal.azimuth, polar: 1.1, dist: 0.16 };
-      if (name === 'serve') { const az = -0.9; this.goal = { target: t.clone().add(new T.Vector3(Math.sin(az) * 0.075, 0.01, -Math.cos(az) * 0.075)), azimuth: az, polar: 1.15, dist: 0.32 }; }
+      if (name === 'serve') { const az = -0.9; this.goal = { target: t.clone().add(new T.Vector3(Math.sin(az) * 0.075, 0.03, -Math.cos(az) * 0.075)), azimuth: az, polar: 1.2, dist: 0.34 }; }
       if (name === 'default') this.reset(this.vp.mode);
     }
     dolly(f) { this.goal.dist = clamp(this.goal.dist * f, 0.06, 2.5); }
