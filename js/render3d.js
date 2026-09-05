@@ -500,7 +500,7 @@
         bg.add(h); return h;
       };
       const bottom = [{ r: 0, y: 0, v: 0 }, { r: Rb * 0.92, y: 0, v: 0.2 }, { r: Rb, y: 0.007, v: 0.4 }, { r: Rb * 0.98, y: 0.017, v: 0.6 }, { r: Rb * 0.85, y: 0.022, v: 0.8 }, { r: 0, y: 0.022, v: 1 }];
-      const top = [{ r: 0, y: 0, v: 0 }, { r: Rb * 0.97, y: 0, v: 0.15 }, { r: Rb, y: 0.009, v: 0.3 }, { r: Rb * 0.93, y: 0.022, v: 0.5 }, { r: Rb * 0.72, y: 0.036, v: 0.7 }, { r: Rb * 0.4, y: 0.045, v: 0.85 }, { r: 0, y: 0.048, v: 1 }];
+      const top = [{ r: 0, y: 0, v: 0 }, { r: Rb * 0.97, y: 0, v: 0.15 }, { r: Rb, y: 0.006, v: 0.3 }, { r: Rb * 0.93, y: 0.013, v: 0.5 }, { r: Rb * 0.72, y: 0.02, v: 0.7 }, { r: Rb * 0.4, y: 0.024, v: 0.85 }, { r: 0, y: 0.025, v: 1 }];
       this.bunBottomH = 0.022;
       half(bottom, -this.bunBottomH, p.bunSoak || 0);
       this.bunTop = half(top, 0, 0);
