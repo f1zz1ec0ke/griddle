@@ -40,6 +40,8 @@
       $('order-target').textContent = d.label.toUpperCase();
       $('order-range').textContent = `${d.lo}–${d.hi} °C at the centre after resting`;
       $('ticket-target').textContent = d.label;
+      const hint = `${d.label}: ${d.lo}–${d.hi} °C at the centre, measured at its peak after resting`;
+      $('ticket').dataset.hint = hint; $('ticket').title = hint;
       this.setPhase('order');
     }
     setPhase(ph) {

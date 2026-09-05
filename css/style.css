@@ -29,6 +29,9 @@ label.check input { width: auto; }
 .brand small { display: block; letter-spacing: 0; font-weight: 400; color: var(--muted); font-size: 11px; }
 .ticket { font-size: 13px; color: var(--muted); }
 .ticket b { color: var(--ink); }
+.ticket { position: relative; cursor: help; }
+.ticket[data-hint]::after { content: attr(data-hint); position: absolute; left: 0; top: calc(100% + 6px); white-space: nowrap; background: #1e1914; color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; font-size: 12px; box-shadow: 0 6px 18px rgba(0,0,0,0.5); opacity: 0; pointer-events: none; transform: translateY(-3px); transition: opacity 0.12s, transform 0.12s; }
+.ticket[data-hint]:hover::after, .ticket[data-hint]:focus::after { opacity: 1; transform: translateY(0); }
 .readouts { display: flex; gap: 12px; }
 .ro { background: rgba(0,0,0,0.45); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; min-width: 84px; }
 .ro label { margin: 0; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; }
