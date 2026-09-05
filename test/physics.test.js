@@ -153,3 +153,20 @@ test('oil is not eaten by spatter: most of it survives a full cook and a flip', 
   cookHeld(s, 175, 220);
   assert.ok(s.pan.oil > 0.006, `only ${(s.pan.oil * 1000).toFixed(1)} g left of 8 g plus rendered fat`);
 });
+
+test('cheese: slices stack, corners that reach the pan melt, dry, brown and eventually burn', () => {
+  const s = P.createState({}); preheat(s, 230);
+  const p = std({ massG: 60, thicknessMm: 8 }); P.placePatty(s, p); cookHeld(s, 40, 230); P.flipPatty(s);
+  P.addCheese(s); cookHeld(s, 120, 230);
+  const sk = p.cheeses[0].skirt;
+  assert.ok(sk && sk.mass > 1e-5, 'melted corners should be touching the pan');
+  P.addCheese(s); P.addCheese(s);
+  assert.equal(p.cheeses.length, 3); assert.ok(p.cheeses[1].rot !== p.cheeses[0].rot);
+  cookHeld(s, 60, 230);
+  assert.ok(p.cheeses[0].T > p.cheeses[2].T, 'top of the stack lags the bottom');
+  cookHeld(s, 180, 230);
+  assert.ok(sk.dry > 0.8, `dry=${sk.dry}`); assert.ok(sk.brown > 1.5, `brown=${sk.brown}`);
+  cookHeld(s, 300, 230);
+  assert.ok(sk.char > 0.2, `char=${sk.char}`);
+  assert.ok(finite(p));
+});

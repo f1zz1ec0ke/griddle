@@ -169,7 +169,7 @@
       const on = this.phase === 'cook', placed = this.placed && this.state.where === 'pan';
       $('btn-place').disabled = !on || this.placed;
       for (const id of ['btn-flip', 'btn-press', 'btn-smash', 'btn-lid', 'btn-cheese', 'btn-baste', 'btn-remove']) $(id).disabled = !placed;
-      if (placed) { const raw = this.patty.dM.reduce((a, b) => a + b, 0) / this.patty.N < 0.25; $('btn-smash').disabled = !raw || this.patty.h < 0.006; $('btn-cheese').disabled = !!this.patty.cheese; }
+      if (placed) { const raw = this.patty.dM.reduce((a, b) => a + b, 0) / this.patty.N < 0.25; $('btn-smash').disabled = !raw || this.patty.h < 0.006; $('btn-cheese').disabled = this.patty.cheeses.length >= 24; }
       $('btn-probe').disabled = !(placed || this.phase === 'rest');
       $('e-stove').disabled = $('e-pan').disabled = this.placed;
     }

@@ -432,7 +432,7 @@
       this.cutMat = new T.MeshStandardMaterial({ map: this.cutTex, roughness: 0.6, side: T.DoubleSide });
       this.pattyMesh = new T.Mesh(new T.BufferGeometry(), this.pattyMat); this.pattyMesh.castShadow = true; this.pattyMesh.receiveShadow = true; g.add(this.pattyMesh);
       this.cutMesh = new T.Mesh(new T.BufferGeometry(), this.cutMat); this.cutMesh.visible = false; this.cutMesh.castShadow = true; g.add(this.cutMesh);
-      this.cheeseMesh = null;
+      this.cheeseMeshes = [];
       this.scene.add(g);
       this.lastGeo = null; this.forceTex = true;
       this._rebuildGeometry(true);
@@ -631,24 +631,39 @@
         else { g.position.set(this.mode === 'stove' ? 0.42 : 0, this.mode === 'stove' ? 0.009 : 0, this.mode === 'stove' ? 0.12 : 0); }
         this._rebuildGeometry(false);
         if (this.texClock > 0.08 || this.forceTex) { this.texClock = 0; this.forceTex = false; this._paintTextures(); }
-        // cheese
-        if (p.cheese && !this.cheeseMesh) {
-          const geo = new T.PlaneGeometry(0.095, 0.095, 12, 12); geo.rotateX(-Math.PI / 2);
-          this.cheeseMesh = new T.Mesh(geo, new T.MeshPhysicalMaterial({ color: 0xf2b23c, roughness: 0.5, clearcoat: 0.3, side: T.DoubleSide }));
-          this.cheeseMesh.castShadow = true; this.cheeseBase = geo.attributes.position.array.slice(); g.add(this.cheeseMesh);
+        // cheese stack: one draped, vertex-coloured mesh per slice
+        this.cheeseMeshes = this.cheeseMeshes || [];
+        while (this.cheeseMeshes.length > p.cheeses.length) g.remove(this.cheeseMeshes.pop());
+        while (this.cheeseMeshes.length < p.cheeses.length) {
+          const k = this.cheeseMeshes.length;
+          const geo = new T.PlaneGeometry(0.095, 0.095, 14, 14); geo.rotateX(-Math.PI / 2);
+          geo.setAttribute('color', new T.BufferAttribute(new Float32Array(geo.attributes.position.count * 3).fill(1), 3));
+          const m = new T.Mesh(geo, new T.MeshPhysicalMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.5, clearcoat: 0.3, side: T.DoubleSide }));
+          m.castShadow = true; m.userData.base = geo.attributes.position.array.slice(); m.rotation.y = p.cheeses[k].rot; g.add(m); this.cheeseMeshes.push(m);
         }
-        if (!p.cheese && this.cheeseMesh) { g.remove(this.cheeseMesh); this.cheeseMesh = null; }
-        if (this.cheeseMesh) {
-          const ch = p.cheese, R = p.D / 2, geo = this.cheeseMesh.geometry, pos = geo.attributes.position.array, base = this.cheeseBase;
-          const topY = p.h * (1 + 0.28 * p.dome); this.cheeseMesh.position.y = topY + 0.0015;
+        const yellow = [0.95, 0.70, 0.24], melted = [0.99, 0.74, 0.20], golden = [0.72, 0.42, 0.10], dark = [0.28, 0.13, 0.05];
+        for (let k = 0; k < this.cheeseMeshes.length; k++) {
+          const mesh = this.cheeseMeshes[k], ch = p.cheeses[k], R = p.D / 2, geo = mesh.geometry, pos = geo.attributes.position.array, col = geo.attributes.color.array, base = mesh.userData.base;
+          const topY = p.h * (1 + 0.28 * p.dome) + k * 0.0015; mesh.position.y = topY + 0.0008;
+          const floorLocal = -mesh.position.y + 0.0006 + k * 0.0004; // pan / plate surface, in mesh coordinates
+          const sk = ch.skirt; const sc = 1 + 0.15 * ch.melt + 0.004 * k;
+          let onTop = mix3(yellow, melted, ch.melt);
+          let skirtCol = onTop;
+          if (sk) { skirtCol = mix3(onTop, golden, clamp(sk.brown / 2.5, 0, 1)); skirtCol = mix3(skirtCol, dark, clamp((sk.brown - 2.5) / 3, 0, 1)); skirtCol = mix3(skirtCol, [0.06, 0.05, 0.04], clamp(sk.char / 0.8, 0, 1)); }
           for (let i = 0; i < pos.length; i += 3) {
             const x = base[i], z = base[i + 2]; const rr = Math.hypot(x, z);
             const over = Math.max(0, rr - R * 0.98);
-            pos[i] = x * (1 + 0.15 * ch.melt); pos[i + 2] = z * (1 + 0.15 * ch.melt);
-            pos[i + 1] = base[i + 1] - over * (0.2 + 1.6 * ch.melt) - (rr < R ? 0.28 * p.dome * p.h * (1 - (rr / R) ** 2) * -1 : 0) * 0;
+            let y = base[i + 1] - over * (0.2 + 1.6 * ch.melt);
+            const touching = y <= floorLocal;
+            let spread = sc;
+            if (touching) { y = floorLocal; spread = sc + (sk ? 0.35 * sk.melt * clamp((floorLocal - y + over) / Math.max(over, 1e-4), 0, 1) : 0) + 0.25 * ch.melt * over / Math.max(rr, 1e-4); }
+            pos[i] = x * spread; pos[i + 2] = z * spread; pos[i + 1] = y;
+            const c = touching ? skirtCol : onTop;
+            col[i] = c[0]; col[i + 1] = c[1]; col[i + 2] = c[2];
           }
-          geo.attributes.position.needsUpdate = true; geo.computeVertexNormals();
-          this.cheeseMesh.material.roughness = 0.6 - 0.45 * ch.melt;
+          geo.attributes.position.needsUpdate = true; geo.attributes.color.needsUpdate = true; geo.computeVertexNormals();
+          mesh.material.roughness = clamp(0.6 - 0.45 * ch.melt + (sk ? 0.35 * sk.dry : 0), 0.05, 1);
+          mesh.material.clearcoat = 0.3 * (1 - (sk ? sk.dry : 0));
         }
       }
 
