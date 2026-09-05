@@ -116,3 +116,40 @@ test('carry-over: centre keeps rising after removal', () => {
   const atRemoval = P.centerT(p); cookFor(s, 120);
   assert.ok(p.peakCenter > atRemoval + 2, `${atRemoval} → ${p.peakCenter}`);
 });
+
+test('repeated smashing stays numerically stable and stops at the pan wall', () => {
+  const s = P.createState({}); preheat(s, 250);
+  const p = std({ massG: 340, thicknessMm: 40 }); P.placePatty(s, p);
+  for (let k = 0; k < 8; k++) { P.pressPatty(s, true); cookFor(s, 1); assert.ok(finite(p), `NaN after smash ${k + 1}`); }
+  assert.ok(p.D <= 2 * s.pan.floorR * 0.94 + 1e-9, `D=${p.D}`);
+  cookHeld(s, 120, 250); assert.ok(finite(p));
+});
+
+test('enough oil to cover the patty deep-fries it: both faces brown, no juice beads on top', () => {
+  const s = P.createState({}); P.addFat(s, 'canola', 1400); preheat(s, 190);
+  const p = std({ thicknessMm: 15, massG: 120 }); P.placePatty(s, p);
+  assert.ok(s.pan.oilDepth > p.h, `depth ${s.pan.oilDepth} vs h ${p.h}`);
+  cookHeld(s, 240, 190);
+  assert.ok(p.faceUp.brown > 1, `top brown=${p.faceUp.brown}`);
+  assert.ok(p.faceDown.brown > 1, `bottom brown=${p.faceDown.brown}`);
+  assert.ok(p.poolTop < 1e-4);
+  assert.ok(finite(p));
+});
+
+test('oil past the rim overflows onto the stove and can flare on a live burner', () => {
+  const s = P.createState({}); P.setKnob(s, 8); cookFor(s, 5);
+  P.addFat(s, 'canola', 4000); cookFor(s, 1);
+  assert.ok(Math.abs(s.pan.oilDepth - s.pan.wall) < 1e-9);
+  assert.ok(s.pan.overflow > 0.1, `overflow=${s.pan.overflow}`);
+  assert.ok(s.pan.flare > 0, 'expected a grease flare');
+  cookFor(s, 10); assert.ok(s.pan.flare < 0.01);
+});
+
+test('oil is not eaten by spatter: most of it survives a full cook and a flip', () => {
+  const s = P.createState({}); preheat(s, 220); P.addFat(s, 'canola', 8);
+  const p = std(); P.placePatty(s, p); cookHeld(s, 180, 220);
+  const beforeFlip = s.pan.oil; P.flipPatty(s); cookHeld(s, 5, 220);
+  assert.ok(s.pan.oil > beforeFlip * 0.97, `flip cost ${((1 - s.pan.oil / beforeFlip) * 100).toFixed(1)} % of the oil`);
+  cookHeld(s, 175, 220);
+  assert.ok(s.pan.oil > 0.006, `only ${(s.pan.oil * 1000).toFixed(1)} g left of 8 g plus rendered fat`);
+});

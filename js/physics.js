@@ -37,6 +37,7 @@
     Am: 1085, EaM: 40e3, Bmax: 7,   // → 0.0125/s @150 °C, 0.042/s @200 °C (crust in ~70 s)
     // Pyrolysis/char: dC/dt = Ac*exp(-EaC/RT) → 0.003/s at 200 °C, 0.043/s at 250 °C
     Ac: 1.4e9, EaC: 110e3, Cmax: 1.5,  // → 0.001/s @200 °C, 0.014/s @250 °C
+    hOil: 350,           // W/(m^2 K) hot-oil convection onto immersed meat (deep frying)
     hContactBase: 380,   // W/(m^2 K) meat-on-metal, wet/oiled
     hAirTop: 12, hAirSide: 10, hLid: 30,
     hMass: 0.011,        // m/s mass-transfer coefficient for surface evaporation
@@ -55,10 +56,10 @@
   ];
 
   const PANS = {
-    castiron:   { id: 'castiron',   name: 'Cast iron, 12" (2.7 kg)',        mass: 2.7, cp: 460, diam: 0.30, emiss: 0.95, release: 0.55, hcMul: 1.00, maxT: 600 },
-    carbonsteel:{ id: 'carbonsteel',name: 'Carbon steel, 12" (1.6 kg)',     mass: 1.6, cp: 470, diam: 0.30, emiss: 0.80, release: 0.60, hcMul: 1.00, maxT: 600 },
-    stainless:  { id: 'stainless',  name: 'Stainless tri-ply, 12" (1.4 kg)',mass: 1.4, cp: 500, diam: 0.30, emiss: 0.30, release: 0.95, hcMul: 1.05, maxT: 600 },
-    nonstick:   { id: 'nonstick',   name: 'Nonstick aluminium, 10" (0.9 kg)', mass: 0.9, cp: 900, diam: 0.26, emiss: 0.85, release: 0.00, hcMul: 0.90, maxT: 260 },
+    castiron:   { id: 'castiron',   name: 'Cast iron, 12" (2.7 kg)',        mass: 2.7, cp: 460, diam: 0.30, wall: 0.045, emiss: 0.95, release: 0.55, hcMul: 1.00, maxT: 600 },
+    carbonsteel:{ id: 'carbonsteel',name: 'Carbon steel, 12" (1.6 kg)',     mass: 1.6, cp: 470, diam: 0.30, wall: 0.045, emiss: 0.80, release: 0.60, hcMul: 1.00, maxT: 600 },
+    stainless:  { id: 'stainless',  name: 'Stainless tri-ply, 12" (1.4 kg)',mass: 1.4, cp: 500, diam: 0.30, wall: 0.045, emiss: 0.30, release: 0.95, hcMul: 1.05, maxT: 600 },
+    nonstick:   { id: 'nonstick',   name: 'Nonstick aluminium, 10" (0.9 kg)', mass: 0.9, cp: 900, diam: 0.26, wall: 0.040, emiss: 0.85, release: 0.00, hcMul: 0.90, maxT: 260 },
   };
 
   const FATS = {
@@ -188,6 +189,7 @@
       pan: {
         ...pan, T: Tamb, C: pan.mass * pan.cp,
         oil: 0, oilKind: 'none', oilSmoke: Infinity, water: 0, fond: 0, fondBurnt: 0,
+        floorR: pan.diam / 2 * 0.95, oilDepth: 0, overflow: 0, flare: 0,
         smoke: 0, smokeOil: 0, smokeChar: 0, smokeFond: 0,
         lostSpatter: 0, area: Math.PI * (pan.diam / 2) ** 2,
       },
@@ -217,7 +219,8 @@
     s.pan.fond += m * f.solids * 5;
     s.pan.oilKind = s.pan.oil > 0 && s.pan.oilKind !== 'none' && s.pan.oilKind !== kind ? 'mixed' : kind;
     s.pan.oilSmoke = Math.min(s.pan.oilSmoke, f.smoke);
-    logEvent(s, `Added ${grams} g ${f.name.split(' (')[0].toLowerCase()} to the pan` + (s.pan.T > f.smoke ? ' — it is smoking immediately, the pan is above its smoke point.' : '.'), 'action');
+    const depth = s.pan.oil / 920 / (Math.PI * s.pan.floorR ** 2);
+    logEvent(s, `Added ${grams} g ${f.name.split(' (')[0].toLowerCase()} to the pan` + (s.pan.T > f.smoke ? ' — it is smoking immediately, the pan is above its smoke point.' : '.') + (depth > 0.002 ? ` Fat is now ${(depth * 1000).toFixed(0)} mm deep.` : ''), 'action');
   }
 
   function placePatty(s, patty) {
@@ -278,12 +281,18 @@
     p.dome = 0;
     if (cooked < 0.25 && hard) {
       // Smash: the raw patty deforms plastically.
-      const hNew = Math.max(0.004, p.h * 0.55);
-      const ratio = p.h / hNew;
-      p.h = hNew; p.A *= ratio; p.D = Math.sqrt((4 * p.A) / Math.PI);
+      let hNew = Math.max(0.004, p.h * 0.55);
+      // the meat cannot spread past the pan wall: once it fills the floor it just gets squeezed
+      const Dmax = 2 * s.pan.floorR * 0.94;
+      const V = p.A * p.h;
+      let Anew = V / hNew, Dnew = Math.sqrt((4 * Anew) / Math.PI);
+      let hitWall = false;
+      if (Dnew > Dmax) { Dnew = Dmax; Anew = (Math.PI * Dnew * Dnew) / 4; hNew = V / Anew; hitWall = true; }
+      if (hNew >= p.h * 0.98) { logEvent(s, 'Pressed hard, but it already fills the pan: nowhere left to go.', 'action'); return; }
+      p.h = hNew; p.A = Anew; p.D = Dnew;
       p.h0 = p.h; p.A0 = p.A; p.D0 = p.D;
       p.faceDown.stuck = true;
-      logEvent(s, `SMASHED. Patty flattened to ${(p.h * 1000).toFixed(0)} mm, ${(p.D * 100).toFixed(1)} cm across. Huge contact area, huge crust, no pink centre.`, 'action');
+      logEvent(s, `SMASHED. Patty flattened to ${(p.h * 1000).toFixed(0)} mm, ${(p.D * 100).toFixed(1)} cm across.` + (hitWall ? ' It has hit the pan wall.' : ' Huge contact area, huge crust, no pink centre.'), 'action');
     } else {
       logEvent(s, `Pressed with the spatula. ${(expelled * 1000).toFixed(1)} g of juice squeezed out and boiled off. That was flavour.`, expelled > 0.002 ? 'warn' : 'action');
     }
@@ -377,7 +386,10 @@
     if (s.baste > 0) { const q = 150 * A * ((bc.bottom.T || 150) - 40 - T[N - 1]); Q[N - 1] += Math.max(0, q); }
     // edge losses
     const per = Math.PI * D;
-    for (let i = 0; i < N; i++) Q[i] += C.hAirSide * per * dz * (bc.side.T - T[i]);
+    for (let i = 0; i < N; i++) {
+      const inOil = bc.side.oilDepth > (i + 0.5) * dz;
+      Q[i] += inOil ? C.hOil * per * dz * (bc.side.oilT - T[i]) : C.hAirSide * per * dz * (bc.side.T - T[i]);
+    }
 
     // top evaporation (Magnus) — from pooled juice first, then from tissue.
     let evapTop = 0;
@@ -501,8 +513,21 @@
     fd.char += rC * dt; fd.charRate = rC;
     fd.crisp = clamp(fd.crisp + (dryness > 0.6 ? 0.02 : -0.01) * dt, 0, 1);
     if (fd.stuck && (fd.brown >= 0.5 * (bc.bottom.release || 1) + 0.15 || dryness > 0.6)) fd.stuck = false;
-    // top face: under a lid the crust goes soggy; when basting, a little browning.
+    // top face: submerged in hot fat it browns like the bottom (deep frying)
     const fu = p.faceUp;
+    if (bc.top.oil && !p.cheese) {
+      let TsT = T[N - 1] + (Math.max(0, qTop) / A) * (dz / 2) / Math.max(Kn[N - 1], 0.05);
+      if (p.w[N - 1] > 0.25 * p.w0 || p.poolTop > 1e-6) TsT = Math.min(TsT, C.Tboil + 2);
+      TsT = Math.min(TsT, bc.top.T);
+      fu.maxT = Math.max(fu.maxT, TsT);
+      const dryT = 1 - clamp(p.w[N - 1] / p.w0, 0, 1);
+      const fAwT = 0.12 + 0.88 * smooth(0.25, 0.85, dryT);
+      fu.brown += arrh(C.Am, C.EaM, TsT) * fAwT * Math.max(0, 1 - fu.brown / C.Bmax) * dt;
+      const rCT = arrh(C.Ac, C.EaC, TsT) * (0.3 + 0.7 * smooth(0.6, 1, dryT)) * Math.max(0, 1 - fu.char / C.Cmax);
+      fu.char += rCT * dt; fu.charRate = rCT;
+      fu.crisp = clamp(fu.crisp + (dryT > 0.6 ? 0.02 : -0.01) * dt, 0, 1);
+    }
+    // under a lid the crust goes soggy; when basting, a little browning.
     if (bc.top.RH > 0.9) fu.crisp = clamp(fu.crisp - 0.03 * dt, 0, 1);
     if (s.baste > 0) fu.brown += 0.004 * dt;
 
@@ -526,9 +551,28 @@
     return { qBot, hc, boilBottom: boilBottom / dt, evapTop, fatDrip: fatDrip / dt, fatSide: fatSide / dt, juiceSide: juiceSide / dt, Ts };
   }
 
+  /** Explicit conduction is only stable for dt < dz²/(2α). A smashed patty keeps its layer count
+   *  while its thickness collapses, so sub-cycle when the layers get thin. */
+  function stepPattyStable(s, p, dt, bc) {
+    const dz = p.h / p.N;
+    let frozen = false; for (let i = 0; i < p.N; i++) if (p.T[i] < 0) { frozen = true; break; }
+    const alphaMax = frozen ? 1.3e-6 : 2.5e-7;
+    const dtMax = (0.4 * dz * dz) / alphaMax;
+    const n = Math.max(1, Math.min(64, Math.ceil(dt / dtMax)));
+    if (n === 1) return stepPatty(s, p, dt, bc);
+    const h = dt / n; let acc = null;
+    for (let k = 0; k < n; k++) {
+      const r = stepPatty(s, p, h, bc);
+      if (!acc) acc = { ...r }; else for (const key in r) acc[key] += r[key];
+    }
+    for (const key in acc) acc[key] /= n;
+    return acc;
+  }
+
   /** Advance the whole world (stove, pan, patty) by dt seconds. */
   function step(s, dt) {
     const pan = s.pan, st = s.stove, Tamb = s.env.Tamb;
+    if (!s._ms) s._ms = {};
     s.t += dt;
     // ---- burner
     const pTarget = (st.knob / 10) * st.pMax * st.eff;
@@ -558,6 +602,20 @@
       qLoss += (m * C.Lvap) / dt;
       pan.fond += m * 0.3; // dissolved solids left behind
     }
+    // oil level: a film until the floor is covered, then a rising pool; past the rim it spills
+    const floorA = Math.PI * pan.floorR * pan.floorR;
+    pan.oilDepth = pan.oil / 920 / floorA;
+    if (pan.oilDepth > pan.wall) {
+      const excess = (pan.oilDepth - pan.wall) * floorA * 920;
+      pan.oil -= excess; pan.overflow += excess; pan.oilDepth = pan.wall;
+      s._spillAcc = (s._spillAcc || 0) + excess;
+      if (s._spillAcc > 0.02) {
+        s._spillAcc = 0;
+        logEvent(s, `Fat is overflowing the pan onto the stove (${(pan.overflow * 1000).toFixed(0)} g so far).`, 'warn');
+        if (st.pDelivered > 150 && st.id !== 'induction') { pan.flare = 8; logEvent(s, 'GREASE FIRE. Fat has run onto the burner and lit. Flames up the sides of the pan.', 'warn'); }
+      }
+    }
+    if (pan.flare > 0) { pan.flare = Math.max(0, pan.flare - dt); qLoss -= 1500; } // the fire heats the pan too
     // fond browns then burns
     if (pan.fond > 0 && pan.T > 180) { const b = pan.fond * 0.01 * clamp((pan.T - 180) / 60, 0, 2) * dt; pan.fond -= b; pan.fondBurnt += b; }
     // oil oxidises / smokes away slowly above smoke point
@@ -571,12 +629,14 @@
     let pr = null;
     const p = s.patty;
     if (p && s.where === 'pan') {
+      const submerged = pan.oilDepth > p.h * (1 + 0.28 * p.dome) + 0.0005;
+      if (submerged && !s._ms.deepfry) { s._ms.deepfry = true; logEvent(s, `The patty is under ${(pan.oilDepth * 1000).toFixed(0)} mm of fat: this is deep frying now. Both faces will brown.`, 'info'); }
       const bc = {
         bottom: { type: 'pan', T: pan.T, oil: pan.oil, hcMul: pan.hcMul, release: pan.release },
-        top: { h: s.lid ? C.hLid : C.hAirTop, T: s.lidAirT, RH: s.lid ? clamp((s.lidAirT - 60) / 40, s.env.RH, 1) : s.env.RH },
-        side: { T: Tamb + 0.25 * (pan.T - Tamb) },
+        top: submerged ? { h: C.hOil, T: pan.T, RH: 1, oil: true } : { h: s.lid ? C.hLid : C.hAirTop, T: s.lidAirT, RH: s.lid ? clamp((s.lidAirT - 60) / 40, s.env.RH, 1) : s.env.RH },
+        side: { T: Tamb + 0.25 * (pan.T - Tamb), oilDepth: pan.oilDepth, oilT: pan.T },
       };
-      pr = stepPatty(s, p, dt, bc);
+      pr = stepPattyStable(s, p, dt, bc);
       p.cookTime += dt; p.timeDown += dt;
       // heat drawn from pan
       qLoss += pr.qBot;
@@ -596,7 +656,7 @@
         top: { h: C.hAirTop, T: Tamb, RH: s.env.RH },
         side: { T: Tamb },
       };
-      stepPatty(s, p, dt, bc);
+      stepPattyStable(s, p, dt, bc);
       s.rest.t += dt;
     }
 
@@ -604,8 +664,9 @@
     const boilTotal = (pr ? pr.boilBottom : 0) + evapPan;
     const oilFactor = clamp(pan.oil / 0.006, 0, 1.5);
     const hotFactor = clamp((pan.T - 120) / 120, 0, 1.5);
-    const spatter = boilTotal * 4e4 * oilFactor * hotFactor + (pan.water > 0 && pan.T > 150 ? 2 * oilFactor : 0);
-    if (spatter > 0) { const loss = Math.min(pan.oil, spatter * 1.5e-5 * dt); pan.oil -= loss; pan.lostSpatter += loss; }
+    // droplets/s; each carries ~0.15 mg of fat out of the pan (a ~0.6 mm droplet)
+    const spatter = Math.min(80, boilTotal * 4e4 * oilFactor * hotFactor + (pan.water > 0 && pan.T > 150 ? 2 * oilFactor : 0));
+    if (spatter > 0) { const loss = Math.min(pan.oil, spatter * 1.5e-7 * dt); pan.oil -= loss; pan.lostSpatter += loss; }
     pan.T += ((st.pDelivered - qLoss) * dt) / (pan.C + pan.oil * C.cpF);
     if (pan.T > pan.maxT && pan.id === 'nonstick' && !s._ptfeWarned) { s._ptfeWarned = true; logEvent(s, 'Nonstick coating above 260 °C: it is degrading and off-gassing. Not a good idea.', 'warn'); }
 
@@ -613,7 +674,8 @@
     s.diag = {
       sizzle: clamp(boilTotal * 300 + oilBubble * 0.15 + (pr ? pr.evapTop * 20 : 0), 0, 1.5),
       spatter, steam: (pr ? p.steamRate : 0) + evapPan,
-      smoke: pan.smokeOil + pan.smokeChar + pan.smokeFond,
+      smoke: pan.smokeOil + pan.smokeChar + pan.smokeFond + (pan.flare > 0 ? 1.5 : 0),
+      flare: pan.flare, oilDepth: pan.oilDepth, overflow: pan.overflow,
       evapBottom: pr ? pr.boilBottom : 0, evapPan, oilBubble,
       fatDrip: pr ? pr.fatDrip + pr.fatSide : 0, juiceTop: p ? p.poolTop : 0, juiceSide: pr ? pr.juiceSide : 0,
       panQ: pr ? pr.qBot : 0, Ts: pr ? pr.Ts : 0, hc: pr ? pr.hc : 0,
@@ -703,6 +765,7 @@
     else if (Math.min(p.faceDown.brown, p.faceUp.brown) < 1) notes.push('One face browned, the other did not — uneven timing between sides.');
     else if (Math.min(p.faceDown.brown, p.faceUp.brown) > 2.2) notes.push('Proper crust on both faces.');
     if (p.faceDown.torn + p.faceUp.torn > 0) notes.push('Some crust tore off and stayed on the pan when it was moved before releasing.');
+    if (s._ms && s._ms.deepfry) notes.push('It was deep-fried: cooked in enough fat to cover it, so heat came in from every side at once.');
     if (p.lostWaterDrip > 0.006) notes.push(`${(p.lostWaterDrip * 1000).toFixed(0)} g of juice ran out onto the pan instead of staying in the meat.`);
     if (p.lostFat > 0.004) notes.push(`${(p.lostFat * 1000).toFixed(0)} g of fat rendered out and pooled in the pan.`);
     if (overFrac > 0.5 && target.hi < 68) notes.push('A wide grey band: the outside went well past target before the centre got there. Thicker patty, lower heat, or flip more often.');

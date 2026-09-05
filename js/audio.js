@@ -55,7 +55,7 @@
       this.bubbleGain.gain.setTargetAtTime(Math.min(1, diag.oilBubble || 0) * 0.06, t, 0.2);
       this.humGain.gain.setTargetAtTime(knob * 0.05, t, 0.2);
       // crackles: Poisson process at the spatter rate
-      this.crackAcc += (diag.spatter || 0) * dt;
+      this.crackAcc += Math.min(40, diag.spatter || 0) * dt;
       while (this.crackAcc >= 1) { this.crackAcc -= 1; this.crack(0.2 + Math.random() * 0.8); }
     }
     crack(amp) {

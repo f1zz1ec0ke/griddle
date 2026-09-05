@@ -275,6 +275,14 @@
       this.oil = new T.Mesh(new T.CircleGeometry(1, 64), this.oilMat); this.oil.rotation.x = -Math.PI / 2; this.oil.position.y = 0.0007; this.oil.receiveShadow = true; this.panGroup.add(this.oil);
       this.fondMat = new T.MeshStandardMaterial({ color: 0x4a2a12, transparent: true, opacity: 0, roughness: 0.9 });
       this.fond = new T.Mesh(new T.CircleGeometry(1, 48), this.fondMat); this.fond.rotation.x = -Math.PI / 2; this.fond.position.y = 0.0004; this.panGroup.add(this.fond);
+      // fat that overflowed the pan, spreading on the stovetop
+      this.spillMat = new T.MeshPhysicalMaterial({ color: 0x8a5a16, transparent: true, opacity: 0.7, roughness: 0.05, clearcoat: 1, depthWrite: false });
+      this.spill = new T.Mesh(new T.CircleGeometry(1, 64), this.spillMat); this.spill.rotation.x = -Math.PI / 2; this.spill.visible = false; g.add(this.spill);
+      // grease-fire flames around the pan rim (any stove type), shown only while pan.flare > 0
+      this.flareFlames = [];
+      const flareGeo = new T.ConeGeometry(0.012, 1, 6); flareGeo.translate(0, 0.5, 0);
+      const flareMat = new T.MeshBasicMaterial({ color: 0xff8a20, transparent: true, opacity: 0.5, blending: T.AdditiveBlending, depthWrite: false });
+      for (let i = 0; i < 30; i++) { const f = new T.Mesh(flareGeo, flareMat.clone()); f.userData.a = (i / 30) * Math.PI * 2 + (Math.random() - 0.5) * 0.1; f.visible = false; g.add(f); this.flareFlames.push(f); }
       const plate = new T.Mesh(new T.CylinderGeometry(0.11, 0.09, 0.008, 48), new T.MeshStandardMaterial({ color: 0xe9e4da, roughness: 0.35 }));
       plate.position.set(0.42, 0.004, 0.12); plate.receiveShadow = true; plate.castShadow = true; g.add(plate); this.plate = plate;
       this.stainGroup = new T.Group(); g.add(this.stainGroup); this.stains = [];
@@ -582,11 +590,33 @@
       // pan colour with temperature (very hot steel dulls / blues slightly, cast iron just dries)
       const hot = clamp((pan.T - 150) / 250, 0, 1);
       this.panMat.emissive = this.panMat.emissive || new T.Color(0); this.panMat.emissive.setRGB(0.06 * hot * hot, 0.01 * hot, 0);
-      // oil pool: film ~0.3 mm → radius from volume; shimmer
-      const oilV = pan.oil / 920, r = Math.min(this.panR * 0.98, Math.sqrt(oilV / (Math.PI * 0.0006)));
-      this.oil.visible = r > 0.004; this.oil.scale.set(r, r, 1);
-      this.oilMat.opacity = 0.22 + 0.25 * clamp(pan.oil / 0.01, 0, 1);
-      this.oilMat.color.setRGB(0.85 - 0.3 * clamp(pan.fond / 0.02, 0, 1), 0.63 - 0.35 * clamp(pan.fond / 0.02, 0, 1), 0.22);
+      // oil: a spreading film until the floor is covered, then a level that rises up the wall
+      const oilV = pan.oil / 920, depth = pan.oilDepth || 0;
+      let r, oilY;
+      if (depth < 0.0008) { r = Math.min(this.panR * 0.98, Math.sqrt(oilV / (Math.PI * 0.0006))); oilY = this.panFloorY + 0.0007; }
+      else { r = this.panR * 0.99; oilY = this.panFloorY + depth; }
+      this.oil.visible = r > 0.004; this.oil.scale.set(r, r, 1); this.oil.position.y = oilY;
+      const deep = clamp(depth / 0.02, 0, 1);
+      this.oilMat.opacity = 0.2 + 0.2 * clamp(pan.oil / 0.01, 0, 1) + 0.3 * deep;
+      // spilled fat on the stovetop
+      const spillR = Math.min(0.45, Math.sqrt((pan.overflow || 0) / 920 / (Math.PI * 0.0015)));
+      this.spill.visible = spillR > 0.01; this.spill.scale.set(spillR * 1.15, spillR, 1); this.spill.position.y = (this.stainY || 0.0012) + 0.0003;
+      // grease fire
+      const flare = pan.flare || 0;
+      for (const f of this.flareFlames) {
+        f.visible = flare > 0;
+        if (flare > 0) {
+          const fl = 0.5 + 0.5 * Math.random(); const rr = this.panR * 1.08;
+          f.position.set(Math.cos(f.userData.a) * rr, this.PAN_Y - 0.004, Math.sin(f.userData.a) * rr);
+          f.rotation.order = 'YXZ'; f.rotation.y = -f.userData.a; f.rotation.z = -0.25;
+          f.scale.set(0.5 + 0.6 * fl, 0.03 + 0.07 * fl * Math.min(1, flare / 2), 0.5 + 0.6 * fl);
+          f.material.color.setRGB(1, 0.35 + 0.25 * Math.random(), 0.05);
+          f.material.opacity = 0.35 + 0.25 * fl;
+        }
+      }
+      if (flare > 0) { this.flameLight.color.setHex(0xff7a10); this.flameLight.intensity = 3 * (0.7 + 0.3 * Math.random()); }
+      const fondT = clamp(pan.fond / 0.02, 0, 1);
+      this.oilMat.color.setRGB(lerp(0.85, 0.6, Math.max(deep, fondT * 0.5)), lerp(0.63, 0.34, Math.max(deep, fondT)), lerp(0.22, 0.07, deep));
       const fondA = clamp(pan.fond / 0.015, 0, 0.7) + clamp(pan.fondBurnt / 0.01, 0, 0.3);
       this.fond.visible = fondA > 0.02; this.fondMat.opacity = fondA; this.fond.scale.set(this.panR * 0.7, this.panR * 0.7, 1);
       this.fondMat.color.setRGB(0.3 - 0.25 * clamp(pan.fondBurnt / 0.01, 0, 1), 0.17 - 0.12 * clamp(pan.fondBurnt / 0.01, 0, 1), 0.07);
@@ -626,9 +656,11 @@
       const d = state.diag, R = p ? p.D / 2 : 0.05;
       const onPan = p && state.where === 'pan';
       const gx = onPan ? 0 : 0, gz = 0, gy = this.panFloorY;
-      const edge = () => { const a = Math.random() * Math.PI * 2; const rr = R * rand(0.9, 1.15); return [gx + Math.cos(a) * rr, gy + 0.002, gz + Math.sin(a) * rr]; };
-      const anywhereTop = () => { const a = Math.random() * Math.PI * 2; const rr = Math.sqrt(Math.random()) * R * 0.9; return [gx + Math.cos(a) * rr, gy + (p ? p.h : 0) + 0.003, gz + Math.sin(a) * rr]; };
-      const panSpot = () => { const a = Math.random() * Math.PI * 2; const rr = Math.sqrt(Math.random()) * this.panR * 0.8; return [Math.cos(a) * rr, gy + 0.002, Math.sin(a) * rr]; };
+      const oilDepth = state.pan.oilDepth || 0, under = p && oilDepth > p.h;
+      const surfY = gy + Math.max(0.002, oilDepth);
+      const edge = () => { const a = Math.random() * Math.PI * 2; const rr = R * rand(0.9, 1.15); return [gx + Math.cos(a) * rr, surfY, gz + Math.sin(a) * rr]; };
+      const anywhereTop = () => { const a = Math.random() * Math.PI * 2; const rr = Math.sqrt(Math.random()) * R * 0.9; return [gx + Math.cos(a) * rr, Math.max(surfY, gy + (p ? p.h : 0) + 0.003), gz + Math.sin(a) * rr]; };
+      const panSpot = () => { const a = Math.random() * Math.PI * 2; const rr = Math.sqrt(Math.random()) * this.panR * 0.8; return [Math.cos(a) * rr, surfY, Math.sin(a) * rr]; };
       const stoveOn = this.mode === 'stove';
       const steamRate = stoveOn ? (onPan ? d.evapBottom * 6000 + (p ? p.evapTop * 3000 : 0) : 0) + d.evapPan * 5000 : 0;
       this.steam.update(dt, Math.min(steamRate, 160), () => (Math.random() < 0.7 && onPan ? edge() : onPan && Math.random() < 0.5 ? anywhereTop() : panSpot()), 0.01);
@@ -649,7 +681,7 @@
         if (b.y < -0.05) return false; return true;
       });
       // juice beads on the top surface
-      if (p && onPan) {
+      if (p && onPan && !under) {
         const want = clamp(Math.round(p.poolTop / 0.00001), 0, 120);
         while (this.beads.parts.length < want) { const e = anywhereTop(); this.beads.spawn({ x: e[0], y: e[1] - 0.0025, z: e[2], s: rand(0.5, 1.5), sy: 0.6 }); }
         while (this.beads.parts.length > want) this.beads.parts.pop();
