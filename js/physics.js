@@ -145,7 +145,7 @@
       dome: 0, pressT: 0, pressed: false,
       lostWaterEvap: 0, lostWaterDrip: 0, lostFat: 0, lostStuck: 0,
       flips: 0, cookTime: 0, timeDown: 0,
-      peakCenter: T0, cheeses: [],
+      peakCenter: T0, cheeses: [], cheeseUnder: [],
       steamRate: 0, boilBottom: 0, evapTop: 0,
       surfT: T0, // extrapolated bottom surface temp
     };
@@ -257,7 +257,17 @@
     p.faceDown.crisp = Math.max(0, p.faceDown.crisp - 0.1);
     p.flips++; p.timeDown = 0;
     p.dome *= 0.6; // the cooked side, now up, stops pulling
-    if (p.cheeses.length) { s.pan.fond += 0.006 * p.cheeses.length; logEvent(s, `${p.cheeses.length} slice${p.cheeses.length > 1 ? 's' : ''} of cheese slid off into the pan and welded to it.`, 'warn'); p.cheeses = []; }
+    // Cheese: whatever is on top goes face-down onto the pan; whatever was under comes back up,
+    // minus the lace that has dried and welded to the metal.
+    {
+      const up = p.cheeses, under = p.cheeseUnder; let welded = 0;
+      for (const ch of under) { const sk = ch.skirt; const lossF = sk ? clamp(0.3 * sk.dry + 0.6 * sk.char, 0, 0.9) : 0; const lost = ch.mass * lossF; ch.mass -= lost; welded += lost; ch.fried = true; }
+      s.pan.fond += welded * 4;
+      p.cheeses = under.filter((ch) => ch.mass > 0.003);
+      p.cheeseUnder = up;
+      if (up.length) logEvent(s, `Flipped with ${up.length} slice${up.length > 1 ? 's' : ''} of cheese on it. The cheese is now between the meat and the pan: it will fry, weld to the metal, and insulate that side.`, 'warn');
+      if (under.length) logEvent(s, welded > 0.002 ? `${(welded * 1000).toFixed(0)} g of fried cheese stayed welded to the pan; the rest came up as a burnt lace on top.` : 'The fried cheese came back up on top.', under.length && welded > 0.002 ? 'warn' : 'info');
+    }
     logEvent(s, `Flip #${p.flips}. Face ${p.faceDown.id} down.` + (juiceHit > 0.0005 ? ` ${(juiceHit * 1000).toFixed(1)} g of pooled juice hit the pan and flashed to steam.` : ''), 'action');
     return { ok: true, torn };
   }
@@ -370,12 +380,41 @@
       sk.water = Math.max(0, sk.water - m / massS); Tn = C.Tboil + (excess - m * C.Lvap) / Cs;
     }
     sk.T = Tn;
+    cheeseChemistry(sk, dt);
+  }
+  function cheeseChemistry(sk, dt) {
     sk.melt = clamp(sk.melt + 0.15 * sig(sk.T, 52, 5) * dt, 0, 1);
     sk.dry = 1 - clamp(sk.water / CHEESE_WATER, 0, 1);
     const fAw = 0.15 + 0.85 * smooth(0.3, 0.9, sk.dry);
     sk.brown += arrh(C.Am * 2, C.EaM, sk.T) * fAw * Math.max(0, 1 - sk.brown / C.Bmax) * dt;
     const rC = arrh(C.Ac * 2, C.EaC, sk.T) * (0.3 + 0.7 * smooth(0.6, 1, sk.dry)) * Math.max(0, 1 - sk.char / C.Cmax);
     sk.char += rC * dt; sk.charRate = rC;
+  }
+  /** Cheese that was flipped face-down: lumped slices between the pan and the meat. The whole slice
+   *  is in contact with hot metal, so it melts, boils dry, browns and burns as one, and it carries
+   *  the heat to the meat instead of the pan doing so directly. */
+  function stepCheeseUnder(p, dt, bc) {
+    const cu = p.cheeseUnder, n = cu.length, A = p.A;
+    const onPan = bc.bottom.type === 'pan';
+    const hPan = (onPan ? 250 : bc.bottom.h) * A, gc = 300 * A;
+    const flux = new Array(n + 1);
+    flux[0] = hPan * (bc.bottom.T - cu[0].T);
+    for (let k = 1; k < n; k++) flux[k] = gc * (cu[k - 1].T - cu[k].T);
+    flux[n] = gc * (cu[n - 1].T - p.T[0]);
+    for (let k = 0; k < n; k++) {
+      const ch = cu[k];
+      const sk = ch.skirt || (ch.skirt = { T: ch.T, water: CHEESE_WATER, melt: 0, brown: 0, char: 0, dry: 0, charRate: 0, mass: 0 });
+      ch.overhang = 1; ch.contact = 1; ch.fried = true; sk.mass = ch.mass;
+      const Cs = ch.mass * (1500 + 4180 * sk.water);
+      let Tn = ch.T + ((flux[k] - flux[k + 1]) * dt) / Cs;
+      if (Tn > C.Tboil && sk.water > 0) {
+        const excess = Cs * (Tn - C.Tboil); const m = Math.min(sk.water * ch.mass, excess / C.Lvap);
+        sk.water = Math.max(0, sk.water - m / ch.mass); Tn = C.Tboil + (excess - m * C.Lvap) / Cs;
+      }
+      ch.T = Tn; sk.T = Tn; ch.melt = clamp(ch.melt + 0.5 * sig(Tn, 52, 5) * dt, 0, 1);
+      cheeseChemistry(sk, dt);
+    }
+    return { qPan: flux[0], qMeat: flux[n], hc: 300 };
   }
 
   /** Advance the patty by dt (s) with the given boundary conditions. */
@@ -394,8 +433,10 @@
       Q[i] += q; Q[i + 1] -= q;
     }
     // bottom boundary
-    let qBot = 0, hc = 0;
-    if (bc.bottom.type === 'pan') {
+    let qBot = 0, hc = 0, qPan = null;
+    if (p.cheeseUnder.length) {
+      const r = stepCheeseUnder(p, dt, bc); qBot = r.qMeat; qPan = r.qPan; hc = r.hc;
+    } else if (bc.bottom.type === 'pan') {
       const contact = clamp(1 - 0.35 * p.dome, 0.5, 1) * (p.pressT > 0 ? 1.4 : 1);
       const oilFilm = clamp(bc.bottom.oil / 0.003, 0, 1);
       const boiling = p.poolBottom > 1e-6 || (T[0] > 98 && p.w[0] > 0.2 * p.w0);
@@ -548,6 +589,7 @@
     let Ts = T[0] + (Math.max(0, qBot) / A) * (dz / 2) / Math.max(kBot, 0.05);
     if (p.w[0] > 0.25 * p.w0 || p.poolBottom > 1e-6) Ts = Math.min(Ts, C.Tboil + 2);
     if (bc.bottom.type === 'pan') Ts = Math.min(Ts, bc.bottom.T);
+    if (p.cheeseUnder.length) Ts = Math.min(Ts, p.cheeseUnder[p.cheeseUnder.length - 1].T);
     p.surfT = Ts;
     const fd = p.faceDown;
     fd.maxT = Math.max(fd.maxT, Ts);
@@ -594,7 +636,7 @@
     if (p.pressT > 0) p.pressT -= dt;
 
     p.peakCenter = Math.max(p.peakCenter, centerT(p));
-    return { qBot, hc, boilBottom: boilBottom / dt, evapTop, fatDrip: fatDrip / dt, fatSide: fatSide / dt, juiceSide: juiceSide / dt, Ts };
+    return { qBot: qPan == null ? qBot : qPan, hc, boilBottom: boilBottom / dt, evapTop, fatDrip: fatDrip / dt, fatSide: fatSide / dt, juiceSide: juiceSide / dt, Ts };
   }
 
   /** Explicit conduction is only stable for dt < dz²/(2α). A smashed patty keeps its layer count
@@ -691,7 +733,7 @@
       pan.oil += (pr.fatDrip + pr.fatSide) * dt;
       // bottom boiling energy came via the patty node (already in qBot)
       // char smoke
-      let cheeseSmoke = 0; for (const ch of p.cheeses) if (ch.skirt) cheeseSmoke += ch.skirt.charRate * 40 * (0.3 + ch.skirt.char) * ch.skirt.mass / 0.01;
+      let cheeseSmoke = 0; for (const ch of p.cheeses.concat(p.cheeseUnder)) if (ch.skirt) cheeseSmoke += ch.skirt.charRate * 40 * (0.3 + ch.skirt.char) * ch.skirt.mass / 0.01;
       pan.smokeChar = clamp((p.faceDown.charRate || 0) * 40 * (0.3 + p.faceDown.char) + cheeseSmoke, 0, 2.5);
       if (s.baste > 0) s.baste -= dt;
     } else {
@@ -762,8 +804,9 @@
       once('c80', p.peakCenter >= 80, 'Centre 80 °C. This is a hockey puck now.', 'warn');
       const c0 = p.cheeses[0];
       once('cheese', c0 && c0.melt > 0.8, 'Cheese fully melted and draping over the edges.', 'good');
-      const sk = p.cheeses.map((c) => c.skirt).filter((x) => x && x.mass > 1e-5);
-      once('cheeseTouch', sk.length > 0 && !p.cheeses[0].submerged, 'Cheese has drooped onto the pan. It will melt, boil dry into a lace, then brown.', 'info');
+      const sk = p.cheeses.concat(p.cheeseUnder).map((c) => c.skirt).filter((x) => x && x.mass > 1e-5);
+      once('cheeseUnderBurn', p.cheeseUnder.some((c) => c.skirt && c.skirt.char > 0.3), 'The cheese under the patty has burnt onto the pan. It will not come off clean.', 'warn');
+      once('cheeseTouch', sk.length > 0 && !(p.cheeses[0] && p.cheeses[0].submerged), 'Cheese has drooped onto the pan. It will melt, boil dry into a lace, then brown.', 'info');
       once('cheeseFry', p.cheeses.some((c) => c.submerged), 'The cheese is under the fat. It has melted instantly and is frying: it will crisp, brown, then burn.', 'info');
       once('cheeseFrico', sk.some((x) => x.brown > 2), 'The cheese on the pan has gone golden and crisp: frico.', 'good');
       once('cheeseBurn', sk.some((x) => x.char > 0.3), 'The cheese lace is burning: black, bitter, and smoking.', 'warn');
@@ -818,7 +861,8 @@
     else if (Math.min(p.faceDown.brown, p.faceUp.brown) < 1) notes.push('One face browned, the other did not — uneven timing between sides.');
     else if (Math.min(p.faceDown.brown, p.faceUp.brown) > 2.2) notes.push('Proper crust on both faces.');
     if (p.faceDown.torn + p.faceUp.torn > 0) notes.push('Some crust tore off and stayed on the pan when it was moved before releasing.');
-    if (p.cheeses.some((c) => c.skirt && c.skirt.char > 0.3)) notes.push('Burnt cheese lace welded to the edges: acrid.');
+    if (p.cheeses.concat(p.cheeseUnder).some((c) => c.fried)) notes.push('It went into the pan cheese-side down at some point: fried cheese where a crust should be, and some of it left behind on the metal.');
+    else if (p.cheeses.some((c) => c.skirt && c.skirt.char > 0.3)) notes.push('Burnt cheese lace welded to the edges: acrid.');
     else if (p.cheeses.some((c) => c.skirt && c.skirt.brown > 2)) notes.push('A crisp golden cheese skirt around the edge. Good.');
     if (s._ms && s._ms.deepfry) notes.push('It was deep-fried: cooked in enough fat to cover it, so heat came in from every side at once.');
     if (p.lostWaterDrip > 0.006) notes.push(`${(p.lostWaterDrip * 1000).toFixed(0)} g of juice ran out onto the pan instead of staying in the meat.`);

@@ -364,8 +364,31 @@
       const look = { castiron: [0x17140f, 0.55, 0.5], carbonsteel: [0x23201d, 0.4, 0.8], stainless: [0x9ea2a6, 0.25, 0.95], nonstick: [0x141416, 0.35, 0.3] }[id] || [0x17140f, 0.55, 0.5];
       this.panMat.color.setHex(look[0]); this.panMat.roughness = look[1]; this.panMat.metalness = look[2];
       const m = new T.Mesh(geo, this.panMat); m.castShadow = true; m.receiveShadow = true; m.position.y = this.PAN_Y;
-      const handle = new T.Mesh(new T.BoxGeometry(0.22, 0.014, 0.03), this.panMat); handle.position.set(-R - 0.14, 0.045, 0); handle.rotation.z = -0.15; handle.castShadow = true; m.add(handle);
-      if (id === 'nonstick' || id === 'stainless') { const grip = new T.Mesh(new T.BoxGeometry(0.16, 0.02, 0.034), new T.MeshStandardMaterial({ color: 0x111111, roughness: 0.8 })); grip.position.set(-R - 0.17, 0.045, 0); grip.rotation.z = -0.15; m.add(grip); }
+      // handle: rooted in the wall just under the rim, rising outward; a boss covers the joint
+      const rimR = R * 1.06, hy = wall - 0.009, tilt = 0.14, len = 0.23;
+      const handle = new T.Mesh(new T.BoxGeometry(len, 0.012, 0.028), this.panMat);
+      handle.position.set(-(rimR - 0.012) - (len / 2) * Math.cos(tilt), hy + (len / 2) * Math.sin(tilt), 0); handle.rotation.z = -tilt; handle.castShadow = true; m.add(handle);
+      const boss = new T.Mesh(new T.BoxGeometry(0.03, 0.022, 0.04), this.panMat); boss.position.set(-rimR + 0.004, hy - 0.002, 0); boss.castShadow = true; m.add(boss);
+      if (id === 'nonstick' || id === 'stainless') {
+        const grip = new T.Mesh(new T.BoxGeometry(0.15, 0.02, 0.034), new T.MeshStandardMaterial({ color: 0x111111, roughness: 0.8 }));
+        const d = 0.04 + 0.075; grip.position.set(-(rimR - 0.012) - d * Math.cos(tilt), hy + d * Math.sin(tilt), 0); grip.rotation.z = -tilt; grip.castShadow = true; m.add(grip);
+      }
+      // helper handle opposite: a loop cast into the rim
+      class Loop extends T.Curve { getPoint(t, target) { const a = -Math.PI / 2 + t * Math.PI; return (target || new T.Vector3()).set(rimR - 0.004 + 0.028 * Math.cos(a), hy, 0.03 * Math.sin(a)); } }
+      const loop = new T.Mesh(new T.TubeGeometry(new Loop(), 24, 0.006, 8, false), this.panMat); loop.castShadow = true; m.add(loop);
+      // lid: glass dome with a steel rim and knob, shown when the lid is on; fogs with steam
+      if (this.lid) this.panGroup.remove(this.lid);
+      const lid = new T.Group(); this.lid = lid; lid.position.y = this.PAN_Y + wall; lid.visible = false;
+      this.lidGlass = new T.MeshPhysicalMaterial({ color: 0xd6e4ec, transparent: true, opacity: 0.2, roughness: 0.04, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.03, side: T.DoubleSide, depthWrite: false });
+      const domeH = 0.075, nd = 14, lp = [];
+      for (let i = 0; i <= nd; i++) { const t = i / nd; const a = (Math.PI / 2) * t; lp.push({ r: rimR * Math.cos(a) * (1 - 0.15 * t) + 0 * t, y: 0.004 + domeH * Math.sin(a), v: t }); }
+      lp[nd].r = 0.0001;
+      const dome = new T.Mesh(buildLathe(lp, 72, Math.PI * 2), this.lidGlass); lid.add(dome);
+      const steel = new T.MeshStandardMaterial({ color: 0xc9ccd0, metalness: 0.9, roughness: 0.3 });
+      const rim = new T.Mesh(new T.TorusGeometry(rimR, 0.004, 8, 72), steel); rim.rotation.x = Math.PI / 2; rim.position.y = 0.003; lid.add(rim);
+      const knob = new T.Mesh(new T.CylinderGeometry(0.014, 0.01, 0.018, 24), new T.MeshStandardMaterial({ color: 0x111111, roughness: 0.6 })); knob.position.y = 0.004 + domeH + 0.009; lid.add(knob);
+      const stem = new T.Mesh(new T.CylinderGeometry(0.004, 0.004, 0.012, 12), steel); stem.position.y = 0.004 + domeH + 0.002; lid.add(stem);
+      this.panGroup.add(lid); this.lidFog = 0;
       this.panMesh = m; this.panGroup.add(m);
       this.panFloorY = this.PAN_Y + 0.004; this.panR = R * 0.95;
       this.oil.position.y = this.panFloorY + 0.0007; this.fond.position.y = this.panFloorY + 0.0004;
@@ -432,7 +455,7 @@
       this.cutMat = new T.MeshStandardMaterial({ map: this.cutTex, roughness: 0.6, side: T.DoubleSide });
       this.pattyMesh = new T.Mesh(new T.BufferGeometry(), this.pattyMat); this.pattyMesh.castShadow = true; this.pattyMesh.receiveShadow = true; g.add(this.pattyMesh);
       this.cutMesh = new T.Mesh(new T.BufferGeometry(), this.cutMat); this.cutMesh.visible = false; this.cutMesh.castShadow = true; g.add(this.cutMesh);
-      this.cheeseMeshes = [];
+      this.cheeseMeshes = []; this.underMeshes = [];
       this.scene.add(g);
       this.lastGeo = null; this.forceTex = true;
       this._rebuildGeometry(true);
@@ -598,6 +621,14 @@
       this.oil.visible = r > 0.004; this.oil.scale.set(r, r, 1); this.oil.position.y = oilY;
       const deep = clamp(depth / 0.02, 0, 1);
       this.oilMat.opacity = 0.2 + 0.2 * clamp(pan.oil / 0.01, 0, 1) + 0.3 * deep;
+      // lid: on/off, and a light fogging that follows the steam trapped under it
+      if (this.lid) {
+        this.lid.visible = !!state.lid;
+        const target = state.lid ? clamp(0.35 * clamp((state.lidAirT - 50) / 50, 0, 1) + (state.diag.steam || 0) * 250, 0, 0.55) : 0;
+        this.lidFog += (target - this.lidFog) * Math.min(1, dt / (target > this.lidFog ? 3 : 6));
+        this.lidGlass.opacity = 0.2 + 0.4 * this.lidFog; this.lidGlass.roughness = 0.04 + 0.5 * this.lidFog;
+        this.lidGlass.color.setRGB(0.84 + 0.1 * this.lidFog, 0.89 + 0.06 * this.lidFog, 0.93 + 0.02 * this.lidFog);
+      }
       // spilled fat on the stovetop
       const spillR = Math.min(0.45, Math.sqrt((pan.overflow || 0) / 920 / (Math.PI * 0.0015)));
       this.spill.visible = spillR > 0.01; this.spill.scale.set(spillR * 1.15, spillR, 1); this.spill.position.y = (this.stainY || 0.0012) + 0.0003;
@@ -626,7 +657,7 @@
       if (!p && this.patty) this.setPatty(null);
       if (p) {
         const g = this.pattyGroup;
-        if (state.where === 'pan') { g.position.set(0, this.panFloorY, 0); }
+        if (state.where === 'pan') { g.position.set(0, this.panFloorY + 0.0012 * p.cheeseUnder.length, 0); }
         else if (state.where === 'board') { g.position.set(0, 0, 0); }
         else { g.position.set(this.mode === 'stove' ? 0.42 : 0, this.mode === 'stove' ? 0.009 : 0, this.mode === 'stove' ? 0.12 : 0); }
         this._rebuildGeometry(false);
@@ -642,14 +673,29 @@
           m.castShadow = true; m.userData.base = geo.attributes.position.array.slice(); m.rotation.y = p.cheeses[k].rot; g.add(m); this.cheeseMeshes.push(m);
         }
         const yellow = [0.95, 0.70, 0.24], melted = [0.99, 0.74, 0.20], golden = [0.72, 0.42, 0.10], dark = [0.28, 0.13, 0.05];
+        const skirtColour = (sk, onTop) => { if (!sk) return onTop; let c = mix3(onTop, golden, clamp(sk.brown / 2.5, 0, 1)); c = mix3(c, dark, clamp((sk.brown - 2.5) / 3, 0, 1)); return mix3(c, [0.06, 0.05, 0.04], clamp(sk.char / 0.8, 0, 1)); };
+        // cheese that was flipped face-down: flat fried squares pressed between the pan and the meat
+        this.underMeshes = this.underMeshes || [];
+        while (this.underMeshes.length > p.cheeseUnder.length) g.remove(this.underMeshes.pop());
+        while (this.underMeshes.length < p.cheeseUnder.length) {
+          const geo = new T.PlaneGeometry(0.095, 0.095, 2, 2); geo.rotateX(-Math.PI / 2);
+          const m = new T.Mesh(geo, new T.MeshPhysicalMaterial({ color: 0xf2b23c, roughness: 0.5, clearcoat: 0.2, side: T.DoubleSide }));
+          m.receiveShadow = true; g.add(m); this.underMeshes.push(m);
+        }
+        for (let k = 0; k < this.underMeshes.length; k++) {
+          const mesh = this.underMeshes[k], ch = p.cheeseUnder[k], sk = ch.skirt;
+          const lift = 0.0012 * p.cheeseUnder.length;
+          mesh.rotation.y = ch.rot; mesh.position.y = -lift + 0.0005 + k * 0.0012; const sp = 1.06 + 0.06 * ch.melt; mesh.scale.set(sp, 1, sp);
+          const c = skirtColour(sk, mix3(yellow, melted, ch.melt)); mesh.material.color.setRGB(c[0], c[1], c[2]);
+          mesh.material.roughness = clamp(0.5 - 0.3 * ch.melt + (sk ? 0.4 * sk.dry : 0), 0.05, 1);
+        }
         for (let k = 0; k < this.cheeseMeshes.length; k++) {
           const mesh = this.cheeseMeshes[k], ch = p.cheeses[k], R = p.D / 2, geo = mesh.geometry, pos = geo.attributes.position.array, col = geo.attributes.color.array, base = mesh.userData.base;
           const topY = p.h * (1 + 0.28 * p.dome) + k * 0.0015; mesh.position.y = topY + 0.0008;
           const floorLocal = -mesh.position.y + 0.0006 + k * 0.0004; // pan / plate surface, in mesh coordinates
           const sk = ch.skirt; const sc = 1 + 0.15 * ch.melt + 0.004 * k;
-          let onTop = mix3(yellow, melted, ch.melt);
-          let skirtCol = onTop;
-          if (sk) { skirtCol = mix3(onTop, golden, clamp(sk.brown / 2.5, 0, 1)); skirtCol = mix3(skirtCol, dark, clamp((sk.brown - 2.5) / 3, 0, 1)); skirtCol = mix3(skirtCol, [0.06, 0.05, 0.04], clamp(sk.char / 0.8, 0, 1)); }
+          const onTop = mix3(yellow, melted, ch.melt);
+          const skirtCol = skirtColour(sk, onTop);
           for (let i = 0; i < pos.length; i += 3) {
             const x = base[i], z = base[i + 2]; const rr = Math.hypot(x, z);
             const over = Math.max(0, rr - R * 0.98);
@@ -658,7 +704,7 @@
             let spread = sc;
             if (touching) { y = floorLocal; spread = sc + (sk ? 0.18 * sk.melt : 0) + 0.1 * ch.melt * over / Math.max(rr, 1e-4); }
             pos[i] = x * spread; pos[i + 2] = z * spread; pos[i + 1] = y;
-            const c = touching || ch.submerged ? skirtCol : onTop;
+            const c = touching || ch.submerged || ch.fried ? skirtCol : onTop;
             col[i] = c[0]; col[i + 1] = c[1]; col[i + 2] = c[2];
           }
           geo.attributes.position.needsUpdate = true; geo.attributes.color.needsUpdate = true; geo.computeVertexNormals();

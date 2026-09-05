@@ -182,3 +182,24 @@ test('cheese under deep-frying oil melts at once, browns within a minute and eve
   cookHeld(s, 420, 190);
   assert.ok(ch.skirt.char > 0.2, `char=${ch.skirt.char}`); assert.ok(finite(p));
 });
+
+test('flipping a cheeseburger puts the cheese under the meat: it fries, welds, and comes back up as lace', () => {
+  const s = P.createState({}); preheat(s, 230);
+  const p = std({ massG: 110, thicknessMm: 14 }); P.placePatty(s, p); cookHeld(s, 120, 230); P.flipPatty(s);
+  P.addCheese(s); cookHeld(s, 90, 230);
+  P.flipPatty(s);
+  assert.equal(p.cheeses.length, 0); assert.equal(p.cheeseUnder.length, 1);
+  const T0before = p.T[0];
+  cookHeld(s, 120, 230);
+  const ch = p.cheeseUnder[0];
+  assert.ok(ch.skirt.dry > 0.5 && ch.skirt.brown > 0.5, `dry=${ch.skirt.dry} brown=${ch.skirt.brown}`);
+  // the meat face only browns once the cheese between it and the pan has boiled dry and heated up
+  assert.ok(p.faceDown.brown < 5, `brown=${p.faceDown.brown}`);
+  assert.ok(finite(p));
+  cookHeld(s, 240, 230);
+  assert.ok(ch.skirt.brown > 1.5, `brown after 6 min under=${ch.skirt.brown}`);
+  const fondBefore = s.pan.fond; P.flipPatty(s);
+  assert.equal(p.cheeseUnder.length, 0);
+  assert.ok(s.pan.fond > fondBefore, 'some fried cheese should weld to the pan');
+  assert.ok(p.cheeses.length === 0 || p.cheeses[0].fried);
+});
