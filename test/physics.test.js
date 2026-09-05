@@ -1,0 +1,118 @@
+// node --test test/
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const P = require('../js/physics.js');
+const DT = 0.025;
+
+function preheat(s, target) { P.setKnob(s, 8); let g = 0; while (s.pan.T < target && g++ < 80000) P.step(s, DT); return s.t; }
+function cookFor(s, seconds) { const until = s.t + seconds; while (s.t < until) P.step(s, DT); }
+function hold(s, T) { P.setKnob(s, P.clamp(s.stove.knob + (T - s.pan.T) * 0.02, 0, 10)); }
+function cookHeld(s, seconds, T) { const until = s.t + seconds; while (s.t < until) { hold(s, T); P.step(s, DT); } }
+function std(over) { return P.makePatty({ massG: 150, thicknessMm: 20, fatFrac: 0.2, tempC: 4, dimple: true, work: 0.4, salt: 'surface', ...over }); }
+function finite(p) { for (const k of ['T', 'w', 'fs', 'fl', 'fr', 'p', 'dM', 'dA', 'dC', 'dG']) for (const v of p[k]) if (!Number.isFinite(v)) return false; return true; }
+
+test('patty geometry: 150 g at 20 mm is a ~10 cm patty', () => {
+  const p = std();
+  assert.ok(p.D > 0.09 && p.D < 0.11, `D=${p.D}`);
+  assert.ok(p.N >= 10 && p.N <= 80);
+  assert.ok(Math.abs(P.pattyMass(p) - 0.15) < 1e-9);
+});
+
+test('cast iron on a gas burner preheats past 200 °C in under 6 minutes', () => {
+  const s = P.createState({ pan: 'castiron', stove: 'gas' });
+  const t = preheat(s, 200);
+  assert.ok(t < 360, `took ${t}s`);
+});
+
+test('electric coil lags: pan is slower to respond than gas', () => {
+  const g = P.createState({ pan: 'castiron', stove: 'gas' }); P.setKnob(g, 8); cookFor(g, 30);
+  const e = P.createState({ pan: 'castiron', stove: 'electric' }); P.setKnob(e, 8); cookFor(e, 30);
+  assert.ok(e.pan.T < g.pan.T);
+});
+
+test('bottom layer stays pinned at the boiling point while it still holds water', () => {
+  const s = P.createState({}); preheat(s, 230);
+  const p = std(); P.placePatty(s, p);
+  let maxWhileWet = 0;
+  for (let i = 0; i < 4000; i++) { hold(s, 230); P.step(s, DT); if (p.w[0] > 0.3 * p.w0) maxWhileWet = Math.max(maxWhileWet, p.T[0]); }
+  assert.ok(maxWhileWet < 103, `T0 reached ${maxWhileWet} while wet`);
+  assert.ok(finite(p));
+});
+
+test('no browning without a dry, hot surface; browning once dry', () => {
+  const s = P.createState({}); preheat(s, 230);
+  const p = std(); P.placePatty(s, p);
+  cookHeld(s, 5, 230);
+  assert.ok(p.faceDown.brown < 0.2, 'browned while wet');
+  cookHeld(s, 180, 230);
+  assert.ok(p.faceDown.brown > 1.5, `brown=${p.faceDown.brown}`);
+});
+
+test('classic 20 mm patty, 3.5 min a side on a 230 °C pan, lands rare-to-medium-rare after resting', () => {
+  const s = P.createState({}); preheat(s, 230); P.addFat(s, 'canola', 8);
+  const p = std(); P.placePatty(s, p);
+  cookHeld(s, 210, 230); P.flipPatty(s); cookHeld(s, 210, 230); P.removePatty(s); cookFor(s, 120);
+  const r = P.evaluate(s, 'medium-rare');
+  assert.ok(r.peak > 44 && r.peak < 60, `peak=${r.peak}`);
+  assert.ok(r.massEnd / r.massStart > 0.68 && r.massEnd / r.massStart < 0.9, `mass ratio ${r.massEnd / r.massStart}`);
+  assert.ok(r.fatLost > 0.003, 'fat should render out');
+  assert.ok(finite(p));
+});
+
+test('mass is conserved: start = remaining + steam + drip + fat + stuck', () => {
+  const s = P.createState({}); preheat(s, 230);
+  const p = std(); P.placePatty(s, p);
+  cookHeld(s, 200, 230); P.flipPatty(s); cookHeld(s, 200, 230);
+  const total = P.pattyMass(p) + p.lostWaterEvap + p.lostWaterDrip + p.lostFat + p.lostStuck;
+  assert.ok(Math.abs(total - p.massKg0) < 2e-4, `drift ${(total - p.massKg0) * 1000} g`);
+});
+
+test('fattier blends render more fat', () => {
+  const run = (f) => { const s = P.createState({}); preheat(s, 230); const p = std({ fatFrac: f }); P.placePatty(s, p); cookHeld(s, 240, 230); P.flipPatty(s); cookHeld(s, 240, 230); return p.lostFat; };
+  assert.ok(run(0.3) > run(0.1) * 1.8);
+});
+
+test('flipping often cooks the centre faster than one flip', () => {
+  const run = (sides) => { const s = P.createState({}); preheat(s, 230); const p = std(); P.placePatty(s, p); for (let i = 0; i < sides.length; i++) { cookHeld(s, sides[i], 230); if (i < sides.length - 1) P.flipPatty(s); } P.removePatty(s); cookFor(s, 90); return p.peakCenter; };
+  assert.ok(run(new Array(12).fill(40)) > run([240, 240]) + 2);
+});
+
+test('frozen patty: centre far behind a fridge patty after the same time', () => {
+  const run = (T) => { const s = P.createState({}); preheat(s, 230); const p = std({ tempC: T }); P.placePatty(s, p); cookHeld(s, 240, 230); P.flipPatty(s); cookHeld(s, 240, 230); return P.centerT(p); };
+  assert.ok(run(-18) < run(4) - 10);
+});
+
+test('flipping raw meat early on stainless tears it; nonstick never sticks', () => {
+  const st = P.createState({ pan: 'stainless' }); preheat(st, 200); const p1 = std(); P.placePatty(st, p1); cookHeld(st, 15, 200);
+  const r1 = P.flipPatty(st); assert.ok(r1.torn > 0 && p1.lostStuck > 0);
+  const ns = P.createState({ pan: 'nonstick' }); preheat(ns, 200); const p2 = std(); P.placePatty(ns, p2); cookHeld(ns, 15, 200);
+  const r2 = P.flipPatty(ns); assert.equal(r2.torn, 0);
+});
+
+test('pressing a cooked patty squeezes juice out onto the pan', () => {
+  const s = P.createState({}); preheat(s, 230); const p = std(); P.placePatty(s, p); cookHeld(s, 200, 230); P.flipPatty(s); cookHeld(s, 120, 230);
+  const before = p.lostWaterDrip; P.pressPatty(s, false);
+  assert.ok(p.lostWaterDrip > before + 0.0005);
+});
+
+test('smashing a raw patty makes it thin and wide', () => {
+  const s = P.createState({}); preheat(s, 250); const p = std({ massG: 100, thicknessMm: 15 }); P.placePatty(s, p); cookHeld(s, 2, 250);
+  const D0 = p.D; P.pressPatty(s, true);
+  assert.ok(p.h < 0.01 && p.D > D0 * 1.2);
+});
+
+test('oil past its smoke point smokes; a well-done order is scored on a 71+ °C centre', () => {
+  const s = P.createState({}); P.addFat(s, 'butter', 10); preheat(s, 230); cookFor(s, 5);
+  assert.ok(s.diag.smoke > 0.2, `smoke=${s.diag.smoke}`);
+  const p = std({ thicknessMm: 12, massG: 110 }); P.placePatty(s, p);
+  while (P.centerT(p) < 66) { cookHeld(s, 30, 220); P.flipPatty(s); }
+  P.removePatty(s); cookFor(s, 90);
+  const r = P.evaluate(s, 'well-done');
+  assert.ok(r.peak >= 71 && r.peak <= 80, `peak=${r.peak}`); assert.ok(r.parts.doneness >= 40, `doneness=${r.parts.doneness}`);
+});
+
+test('carry-over: centre keeps rising after removal', () => {
+  const s = P.createState({}); preheat(s, 230); const p = std(); P.placePatty(s, p); cookHeld(s, 240, 230); P.flipPatty(s); cookHeld(s, 240, 230); P.removePatty(s);
+  const atRemoval = P.centerT(p); cookFor(s, 120);
+  assert.ok(p.peakCenter > atRemoval + 2, `${atRemoval} → ${p.peakCenter}`);
+});

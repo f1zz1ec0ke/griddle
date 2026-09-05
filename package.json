@@ -1,0 +1,12 @@
+{
+  "name": "griddle-burger-simulator",
+  "version": "1.0.0",
+  "description": "A physically honest burger cooking simulator: 1-D heat and mass transfer through the patty, protein denaturation, fat rendering, Maillard browning and pyrolysis, rendered in a 3D kitchen.",
+  "private": true,
+  "scripts": {
+    "start": "python3 -m http.server 8000",
+    "test": "node --test test/physics.test.js",
+    "calibrate": "node test/calibrate.js"
+  },
+  "license": "MIT"
+}
