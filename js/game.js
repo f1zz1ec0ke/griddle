@@ -83,7 +83,7 @@
         $('knob').value = st.stove.knob; $('knob-v').textContent = String(st.stove.knob);
       } else {
         this.state = P.createState({ pan: this.equip.pan, stove: this.equip.stove });
-        this.vp.setPan(this.equip.pan); this.vp.clearStains();
+        this.vp.setStove(this.equip.stove); this.vp.setPan(this.equip.pan); this.vp.clearStains();
         $('knob').value = 0; $('knob-v').textContent = '0';
       }
       this.stoveUsed = true;
@@ -112,7 +112,7 @@
       $('f-dimple').addEventListener('change', (e) => { F.dimple = e.target.checked; s.rebuildPreview(); });
       $('btn-to-stove').onclick = () => s.startCook();
       // equipment
-      const swapStove = () => { s.state = P.createState({ pan: s.equip.pan, stove: s.equip.stove }); s.vp.setPan(s.equip.pan); s.vp.clearStains(); $('knob').value = 0; $('knob-v').textContent = '0'; P.logEvent(s.state, `Swapped to ${s.state.pan.name.toLowerCase()} on ${s.state.stove.name.split(' (')[0].toLowerCase()}: a cold pan.`, 'action'); s.logN = -1; };
+      const swapStove = () => { s.state = P.createState({ pan: s.equip.pan, stove: s.equip.stove }); s.vp.setStove(s.equip.stove); s.vp.setPan(s.equip.pan); s.vp.clearStains(); $('knob').value = 0; $('knob-v').textContent = '0'; P.logEvent(s.state, `Swapped to ${s.state.pan.name.toLowerCase()} on ${s.state.stove.name.split(' (')[0].toLowerCase()}: a cold pan.`, 'action'); s.logN = -1; };
       $('e-stove').addEventListener('change', (e) => { s.equip.stove = e.target.value; if (s.phase === 'cook' && !s.placed) swapStove(); });
       $('e-pan').addEventListener('change', (e) => { s.equip.pan = e.target.value; if (s.phase === 'cook' && !s.placed) swapStove(); });
       $('e-fat').addEventListener('change', (e) => { s.equip.fat = e.target.value; });

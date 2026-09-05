@@ -267,37 +267,7 @@
       const g = new T.Group(); this.stove = g;
       const top = new T.Mesh(new T.BoxGeometry(1.2, 0.03, 0.7), new T.MeshStandardMaterial({ color: 0x15130f, roughness: 0.3, metalness: 0.7 }));
       top.position.y = -0.015; top.receiveShadow = true; g.add(top);
-      // pan support (grate): cast-iron frame with radial fingers and feet; the pan rests on top
-      // of it, ~3.5 cm above the stovetop, with the burner flames underneath in the gap.
-      this.PAN_Y = 0.036;               // underside of the pan
-      const grateTop = this.PAN_Y - 0.0005, barH = 0.010, barY = grateTop - barH / 2;
-      const grateMat = new T.MeshStandardMaterial({ color: 0x141312, roughness: 0.9, metalness: 0.3 });
-      const grate = new T.Group(); g.add(grate);
-      const addBox = (w, h, d, x, y, z, ry) => { const m = new T.Mesh(new T.BoxGeometry(w, h, d), grateMat); m.position.set(x, y, z); m.rotation.y = ry || 0; m.castShadow = true; m.receiveShadow = true; grate.add(m); return m; };
-      // outer square frame with feet at the corners
-      const half = 0.175;
-      addBox(2 * half + 0.012, barH, 0.012, 0, barY, half); addBox(2 * half + 0.012, barH, 0.012, 0, barY, -half);
-      addBox(0.012, barH, 2 * half + 0.012, half, barY, 0); addBox(0.012, barH, 2 * half + 0.012, -half, barY, 0);
-      for (const sx of [-1, 1]) for (const sz of [-1, 1]) addBox(0.014, grateTop, 0.014, sx * half, grateTop / 2, sz * half);
-      // radial fingers from the frame in toward the burner, ending on an inner ring
-      for (let i = 0; i < 4; i++) {
-        const a = Math.PI / 4 + (i * Math.PI) / 2; const r0 = 0.06, r1 = half * Math.SQRT2 - 0.004; const L = r1 - r0;
-        addBox(L, barH, 0.012, Math.cos(a) * (r0 + L / 2), barY, Math.sin(a) * (r0 + L / 2), -a);
-      }
-      const ring = new T.Mesh(new T.TorusGeometry(0.06, 0.006, 8, 40), grateMat); ring.rotation.x = Math.PI / 2; ring.position.y = barY; ring.castShadow = true; grate.add(ring);
-      // burner: base, cap, ports, and a ring of flames whose tips stay below the pan
-      const base = new T.Mesh(new T.CylinderGeometry(0.052, 0.056, 0.008, 40), new T.MeshStandardMaterial({ color: 0x2a2724, roughness: 0.6, metalness: 0.5 })); base.position.y = 0.004; g.add(base);
-      const cap = new T.Mesh(new T.CylinderGeometry(0.038, 0.048, 0.006, 40), new T.MeshStandardMaterial({ color: 0x1b1b1b, roughness: 0.7 })); cap.position.y = 0.011; cap.castShadow = true; g.add(cap);
-      this.flameBaseY = 0.009; this.flameMaxLen = this.PAN_Y - this.flameBaseY - 0.003;
-      this.flames = [];
-      const fm = new T.MeshBasicMaterial({ color: 0x3f7cff, transparent: true, opacity: 0.85, blending: T.AdditiveBlending, depthWrite: false });
-      const coneGeo = new T.ConeGeometry(0.0055, 1, 6); coneGeo.translate(0, 0.5, 0); // unit-length cone, base at the origin
-      for (let i = 0; i < 28; i++) {
-        const f = new T.Mesh(coneGeo, fm.clone());
-        const a = (i / 28) * Math.PI * 2; f.position.set(Math.cos(a) * 0.047, this.flameBaseY, Math.sin(a) * 0.047);
-        f.userData.a = a; f.rotation.order = 'YXZ'; f.rotation.y = -a; f.rotation.z = -0.55; // lean outward from the port
-        g.add(f); this.flames.push(f);
-      }
+      this.burnerGroup = null; this.flames = []; this.setStove('gas');
       // pan
       this.panGroup = new T.Group(); g.add(this.panGroup);
       this.panMat = new T.MeshStandardMaterial({ color: 0x2b2725, roughness: 0.55, metalness: 0.7 });
@@ -312,6 +282,70 @@
       this.stainGeo = new T.CircleGeometry(1, 10);
       this.setPan('castiron');
       this.scene.add(g);
+    }
+    /** Build the burner for a stove type. Each has its own pan height: a gas pan sits on a grate
+     *  above the flames, an electric pan rests on the coil in its drip bowl, an induction pan sits
+     *  flush on the glass. */
+    setStove(id) {
+      this.stoveType = id;
+      if (this.burnerGroup) this.stove.remove(this.burnerGroup);
+      const g = new T.Group(); this.burnerGroup = g; this.stove.add(g);
+      this.flames = []; this.coilMat = null; this.indLed = null;
+      if (id === 'electric') {
+        // chrome drip bowl with a spiral sheathed element; the pan sits on top of the coil
+        const chrome = new T.MeshStandardMaterial({ color: 0xb4b4b4, metalness: 0.9, roughness: 0.35, side: T.DoubleSide });
+        const bowl = new T.Mesh(new T.CylinderGeometry(0.118, 0.075, 0.013, 56, 1, true), chrome); bowl.position.y = 0.0065; bowl.receiveShadow = true; g.add(bowl);
+        const floor = new T.Mesh(new T.CircleGeometry(0.075, 56), chrome); floor.rotation.x = -Math.PI / 2; floor.position.y = 0.0006; floor.receiveShadow = true; g.add(floor);
+        const coilY = 0.0125, coilR = 0.0045;
+        class Spiral extends T.Curve { getPoint(t, target) { const a = t * 4.5 * Math.PI * 2; const r = 0.028 + 0.068 * t; return (target || new T.Vector3()).set(r * Math.cos(a), coilY, r * Math.sin(a)); } }
+        this.coilMat = new T.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.55, metalness: 0.4, emissive: new T.Color(0xff3a00), emissiveIntensity: 0 });
+        const coil = new T.Mesh(new T.TubeGeometry(new Spiral(), 360, coilR, 8, false), this.coilMat); coil.castShadow = true; g.add(coil);
+        const term = new T.Mesh(new T.BoxGeometry(0.03, 0.009, 0.014), new T.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.7 })); term.position.set(0.108, coilY, 0.0); term.rotation.y = 0.1; g.add(term);
+        this.PAN_Y = coilY + coilR + 0.0005;
+        this.stainY = 0.0012;
+      } else if (id === 'induction') {
+        // glass-ceramic hob: dark glossy slab with a printed zone ring and a power indicator
+        const glass = new T.Mesh(new T.BoxGeometry(0.56, 0.004, 0.5), new T.MeshPhysicalMaterial({ color: 0x0b0b0e, roughness: 0.06, metalness: 0.1, clearcoat: 1, clearcoatRoughness: 0.03 }));
+        glass.position.y = -0.0005; glass.receiveShadow = true; g.add(glass);
+        const mark = new T.MeshBasicMaterial({ color: 0x7a7570 });
+        const ring = new T.Mesh(new T.RingGeometry(0.107, 0.110, 96), mark); ring.rotation.x = -Math.PI / 2; ring.position.y = 0.00155; g.add(ring);
+        const inner = new T.Mesh(new T.RingGeometry(0.052, 0.054, 64), mark); inner.rotation.x = -Math.PI / 2; inner.position.y = 0.00155; g.add(inner);
+        for (let i = 0; i < 4; i++) { const t = new T.Mesh(new T.PlaneGeometry(0.02, 0.003), mark); const a = (i * Math.PI) / 2; t.rotation.x = -Math.PI / 2; t.rotation.z = -a; t.position.set(Math.cos(a) * 0.125, 0.00155, Math.sin(a) * 0.125); g.add(t); }
+        this.indLed = new T.MeshBasicMaterial({ color: 0x2a0000 });
+        const led = new T.Mesh(new T.CircleGeometry(0.0035, 12), this.indLed); led.rotation.x = -Math.PI / 2; led.position.set(0.17, 0.00155, 0.2); g.add(led);
+        this.PAN_Y = 0.0015 + 0.0005;
+        this.stainY = 0.0022;
+      } else {
+        // gas: cast-iron pan support (square frame, radial fingers, feet) holding the pan ~3.5 cm
+        // above the stovetop, with the burner flames underneath in the gap.
+        this.PAN_Y = 0.036;
+        this.stainY = 0.0012;
+        const grateTop = this.PAN_Y - 0.0005, barH = 0.010, barY = grateTop - barH / 2;
+        const grateMat = new T.MeshStandardMaterial({ color: 0x141312, roughness: 0.9, metalness: 0.3 });
+        const addBox = (w, h, d, x, y, z, ry) => { const m = new T.Mesh(new T.BoxGeometry(w, h, d), grateMat); m.position.set(x, y, z); m.rotation.y = ry || 0; m.castShadow = true; m.receiveShadow = true; g.add(m); return m; };
+        const half = 0.175;
+        addBox(2 * half + 0.012, barH, 0.012, 0, barY, half); addBox(2 * half + 0.012, barH, 0.012, 0, barY, -half);
+        addBox(0.012, barH, 2 * half + 0.012, half, barY, 0); addBox(0.012, barH, 2 * half + 0.012, -half, barY, 0);
+        for (const sx of [-1, 1]) for (const sz of [-1, 1]) addBox(0.014, grateTop, 0.014, sx * half, grateTop / 2, sz * half);
+        for (let i = 0; i < 4; i++) {
+          const a = Math.PI / 4 + (i * Math.PI) / 2; const r0 = 0.06, r1 = half * Math.SQRT2 - 0.004; const L = r1 - r0;
+          addBox(L, barH, 0.012, Math.cos(a) * (r0 + L / 2), barY, Math.sin(a) * (r0 + L / 2), -a);
+        }
+        const ring = new T.Mesh(new T.TorusGeometry(0.06, 0.006, 8, 40), grateMat); ring.rotation.x = Math.PI / 2; ring.position.y = barY; ring.castShadow = true; g.add(ring);
+        const base = new T.Mesh(new T.CylinderGeometry(0.052, 0.056, 0.008, 40), new T.MeshStandardMaterial({ color: 0x2a2724, roughness: 0.6, metalness: 0.5 })); base.position.y = 0.004; g.add(base);
+        const cap = new T.Mesh(new T.CylinderGeometry(0.038, 0.048, 0.006, 40), new T.MeshStandardMaterial({ color: 0x1b1b1b, roughness: 0.7 })); cap.position.y = 0.011; cap.castShadow = true; g.add(cap);
+        this.flameBaseY = 0.009; this.flameMaxLen = this.PAN_Y - this.flameBaseY - 0.003;
+        const fm = new T.MeshBasicMaterial({ color: 0x3f7cff, transparent: true, opacity: 0.85, blending: T.AdditiveBlending, depthWrite: false });
+        const coneGeo = new T.ConeGeometry(0.0055, 1, 6); coneGeo.translate(0, 0.5, 0); // unit-length cone, base at the origin
+        for (let i = 0; i < 28; i++) {
+          const f = new T.Mesh(coneGeo, fm.clone());
+          const a = (i / 28) * Math.PI * 2; f.position.set(Math.cos(a) * 0.047, this.flameBaseY, Math.sin(a) * 0.047);
+          f.rotation.order = 'YXZ'; f.rotation.y = -a; f.rotation.z = -0.55; // lean outward from the port
+          g.add(f); this.flames.push(f);
+        }
+      }
+      this.flameLight.position.y = this.PAN_Y - 0.01;
+      if (this.panSpec) this.setPan(this.panSpec.id);
     }
     setPan(id) {
       const pan = P.PANS[id] || P.PANS.castiron; this.panSpec = pan;
@@ -521,18 +555,30 @@
     update(state, dt) {
       this.clock += dt; this.texClock += dt;
       const pan = state.pan, p = state.patty;
-      // stove & flames
-      const knob = state.stove.knob / 10;
-      for (let i = 0; i < this.flames.length; i++) {
-        const f = this.flames[i]; const fl = 0.6 + 0.4 * Math.sin(this.clock * 37 + i * 1.7) * Math.random();
-        // flame length grows with the knob but is capped so the tips never reach the pan underside
-        const len = this.flameMaxLen * clamp((0.25 + 0.75 * knob) * (0.85 + 0.15 * fl), 0, 1);
-        f.visible = knob > 0.02; f.scale.set(0.7 + 0.6 * knob, len, 0.7 + 0.6 * knob);
-        f.rotation.z = -0.35 - 0.35 * knob; // higher gas: flames fan further outward
-        f.material.color.setRGB(0.25 + knob * 0.3, 0.45, 1.0);
-        f.material.opacity = 0.5 + 0.4 * knob;
+      // stove: gas flames, electric coil glow (follows delivered power, so it lags), induction LED
+      const knob = state.stove.knob / 10, stv = state.stove;
+      if (this.stoveType === 'gas') {
+        for (let i = 0; i < this.flames.length; i++) {
+          const f = this.flames[i]; const fl = 0.6 + 0.4 * Math.sin(this.clock * 37 + i * 1.7) * Math.random();
+          // flame length grows with the knob but is capped so the tips never reach the pan underside
+          const len = this.flameMaxLen * clamp((0.25 + 0.75 * knob) * (0.85 + 0.15 * fl), 0, 1);
+          f.visible = knob > 0.02; f.scale.set(0.7 + 0.6 * knob, len, 0.7 + 0.6 * knob);
+          f.rotation.z = -0.35 - 0.35 * knob; // higher gas: flames fan further outward
+          f.material.color.setRGB(0.25 + knob * 0.3, 0.45, 1.0);
+          f.material.opacity = 0.5 + 0.4 * knob;
+        }
+        this.flameLight.color.setHex(0xff8a2a);
+        this.flameLight.intensity = knob * 0.8 * (0.85 + 0.15 * Math.sin(this.clock * 23));
+      } else if (this.stoveType === 'electric' && this.coilMat) {
+        const glow = clamp((stv.pDelivered || 0) / (stv.pMax * stv.eff), 0, 1);
+        this.coilMat.emissiveIntensity = 2.4 * glow * glow;
+        this.coilMat.color.setRGB(0.11 + 0.25 * glow, 0.11, 0.11);
+        this.flameLight.color.setHex(0xff4a14);
+        this.flameLight.intensity = 1.1 * glow * glow;
+      } else {
+        if (this.indLed) this.indLed.color.setHex(knob > 0.02 ? 0xff2a1a : 0x2a0000);
+        this.flameLight.intensity = 0;
       }
-      this.flameLight.intensity = knob * 0.8 * (0.85 + 0.15 * Math.sin(this.clock * 23));
       // pan colour with temperature (very hot steel dulls / blues slightly, cast iron just dries)
       const hot = clamp((pan.T - 150) / 250, 0, 1);
       this.panMat.emissive = this.panMat.emissive || new T.Color(0); this.panMat.emissive.setRGB(0.06 * hot * hot, 0.01 * hot, 0);
@@ -599,7 +645,7 @@
         b.vy -= 9.81 * dt; b.x += b.vx * dt; b.y += b.vy * dt; b.z += b.vz * dt;
         const rr = Math.hypot(b.x, b.z);
         if (b.y < gy + 0.001 && rr < this.panR) { b.y = gy + 0.001; b.vy = 0; b.vx *= 0.5; b.vz *= 0.5; b.age += dt; return b.age < 0.6; }
-        if (b.y < 0.0015 && rr > this.panR) { this._addStain(b.x, b.z, b.s); return false; }
+        if (b.y < (this.stainY || 0.0012) + 0.0005 && rr > this.panR) { this._addStain(b.x, b.z, b.s); return false; }
         if (b.y < -0.05) return false; return true;
       });
       // juice beads on the top surface
@@ -620,7 +666,7 @@
     }
     _addStain(x, z, s) {
       if (this.stains.length > 150) { const old = this.stains.shift(); this.stainGroup.remove(old); }
-      const m = new T.Mesh(this.stainGeo, this.stainMat); m.rotation.x = -Math.PI / 2; m.position.set(x, 0.0012, z); const sc = 0.002 * s * rand(0.8, 1.6); m.scale.set(sc, sc * rand(0.7, 1.3), 1); m.rotation.z = Math.random() * 3;
+      const m = new T.Mesh(this.stainGeo, this.stainMat); m.rotation.x = -Math.PI / 2; m.position.set(x, this.stainY || 0.0012, z); const sc = 0.002 * s * rand(0.8, 1.6); m.scale.set(sc, sc * rand(0.7, 1.3), 1); m.rotation.z = Math.random() * 3;
       this.stainGroup.add(m); this.stains.push(m);
     }
     clearStains() { for (const s of this.stains) this.stainGroup.remove(s); this.stains.length = 0; }
