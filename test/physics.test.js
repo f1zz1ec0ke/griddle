@@ -232,7 +232,7 @@ function recipe(target, thick, pull, opts = {}) {
     hold(s, opts.Tpan || 200); P.step(s, DT); since += DT;
     if (opts.single) { if (p.flips === 0 && since >= opts.single) { P.flipPatty(s); since = 0; } }
     else if (since >= 45 && !p.faceDown.stuck) { P.flipPatty(s); since = 0; }
-    if (opts.press && Math.abs(since - 20) < DT / 2) P.pressPatty(s, false);
+    if (opts.press && since > 1 && Math.round(since / DT) % Math.round(20 / DT) === 0) P.pressPatty(s, false); // presses every 20 s, the way people do
   }
   P.removePatty(s); cookFor(s, opts.rest == null ? 150 : opts.rest);
   return P.evaluate(s, target);
@@ -248,5 +248,5 @@ test('careless technique is still punished', () => {
   const noCarry = recipe('medium-rare', 18, 54);                            // pulled at the band's top: carry-over overshoots
   const noRest = recipe('medium-rare', 18, 46, { rest: 0 });                 // cut straight off the heat
   for (const [name, r] of Object.entries({ thickOneFlip, pressed, nuclear, noCarry, noRest })) console.log(`   ${name}: ${r.total} ${JSON.stringify(r.parts)}`);
-  assert.ok(thickOneFlip.total < 90, 'thick single flip'); assert.ok(pressed.total < 93, 'pressed'); assert.ok(nuclear.total < 85, 'nuclear'); assert.ok(noCarry.total < 80, 'no carry-over allowance');
+  assert.ok(thickOneFlip.total < 90, 'thick single flip'); assert.ok(pressed.total < 92, 'pressed'); assert.ok(nuclear.total < 85, 'nuclear'); assert.ok(noCarry.total < 80, 'no carry-over allowance');
 });
