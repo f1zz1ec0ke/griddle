@@ -35,6 +35,7 @@ npm run calibrate    # prints time-series for a dozen cooking scenarios
 | `C` | cutaway: slice the patty in half and watch the inside cook |
 | `Space` | lay the patty in, then flip; `F` flip, `P` press |
 | `Tab`, click a patty, or the chips under the ticket | select which patty the buttons act on |
+| Stove: charcoal kettle | the knob becomes the vents, the pan goes away, and the lid is the kettle's |
 
 The **Inspector** button opens a live chart (pan, crust surface, bottom layer, centre, top) and a
 table of everything the model knows. **Hard mode** hides the thermometers.
@@ -100,6 +101,20 @@ band is the volume of meat whose peak temperature went a whole doneness step pas
 At service the patty goes on a sesame bun; juice that ran out during the rest soaks the bottom
 bun.
 
+**The charcoal kettle** replaces the pan with a steel grate over 1.5 kg of lump charcoal. The
+knob is the vents: airflow sets the temperature the bed heads for (~350 °C banked, ~750 °C wide
+open, with the lid throttling it) and how fast the coals burn down to ash. The grate is thin bars
+heated by the bed's radiation and the hot gas coming up through it. A patty over the coals gets
+bar contact on about a quarter of its face — hotter lines that brand grill marks with their own
+browning and char — and radiation plus hot gas on the rest, with radiant heat browning the edge
+too; its crust settles well above a pan's temperature, so it sears faster and chars sooner. Juice
+falls through the grate and fat lands on the coals: a steady drip is a small licking flame, a
+rush (press it, or a 70/30 blend) is a flare-up that raises the radiant load, soots the underside
+and the edge, and dies back in seconds. The lid turns the kettle into an oven: hot dome air and
+the dome's radiation cook and brown the top face while the coals calm down. Grilled patties are
+judged with the grill in mind (more juice is lost through the grate, the edge cooks from the
+side), and the bars' marks count as crust.
+
 **Tickets with several burgers** share the pan. Each patty is formed separately (a well-done
 wants a thinner patty than a rare), laid in at its own spot, flipped, pressed, cheesed and pulled
 on its own, and each is scored against its own order. The ticket score is the mean, less a
@@ -126,6 +141,11 @@ The recipe that does it, found by `node test/player.js` and confirmed through th
 
 Smashing, a screaming-hot pan, a single flip on a thick patty, or cutting it straight off the
 heat will all cost you somewhere, and the results screen says where.
+
+On the charcoal kettle the window is narrower, but it is there: light it on 8, wait for the
+bed to glow and the grate to pass 250 °C, then run the vents on 7 (bed around 630 °C). An 18 mm
+patty flipped every 45 s and pulled at 47 °C lands a medium-rare 100 with bars branded into
+both faces. Vents wide open, a thick patty and lazy flips is a charred one.
 
 ## Layout
 

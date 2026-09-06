@@ -134,7 +134,8 @@
       // The stove persists between tickets: same pan and burner means the pan keeps its heat,
       // fat, fond and the spatter on the stovetop. A different pan is a cold pan.
       const st = this.state;
-      const reuse = this.stoveUsed && st && st.pan.id === this.equip.pan && st.stove.id === this.equip.stove;
+      const grill = P.STOVES[this.equip.stove].kind === 'grill';
+      const reuse = this.stoveUsed && st && st.stove.id === this.equip.stove && (grill || st.pan.id === this.equip.pan);
       if (reuse) {
         st.patties = []; st.patty = null; st.where = 'board'; st.rest.t = 0; st.lid = false; st.baste = 0; st.served = false;
         st.trace = []; st.lastTrace = -1; st.events = [];
@@ -156,11 +157,25 @@
       $('log').innerHTML = '';
       const labels = this.ticket.items.map((id) => this.label(id)).join(' + ');
       const n = this.patties.length;
-      if (reuse) P.logEvent(this.state, `Order: ${labels}. ${n > 1 ? `${n} patties are` : 'Patty is'} on the board; the pan is still at ${this.state.pan.T.toFixed(0)} °C from the last ticket` + (this.state.pan.oil > 0.001 ? ` with ${(this.state.pan.oil * 1000).toFixed(1)} g of fat in it.` : '.'), 'info');
+      const surf = grill ? 'grate' : 'pan';
+      if (reuse) P.logEvent(this.state, `Order: ${labels}. ${n > 1 ? `${n} patties are` : 'Patty is'} on the board; the ${surf} is still at ${this.state.pan.T.toFixed(0)} °C from the last ticket` + (this.state.pan.oil > 0.001 ? ` with ${(this.state.pan.oil * 1000).toFixed(1)} g of fat in it.` : '.'), 'info');
+      else if (grill) P.logEvent(this.state, `Order: ${labels}. ${n > 1 ? `${n} patties are` : 'Patty is'} on the board. The kettle is cold: light the coals (open the vents) and give the bed a few minutes.`, 'info');
       else P.logEvent(this.state, `Order: ${labels}. ${n > 1 ? `${n} patties are` : 'Patty is'} on the board; the pan is cold (${this.state.pan.T.toFixed(0)} °C).`, 'info');
+      this.applyEquipUI();
       if (n > 1) P.logEvent(this.state, `${n} burgers on one ticket: they all have to come off hot together. Lay the one that needs longest in first; every cold patty pulls the pan down.`, 'info');
       this.setPhase('cook');
       this.setSpeed(1);
+    }
+    /** Labels and controls that differ between a pan on a stove and a grate over coals. */
+    applyEquipUI() {
+      const grill = !!this.state.grill;
+      $('knob-label').textContent = grill ? 'Vents' : 'Burner';
+      $('h-pan-label').textContent = grill ? 'IR gun · grate' : 'IR gun · pan';
+      $('btn-wash').textContent = grill ? 'Brush grate' : 'Wash pan';
+      $('btn-wash').title = grill ? 'Wire-brush the bars while they are hot.' : 'Empty and scrub the pan under the tap. Cools it, leaves it wet.';
+      $('btn-fat').disabled = grill; $('e-fat').disabled = grill; $('e-fatg').disabled = grill;
+      $('e-pan').hidden = grill; $('e-pan-wrap').hidden = grill;
+      $('btn-lid').title = grill ? 'The kettle lid: turns the grill into an oven and calms the coals.' : 'A glass lid: traps steam, cooks the top, softens the crust.';
     }
     layoutSpots() {
       const maxR = Math.max(...this.patties.map((p) => p.D / 2));
@@ -181,7 +196,7 @@
       $('chips').addEventListener('click', (e) => { const b = e.target.closest('[data-chip]'); if (b) s.select(Number(b.dataset.chip)); });
       this.vp.onPick = (p) => { const i = s.patties.indexOf(p); if (i >= 0) s.select(i); };
       // equipment
-      const swapStove = () => { s.state = P.createState({ pan: s.equip.pan, stove: s.equip.stove }); s.vp.setStove(s.equip.stove); s.vp.setPan(s.equip.pan); s.vp.clearStains(); $('knob').value = 0; $('knob-v').textContent = '0'; s.layoutSpots(); P.logEvent(s.state, `Swapped to ${s.state.pan.name.toLowerCase()} on ${s.state.stove.name.split(' (')[0].toLowerCase()}: a cold pan.`, 'action'); s.logN = -1; };
+      const swapStove = () => { s.state = P.createState({ pan: s.equip.pan, stove: s.equip.stove }); s.vp.setStove(s.equip.stove); s.vp.setPan(s.equip.pan); s.vp.clearStains(); $('knob').value = 0; $('knob-v').textContent = '0'; s.layoutSpots(); s.applyEquipUI(); P.logEvent(s.state, s.state.grill ? 'Wheeled the kettle out. Cold coals, cold grate: light it and wait.' : `Swapped to ${s.state.pan.name.toLowerCase()} on ${s.state.stove.name.split(' (')[0].toLowerCase()}: a cold pan.`, 'action'); s.logN = -1; };
       $('e-stove').addEventListener('change', (e) => { s.equip.stove = e.target.value; if (s.phase === 'cook' && !s.anyPlaced()) swapStove(); });
       $('e-pan').addEventListener('change', (e) => { s.equip.pan = e.target.value; if (s.phase === 'cook' && !s.anyPlaced()) swapStove(); });
       $('e-fat').addEventListener('change', (e) => { s.equip.fat = e.target.value; });
@@ -256,10 +271,11 @@
       $('btn-place').textContent = this.patties.length > 1 ? `Lay patty ${this.sel + 1} in (space)` : 'Lay the patty in (space)';
       for (const id of ['btn-flip', 'btn-press', 'btn-smash', 'btn-cheese', 'btn-baste', 'btn-remove']) $(id).disabled = !inPan;
       $('btn-lid').disabled = !on || this.inPan().length === 0;
-      if (inPan) { const raw = P.gridMean(p, p.dM) < 0.25; $('btn-smash').disabled = !raw || p.h < 0.006; $('btn-cheese').disabled = p.cheeses.length >= 24; }
+      if (inPan) { const raw = P.gridMean(p, p.dM) < 0.25; $('btn-smash').disabled = !raw || p.h < 0.006 || !!this.state.grill; $('btn-cheese').disabled = p.cheeses.length >= 24; $('btn-baste').disabled = !!this.state.grill; }
       $('btn-probe').disabled = !(inPan || (p && where === 'rest'));
       $('btn-wash').disabled = !on || this.inPan().length > 0; $('btn-wipe').disabled = !on;
       $('e-stove').disabled = $('e-pan').disabled = this.anyPlaced();
+      if (this.state.grill) { $('btn-fat').disabled = true; }
       $('btn-cut').disabled = this.inPan().length > 0;
     }
     // ------------------------------------------------------------ loop
@@ -311,8 +327,12 @@
       if (!$('inspector').hidden) {
         const rows = [];
         const add = (k, v) => rows.push(`<tr><td>${k}</td><td>${v}</td></tr>`);
-        add('Burner power to pan', fmt(st.stove.pDelivered, 0) + ' W');
-        add('Pan temperature', fmt(st.pan.T, 1) + ' °C mean · centre ' + fmt(st.pan.Tcenter, 0) + ' · edge ' + fmt(st.pan.Tedge, 0));
+        if (st.grill) {
+          add('Coal bed', fmt(st.grill.Tfire, 0) + ' °C · ' + fmt(st.grill.coal * 1000, 0) + ' g of charcoal left · burning ' + fmt(st.stove.pDelivered / 1000, 1) + ' kW');
+          add('Flare / fat on the coals', fmt(st.grill.flare, 2) + ' · ' + fmt(st.grill.fatOnCoals * 1000, 2) + ' g');
+          add('Dome air', fmt(st.grill.Tdome, 0) + ' °C' + (st.lid ? ' (lid on)' : ''));
+        } else add('Burner power to pan', fmt(st.stove.pDelivered, 0) + ' W');
+        add(st.grill ? 'Grate temperature' : 'Pan temperature', fmt(st.pan.T, 1) + ' °C mean · centre ' + fmt(st.pan.Tcenter, 0) + ' · edge ' + fmt(st.pan.Tedge, 0));
         add('Oil / fat in pan', fmt(st.pan.oil * 1000, 1) + ' g' + (st.pan.oilKind !== 'none' ? ` (${st.pan.oilKind})` : ''));
         add('Water on pan', fmt(st.pan.water * 1000, 2) + ' g');
         add('Fond', fmt(st.pan.fond * 1000, 1) + ' (burnt ' + fmt(st.pan.fondBurnt * 1000, 1) + ')');

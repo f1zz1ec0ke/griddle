@@ -15,7 +15,7 @@
   <div class="ticket" id="ticket" data-phase="form cook rest result" tabindex="0">Ticket: <b id="ticket-target">—</b></div>
   <div class="chips" id="chips" hidden></div>
   <div class="readouts" data-phase="cook rest">
-    <div class="ro"><label>IR gun · pan</label><span id="h-pan">—</span></div>
+    <div class="ro"><label id="h-pan-label">IR gun · pan</label><span id="h-pan">—</span></div>
     <div class="ro"><label>probe</label><span id="h-probe">—</span></div>
     <div class="ro"><label>clock</label><span id="h-time">0:00</span></div>
     <div class="ro small"><span id="h-side"></span></div>
@@ -71,10 +71,10 @@
   <div data-phase="cook" class="section">
     <h2>2 · Cook</h2>
     <div class="row two">
-      <div><label>Stove</label><select id="e-stove"><option value="gas" selected>Gas 3.5 kW</option><option value="electric">Electric coil</option><option value="induction">Induction</option></select></div>
-      <div><label>Pan</label><select id="e-pan"><option value="castiron" selected>Cast iron 12"</option><option value="carbonsteel">Carbon steel 12"</option><option value="stainless">Stainless 12"</option><option value="nonstick">Nonstick 10"</option></select></div>
+      <div><label>Stove</label><select id="e-stove"><option value="gas" selected>Gas 3.5 kW</option><option value="electric">Electric coil</option><option value="induction">Induction</option><option value="charcoal">Charcoal kettle</option></select></div>
+      <div id="e-pan-wrap"><label>Pan</label><select id="e-pan"><option value="castiron" selected>Cast iron 12"</option><option value="carbonsteel">Carbon steel 12"</option><option value="stainless">Stainless 12"</option><option value="nonstick">Nonstick 10"</option></select></div>
     </div>
-    <div class="row knob"><label>Burner <b id="knob-v">0</b>/10</label><input type="range" id="knob" min="0" max="10" step="0.5" value="0"></div>
+    <div class="row knob"><label><span id="knob-label">Burner</span> <b id="knob-v">0</b>/10</label><input type="range" id="knob" min="0" max="10" step="0.5" value="0"></div>
     <div class="row two">
       <div><label>Fat</label><select id="e-fat"><option value="canola" selected>Canola oil</option><option value="avocado">Avocado oil</option><option value="butter">Butter</option><option value="ghee">Ghee</option><option value="tallow">Beef tallow</option><option value="none">Nothing</option></select></div>
       <div><label>Amount <b id="e-fatg-v">8 g</b></label><input type="range" id="e-fatg" min="2" max="300" step="2" value="8"></div>
@@ -141,7 +141,9 @@
   <div class="card">
     <h2>How this works</h2>
     <p><b>Viewport</b> — left-drag orbits, wheel or right-drag zooms, right-click zooms onto whatever you clicked (right-click again to back out), middle/shift-drag pans. Keys 1–4 are view presets, R resets, arrows orbit. <b>Cutaway</b> (C) slices the patty so you can watch the grey band creep inward.</p>
-    <p><b>Physics</b> — the patty is a stack of ~0.6 mm layers. Each one has its own temperature, water, fat and denatured-protein state. Heat comes in through a contact conductance from the pan (which has its own thermal mass and burner), water boils off at 100 °C and pins the surface there until it dries, juice squeezed out by contracting proteins migrates to the faces, fat melts and drains, and once the surface is dry and hot the Maillard reaction browns it — then pyrolysis blackens it. Colour, shine, steam, smoke, spatter and sizzle are all driven by those numbers.</p>
+    <p><b>Physics</b> — the patty is a grid of ~0.6 mm layers by ~4 mm rings, so the rim and the middle are different places. Each cell has its own temperature, water, fat and denatured-protein state. Heat comes in through a contact conductance from the pan (twelve rings of metal with a burner hot spot), water boils off at 100 °C and pins the surface there until it dries, juice squeezed out by contracting proteins migrates to the faces, fat melts and drains, and once the surface is dry and hot the Maillard reaction browns it — then pyrolysis blackens it. Colour, shine, steam, smoke, spatter and sizzle are all driven by those numbers.</p>
+    <p><b>Tickets</b> can carry up to three burgers with different orders. Form each one, then use the chips under the ticket, <b>Tab</b>, or a click on a patty to choose which one the buttons act on. They all go out together, so a burger that rests too long while the others cook goes out lukewarm. A cold patty pulls the pan down under it.</p>
+    <p><b>Charcoal</b> — pick the kettle as the stove. The knob is the vents: open them, wait for the bed to glow and the grate to pass 250 °C. The bars brand marks, radiant heat browns the edges, fat that drips on the coals flares up and soots the meat, and the lid turns the kettle into an oven.</p>
     <p><b>Doneness</b> is the <i>peak</i> centre temperature, including carry-over while resting. Rare 49–52, medium-rare 54–57, medium 60–63, medium-well 65–68, well done 71+ °C.</p>
     <p><b>Tips from real life</b> — preheat properly; don't press a thick patty; a thumb dimple stops it doming; flipping often cooks faster and more evenly; the juice pooling on top is a flip cue; meat releases from the pan on its own once the crust sets; rest before cutting.</p>
     <button id="btn-help-close" onclick="document.getElementById('help').hidden=true">Close</button>

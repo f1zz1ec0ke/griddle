@@ -600,6 +600,52 @@
         const led = new T.Mesh(new T.CircleGeometry(0.0035, 12), this.indLed); led.rotation.x = -Math.PI / 2; led.position.set(0.17, 0.00155, 0.2); g.add(led);
         this.PAN_Y = 0.0015 + 0.0005;
         this.stainY = 0.0022;
+      } else if (id === 'charcoal') {
+        // a 22" kettle on the counter: enamelled bowl on three legs, a bed of lump charcoal, a
+        // steel grate 2 cm below the rim, and a domed lid with a wooden handle that sits on when
+        // the lid is on. The grate is the cooking surface: PAN_Y is its top.
+        const enamel = new T.MeshPhysicalMaterial({ color: 0x0c0c0e, roughness: 0.25, metalness: 0.2, clearcoat: 0.8, clearcoatRoughness: 0.15 });
+        const inside = new T.MeshStandardMaterial({ color: 0x1a1816, roughness: 0.75, metalness: 0.1, side: T.BackSide });
+        const steel = new T.MeshStandardMaterial({ color: 0x3a3a3c, roughness: 0.5, metalness: 0.8 });
+        const Rk = 0.285, bowlBottom = 0.06, bowlTop = 0.235;
+        this.PAN_Y = bowlTop - 0.022; this.stainY = 0.0012;
+        const bp = []; const nb = 16;
+        for (let i = 0; i <= nb; i++) { const t = i / nb; const a = -Math.PI / 2 + (Math.PI / 2) * t; bp.push({ r: Math.max(0.0001, Rk * Math.cos(a) * (0.3 + 0.7 * t) + 0), y: bowlBottom + (bowlTop - bowlBottom) * (1 + Math.sin(a)), v: t }); }
+        bp[0].r = 0.0001;
+        const bowl = new T.Mesh(buildLathe(bp, 72, Math.PI * 2), enamel); bowl.castShadow = true; bowl.receiveShadow = true; g.add(bowl);
+        const bowlIn = new T.Mesh(bowl.geometry, inside); bowlIn.receiveShadow = true; g.add(bowlIn);
+        const rim = new T.Mesh(new T.TorusGeometry(Rk, 0.006, 8, 96), steel); rim.rotation.x = Math.PI / 2; rim.position.y = bowlTop; g.add(rim);
+        for (let i = 0; i < 3; i++) { const a = Math.PI / 2 + (i * 2 * Math.PI) / 3; const leg = new T.Mesh(new T.CylinderGeometry(0.008, 0.008, bowlBottom + 0.09, 10), steel); leg.position.set(Math.cos(a) * 0.19, (bowlBottom + 0.09) / 2 - 0.0, Math.sin(a) * 0.19); leg.rotation.z = -Math.cos(a) * 0.35; leg.rotation.x = Math.sin(a) * 0.35; leg.castShadow = true; g.add(leg); }
+        // ash pan and the coal bed: lumps of charcoal, glowing from inside as the bed heats
+        const bedY = bowlBottom + 0.075;
+        const ash = new T.Mesh(new T.CircleGeometry(0.2, 48), new T.MeshStandardMaterial({ color: 0x4d4944, roughness: 1 })); ash.rotation.x = -Math.PI / 2; ash.position.y = bedY - 0.012; g.add(ash);
+        this.coalMat = new T.MeshStandardMaterial({ color: 0x0f0e0d, roughness: 0.95, emissive: new T.Color(0xff3a08), emissiveIntensity: 0 });
+        const lumpGeo = new T.DodecahedronGeometry(0.019, 0);
+        const lumps = new T.InstancedMesh(lumpGeo, this.coalMat, 160); lumps.castShadow = true; lumps.receiveShadow = true;
+        let sd = 99; const rnd = () => { sd = (sd * 1103515245 + 12345) & 0x7fffffff; return sd / 0x7fffffff; };
+        const dm = new T.Object3D();
+        const lc = new T.Color();
+        for (let i = 0; i < 160; i++) { const a = rnd() * Math.PI * 2, rr = Math.sqrt(rnd()) * 0.185; const sc = 0.6 + rnd() * 0.9; dm.position.set(Math.cos(a) * rr, bedY + (rnd() - 0.5) * 0.02 + 0.004 * sc, Math.sin(a) * rr); dm.rotation.set(rnd() * 3, rnd() * 3, rnd() * 3); dm.scale.set(sc, sc * (0.6 + rnd() * 0.6), sc); dm.updateMatrix(); lumps.setMatrixAt(i, dm.matrix); const k = 0.35 + rnd() * 0.9; lumps.setColorAt(i, lc.setRGB(k, k * (0.85 + 0.15 * rnd()), k * 0.8)); }
+        lumps.instanceColor.needsUpdate = true;
+        g.add(lumps); this.coals = lumps; this.coalY = bedY;
+        // the grate: a ring with rods across it
+        const Rg = Rk * 0.93, rodR = 0.003, gy = this.PAN_Y - rodR;
+        const ringG = new T.Mesh(new T.TorusGeometry(Rg, rodR * 1.2, 8, 96), steel); ringG.rotation.x = Math.PI / 2; ringG.position.y = gy; ringG.castShadow = true; g.add(ringG);
+        for (let x = -Rg + 0.012; x < Rg; x += 0.024) { const L = 2 * Math.sqrt(Math.max(0, Rg * Rg - x * x)); if (L < 0.02) continue; const rod = new T.Mesh(new T.CylinderGeometry(rodR, rodR, L, 8), steel); rod.rotation.x = Math.PI / 2; rod.position.set(x, gy, 0); rod.castShadow = true; g.add(rod); }
+        for (const z of [-0.14, 0.14]) { const brace = new T.Mesh(new T.CylinderGeometry(rodR, rodR, 2 * Math.sqrt(Rg * Rg - z * z), 8), steel); brace.rotation.z = Math.PI / 2; brace.position.set(0, gy - rodR, z); g.add(brace); }
+        // the lid: a dome that sits on the rim, with a vent and a wooden handle
+        const lid = new T.Group(); lid.position.y = bowlTop; lid.visible = false;
+        const lp = []; const nl = 14; const lidH = 0.13;
+        for (let i = 0; i <= nl; i++) { const t = i / nl; const a = (Math.PI / 2) * t; lp.push({ r: Math.max(0.0001, Rk * Math.cos(a)), y: lidH * Math.sin(a) * (0.6 + 0.4 * (1 - t)) + 0.003, v: t }); }
+        lp[nl].r = 0.0001;
+        const dome = new T.Mesh(buildLathe(lp, 72, Math.PI * 2), enamel); dome.castShadow = true; lid.add(dome);
+        const lrim = new T.Mesh(new T.TorusGeometry(Rk, 0.005, 8, 96), steel); lrim.rotation.x = Math.PI / 2; lrim.position.y = 0.004; lid.add(lrim);
+        const wood = new T.MeshStandardMaterial({ color: 0x6b4a2a, roughness: 0.7 });
+        const handle = new T.Mesh(new T.CylinderGeometry(0.012, 0.012, 0.11, 12), wood); handle.rotation.z = Math.PI / 2; handle.position.y = lidH + 0.035; lid.add(handle);
+        for (const x of [-0.045, 0.045]) { const post = new T.Mesh(new T.CylinderGeometry(0.004, 0.004, 0.03, 8), steel); post.position.set(x, lidH + 0.018, 0); lid.add(post); }
+        const vent = new T.Mesh(new T.CylinderGeometry(0.03, 0.03, 0.004, 24), steel); vent.position.set(0.12, lidH * 0.55, 0.05); vent.rotation.z = 0.5; lid.add(vent);
+        g.add(lid); this.kettleLid = lid;
+        this.flameBaseY = bedY + 0.01; this.flameMaxLen = this.PAN_Y - this.flameBaseY + 0.05;
       } else {
         // gas: cast-iron pan support (square frame, radial fingers, feet) holding the pan ~3.5 cm
         // above the stovetop, with the burner flames underneath in the gap.
@@ -629,11 +675,17 @@
           g.add(f); this.flames.push(f);
         }
       }
-      this.flameLight.position.y = this.PAN_Y - 0.01;
+      this.flameLight.position.y = id === 'charcoal' ? this.coalY + 0.03 : this.PAN_Y - 0.01;
+      if (id !== 'charcoal') { this.coals = null; this.coalMat = null; this.kettleLid = null; }
       if (this.panSpec) this.setPan(this.panSpec.id);
+      if (this.panGroup) this.panGroup.visible = id !== 'charcoal';
+      if (id === 'charcoal') { this.panFloorY = this.PAN_Y; this.panR = 0.26; }
+      if (this.controls && this.mode === 'stove') this.controls.reset('stove'); // the grate sits far higher than a pan
     }
     setPan(id) {
       const pan = P.PANS[id] || P.PANS.castiron; this.panSpec = pan;
+      if (this.stoveType === 'charcoal') { this.panGroup.visible = false; this.panFloorY = this.PAN_Y; this.panR = 0.26; return; }
+      this.panGroup.visible = true;
       if (this.panMesh) this.panGroup.remove(this.panMesh);
       const R = pan.diam / 2, wall = 0.045;
       const prof = [{ r: 0, y: 0, v: 0, hard: false }, { r: R * 0.97, y: 0, v: 0.3, hard: true }, { r: R * 1.02, y: wall * 0.5, v: 0.6, hard: false }, { r: R * 1.06, y: wall, v: 0.8, hard: true }, { r: R * 1.06, y: wall - 0.004, v: 0.85, hard: true }, { r: R * 1.0, y: wall - 0.004, v: 0.9, hard: true }, { r: R * 0.95, y: 0.004, v: 0.95, hard: true }, { r: 0, y: 0.004, v: 1, hard: false }];
@@ -767,6 +819,16 @@
         }
         this.flameLight.color.setHex(0xff8a2a);
         this.flameLight.intensity = knob * 0.8 * (0.85 + 0.15 * Math.sin(this.clock * 23));
+      } else if (this.stoveType === 'charcoal' && this.coalMat) {
+        const gr = state.grill || { Tfire: 20, ash: 0, flare: 0 };
+        const glow = clamp((gr.Tfire - 350) / 400, 0, 1), ashF = clamp(gr.ash / 0.3, 0, 1);
+        const flick = 0.85 + 0.15 * Math.sin(this.clock * 9.1) * Math.sin(this.clock * 4.3 + 1);
+        this.coalMat.emissiveIntensity = 0.42 * glow * glow * flick;
+        this.coalMat.emissive.setRGB(1, 0.14 + 0.12 * glow, 0.02);
+        this.coalMat.color.setRGB(0.12 + 0.35 * ashF, 0.11 + 0.33 * ashF, 0.1 + 0.32 * ashF);
+        this.flameLight.color.setHex(0xff6a1a);
+        this.flameLight.intensity = 1.4 * glow * flick + 2.5 * clamp(gr.flare, 0, 1.5);
+        if (this.kettleLid) this.kettleLid.visible = !!state.lid;
       } else if (this.stoveType === 'electric' && this.coilMat) {
         const glow = clamp((stv.pDelivered || 0) / (stv.pMax * stv.eff), 0, 1);
         this.coilMat.emissiveIntensity = 2.4 * glow * glow;
@@ -785,12 +847,12 @@
       let r, oilY;
       if (depth < 0.0008) { r = Math.min(this.panR * 0.98, Math.sqrt(oilV / (Math.PI * 0.0006))); oilY = this.panFloorY + 0.0007; }
       else { r = this.panR * 0.99; oilY = this.panFloorY + depth; }
-      this.oil.visible = r > 0.004; this.oil.scale.set(r, r, 1); this.oil.position.y = oilY;
+      this.oil.visible = r > 0.004 && this.stoveType !== 'charcoal'; this.oil.scale.set(r, r, 1); this.oil.position.y = oilY;
       const deep = clamp(depth / 0.02, 0, 1);
       this.oilMat.opacity = 0.2 + 0.2 * clamp(pan.oil / 0.01, 0, 1) + 0.3 * deep;
       // lid: on/off, and a light fogging that follows the steam trapped under it
       if (this.lid) {
-        this.lid.visible = !!state.lid;
+        this.lid.visible = !!state.lid && this.stoveType !== 'charcoal';
         const target = state.lid ? clamp(0.35 * clamp((state.lidAirT - 50) / 50, 0, 1) + (state.diag.steam || 0) * 250, 0, 0.55) : 0;
         this.lidFog += (target - this.lidFog) * Math.min(1, dt / (target > this.lidFog ? 3 : 6));
         this.lidGlass.opacity = 0.2 + 0.4 * this.lidFog; this.lidGlass.roughness = 0.04 + 0.5 * this.lidFog;
@@ -799,12 +861,28 @@
       // spilled fat on the stovetop
       const spillR = Math.min(0.45, Math.sqrt((pan.overflow || 0) / 920 / (Math.PI * 0.0015)));
       this.spill.visible = spillR > 0.01; this.spill.scale.set(spillR * 1.15, spillR, 1); this.spill.position.y = (this.stainY || 0.0012) + 0.0003;
-      // grease fire
-      const flare = pan.flare || 0;
-      for (const f of this.flareFlames) {
+      // grease fire around a pan, or flare-ups coming up through the grate under the meat
+      const grillFlare = this.stoveType === 'charcoal' && state.grill ? state.grill.flare : 0;
+      const flare = this.stoveType === 'charcoal' ? (grillFlare > 0.04 ? grillFlare : 0) : (pan.flare || 0);
+      const onGrate = this.stoveType === 'charcoal' ? (state.patties || []).filter((q) => q.where === 'pan') : [];
+      for (let i = 0; i < this.flareFlames.length; i++) {
+        const f = this.flareFlames[i];
         f.visible = flare > 0;
-        if (flare > 0) {
-          const fl = 0.5 + 0.5 * Math.random(); const rr = this.panR * 1.08;
+        if (flare <= 0) continue;
+        const fl = 0.5 + 0.5 * Math.random();
+        if (this.stoveType === 'charcoal') {
+          // tongues of flame under and around whichever patties are dripping, licking up their sides
+          const q = onGrate.length ? onGrate[i % onGrate.length] : null;
+          const rr = q ? (q.D / 2) * (0.5 + 0.7 * ((i * 7919) % 100) / 100) : 0.12 * fl;
+          const cx = q ? q.pos.x : 0, cz = q ? q.pos.y : 0;
+          f.position.set(cx + Math.cos(f.userData.a) * rr, this.PAN_Y - 0.03, cz + Math.sin(f.userData.a) * rr);
+          f.rotation.order = 'YXZ'; f.rotation.y = -f.userData.a; f.rotation.z = -0.12 * fl;
+          const len = 0.02 + 0.15 * Math.min(1, flare) * fl;
+          f.scale.set(0.5 + 0.7 * fl, len, 0.5 + 0.7 * fl);
+          f.material.color.setRGB(1, 0.45 + 0.3 * Math.random(), 0.08);
+          f.material.opacity = 0.18 + 0.3 * fl * Math.min(1, flare + 0.3);
+        } else {
+          const rr = this.panR * 1.08;
           f.position.set(Math.cos(f.userData.a) * rr, this.PAN_Y - 0.004, Math.sin(f.userData.a) * rr);
           f.rotation.order = 'YXZ'; f.rotation.y = -f.userData.a; f.rotation.z = -0.25;
           f.scale.set(0.5 + 0.6 * fl, 0.03 + 0.07 * fl * Math.min(1, flare / 2), 0.5 + 0.6 * fl);
@@ -812,7 +890,7 @@
           f.material.opacity = 0.35 + 0.25 * fl;
         }
       }
-      if (flare > 0) { this.flameLight.color.setHex(0xff7a10); this.flameLight.intensity = 3 * (0.7 + 0.3 * Math.random()); }
+      if (flare > 0 && this.stoveType !== 'charcoal') { this.flameLight.color.setHex(0xff7a10); this.flameLight.intensity = 3 * (0.7 + 0.3 * Math.random()); }
       const fondT = clamp((pan.fond + pan.fondBurnt + (pan.carbon || 0)) / 0.003, 0, 1);
       this.oilMat.color.setRGB(lerp(0.85, 0.6, Math.max(deep, fondT * 0.5)), lerp(0.63, 0.34, Math.max(deep, fondT)), lerp(0.22, 0.07, deep));
       this._paintDirt(pan, dt);
@@ -841,7 +919,7 @@
       // ---- particles: sizzle, steam, smoke, spatter, beads and drips around every patty on the pan
       const d = state.diag;
       const onPan = list.filter((q) => q.where === 'pan');
-      const gy = this.panFloorY, oilDepth = state.pan.oilDepth || 0;
+      const gy = this.panFloorY, oilDepth = this.stoveType === 'charcoal' ? 0 : (state.pan.oilDepth || 0);
       const surfY = gy + Math.max(0.002, oilDepth);
       const pick = () => onPan[Math.floor(Math.random() * onPan.length)];
       const edge = () => { const q = pick(); const a = Math.random() * Math.PI * 2; const rr = (q.D / 2) * rand(0.9, 1.15); return [q.pos.x + Math.cos(a) * rr, surfY, q.pos.y + Math.sin(a) * rr]; };
@@ -880,7 +958,8 @@
       }
       this.drips.acc += (stoveOn && any ? clamp(d.fatDrip * 3000, 0, 12) : 0) * dt;
       while (this.drips.acc >= 1) { this.drips.acc -= 1; const q = pick(); const a = Math.random() * Math.PI * 2; this.drips.spawn({ q, x: q.pos.x + Math.cos(a) * (q.D / 2) * 1.01, y: gy + q.h * rand(0.3, 0.9), z: q.pos.y + Math.sin(a) * (q.D / 2) * 1.01, a, age: 0, s: rand(0.6, 1.2), sy: 1.8 }); }
-      this.drips.update(dt, (b, dt) => { const q = b.q; if (q.where !== 'pan') return false; b.y -= 0.008 * dt; b.x = q.pos.x + Math.cos(b.a) * (q.D / 2) * 1.02; b.z = q.pos.y + Math.sin(b.a) * (q.D / 2) * 1.02; b.age += dt; return b.y > gy + 0.001 && b.age < 6; });
+      const dripFloor = this.stoveType === 'charcoal' ? this.coalY + 0.012 : gy + 0.001;
+      this.drips.update(dt, (b, dt) => { const q = b.q; if (q.where !== 'pan') return false; const free = b.y < gy - 0.002; b.vy = free ? (b.vy || 0) + 9.81 * dt : 0; b.y -= (free ? b.vy : 0.008) * dt; if (!free) { b.x = q.pos.x + Math.cos(b.a) * (q.D / 2) * 1.02; b.z = q.pos.y + Math.sin(b.a) * (q.D / 2) * 1.02; } b.age += dt; return b.y > dripFloor && b.age < 6; });
 
       this.controls.update(dt);
       this.renderer.render(this.scene, this.camera);
@@ -952,12 +1031,13 @@
     reset(mode) {
       this.zoomStack = null;
       if (mode === 'board') { this.goal = { target: new T.Vector3(0, 0.01, 0), azimuth: -0.7, polar: 0.95, dist: 0.36 }; }
+      else if (this.vp.PAN_Y > 0.1) { this.goal = { target: new T.Vector3(0, this.vp.PAN_Y - 0.02, 0), azimuth: -1.0, polar: 0.85, dist: 0.95 }; }
       else { this.goal = { target: new T.Vector3(0, 0.045, 0), azimuth: -1.0, polar: 1.0, dist: 0.6 }; }
     }
     preset(name) {
       this.zoomStack = null;
       const pg = this.vp.pattyGroup && this.vp.patty ? this.vp.pattyGroup.position.clone().setY(this.vp.pattyGroup.position.y + (this.vp.patty.h || 0.02) / 2) : null;
-      const t = pg || (this.vp.mode === 'stove' ? new T.Vector3(0, 0.03, 0) : new T.Vector3(0, 0.01, 0));
+      const t = pg || (this.vp.mode === 'stove' ? new T.Vector3(0, this.vp.PAN_Y + 0.01, 0) : new T.Vector3(0, 0.01, 0));
       if (name === 'top') this.goal = { target: t, azimuth: this.goal.azimuth, polar: 0.12, dist: 0.5 };
       if (name === 'side') this.goal = { target: t.clone().setY(t.y + 0.01), azimuth: -Math.PI / 2, polar: 1.45, dist: 0.32 };
       if (name === 'close') this.goal = { target: t.clone().setY(t.y + 0.01), azimuth: this.goal.azimuth, polar: 1.1, dist: 0.16 };

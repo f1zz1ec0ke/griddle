@@ -250,3 +250,85 @@ test('careless technique is still punished', () => {
   for (const [name, r] of Object.entries({ thickOneFlip, pressed, nuclear, noCarry, noRest })) console.log(`   ${name}: ${r.total} ${JSON.stringify(r.parts)}`);
   assert.ok(thickOneFlip.total < 90, 'thick single flip'); assert.ok(pressed.total < 92, 'pressed'); assert.ok(nuclear.total < 85, 'nuclear'); assert.ok(noCarry.total < 80, 'no carry-over allowance');
 });
+
+// ---------------------------------------------------------------- charcoal grill
+function litGrill(knob, until) {
+  const s = P.createState({ stove: 'charcoal' }); P.setKnob(s, knob);
+  let g = 0; while (s.grill.Tfire < until && g++ < 60000) P.step(s, DT);
+  return s;
+}
+test('charcoal: the bed heats with the vents, the grate follows, and the coals burn down', () => {
+  const s = litGrill(8, 600);
+  assert.ok(s.t < 300, `bed took ${s.t.toFixed(0)} s to reach 600 °C`);
+  cookFor(s, 240);
+  assert.ok(s.pan.T > 250 && s.pan.T < 450, `grate=${s.pan.T}`);
+  assert.ok(s.grill.Tfire > 600 && s.grill.Tfire < 800, `fire=${s.grill.Tfire}`);
+  assert.ok(s.grill.coal < 1.5 && s.grill.coal > 1.2, `coal=${s.grill.coal}`);
+  const banked = litGrill(1, 300); cookFor(banked, 600);
+  assert.ok(banked.grill.Tfire < s.grill.Tfire - 200, `banked fire=${banked.grill.Tfire}`);
+  P.addFat(s, 'canola', 8); assert.equal(s.pan.oil, 0); // no pan to pour into
+});
+test('grilled: bar marks, browned edges, pan-like timing, and a grill note', () => {
+  const s = litGrill(7, 600); cookFor(s, 240);
+  const p = std({ thicknessMm: 18, massG: 150 }); P.placePatty(s, p);
+  let since = 0; while (P.centerT(p) < 47) { P.step(s, DT); since += DT; if (since >= 60 && !p.faceDown.stuck) { P.flipPatty(s); since = 0; } }
+  assert.ok(p.faceDown.marks > 1 && p.faceUp.marks > 1, `marks=${p.faceDown.marks}/${p.faceUp.marks}`);
+  assert.ok(p.faceDown.marks > p.faceDown.brown, 'the bars brand darker than the open face');
+  assert.ok(p.faceSide.brown > 0.5, `edge brown=${p.faceSide.brown}`);
+  assert.ok(p.faceDown.char < 0.3 && p.faceUp.char < 0.3, `char=${p.faceDown.char}/${p.faceUp.char}`);
+  assert.ok(p.grilled);
+  P.removePatty(s); cookFor(s, 150);
+  const r = P.evaluate(s, 'medium-rare');
+  assert.ok(r.notes.some((n) => /Grill marks/.test(n)) && r.notes.some((n) => /charcoal|Flare/.test(n)), r.notes.join(' | '));
+  assert.ok(r.total >= 70, `grilled MR scored ${r.total} ${JSON.stringify(r.parts)}`);
+  // the same patty in a 200 °C pan takes longer to the same centre
+  const s2 = P.createState({}); preheat(s2, 200); P.addFat(s2, 'canola', 8);
+  const p2 = std({ thicknessMm: 18, massG: 150 }); P.placePatty(s2, p2);
+  since = 0; while (P.centerT(p2) < 47) { hold(s2, 200); P.step(s2, DT); since += DT; if (since >= 60 && !p2.faceDown.stuck) { P.flipPatty(s2); since = 0; } }
+  assert.ok(Math.abs(p.cookTime - p2.cookTime) < 60, `grill ${p.cookTime} vs pan ${p2.cookTime}`); // comparable: radiant heat vs metal contact
+  assert.ok(!p2.grilled && !(p2.faceDown.marks > 0));
+});
+test('flare-ups: a rush of fat on a hot bed lights, soots the underside, and dies back', () => {
+  const s = litGrill(9, 650); cookFor(s, 120);
+  const p = std({ thicknessMm: 16, massG: 160, fatFrac: 0.3 }); P.placePatty(s, p);
+  cookFor(s, 90); P.flipPatty(s); cookFor(s, 60);
+  const before = s.grill.flare;
+  P.pressPatty(s, false); cookFor(s, 3); // squeezes fat straight onto the coals
+  P.pressPatty(s, false); cookFor(s, 2);
+  const peak = s.grill.flare;
+  assert.ok(peak > before + 0.3, `flare before=${before} after pressing=${peak}`);
+  assert.ok((p.flareChar || 0) > 0, 'soot on the meat');
+  cookFor(s, 30);
+  assert.ok(s.grill.flare < peak * 0.4, `flare died back to ${s.grill.flare} from ${peak}`);
+  assert.ok(s.events.some((e) => /FLARE-UP/.test(e.text)));
+  // a lean patty over a banked fire does not
+  const s2 = litGrill(2, 300); cookFor(s2, 60);
+  const p2 = std({ thicknessMm: 16, massG: 160, fatFrac: 0.07 }); P.placePatty(s2, p2);
+  cookFor(s2, 150); P.pressPatty(s2, false); cookFor(s2, 3);
+  assert.ok(s2.grill.flare < 0.2, `lean, banked: flare=${s2.grill.flare}`);
+});
+test('kettle lid: an oven — the top face cooks and browns, the coals calm down', () => {
+  const open = litGrill(8, 650), lid = litGrill(8, 650);
+  P.toggleLid(lid); cookFor(open, 120); cookFor(lid, 120);
+  assert.ok(lid.grill.Tdome > 150, `dome=${lid.grill.Tdome}`);
+  assert.ok(lid.grill.Tfire < open.grill.Tfire, `lid ${lid.grill.Tfire} vs open ${open.grill.Tfire}`);
+  const po = std({ thicknessMm: 20, massG: 160 }), pl = std({ thicknessMm: 20, massG: 160 });
+  P.placePatty(open, po); P.placePatty(lid, pl); cookFor(open, 180); cookFor(lid, 180);
+  assert.ok(P.layerMean(pl, pl.T, pl.Nz - 1) > P.layerMean(po, po.T, po.Nz - 1) + 15, `top: lid ${P.layerMean(pl, pl.T, pl.Nz - 1)} vs open ${P.layerMean(po, po.T, po.Nz - 1)}`);
+  assert.ok(pl.faceUp.brown > po.faceUp.brown, `top brown: lid ${pl.faceUp.brown} vs open ${po.faceUp.brown}`);
+});
+test('the grill recipe scores 100: 18 mm, vents on 7, flip every 45 s, pull at 47', () => {
+  const s = litGrill(8, 600); P.setKnob(s, 7); cookFor(s, 240);
+  const p = std({ thicknessMm: 18, massG: 150, work: 0.35 }); P.placePatty(s, p);
+  let since = 0; while (P.centerT(p) < 47) { P.step(s, DT); since += DT; if (since >= 45 && !p.faceDown.stuck) { P.flipPatty(s); since = 0; } }
+  P.removePatty(s); cookFor(s, 150);
+  const r = P.evaluate(s, 'medium-rare');
+  assert.equal(r.total, 100, `grilled MR: ${r.total} ${JSON.stringify(r.parts)} grey ${r.overFrac.toFixed(2)} ret ${r.waterRetained.toFixed(2)}`);
+  // the same over a roaring bed chars
+  const s2 = litGrill(8, 600); P.setKnob(s2, 10); cookFor(s2, 300);
+  const p2 = std({ thicknessMm: 22, massG: 150, work: 0.35 }); P.placePatty(s2, p2);
+  since = 0; while (P.centerT(p2) < 47) { P.step(s2, DT); since += DT; if (since >= 90 && !p2.faceDown.stuck) { P.flipPatty(s2); since = 0; } }
+  P.removePatty(s2); cookFor(s2, 150);
+  const r2 = P.evaluate(s2, 'medium-rare');
+  assert.ok(r2.parts.crust < 12 && p2.faceDown.char > 0.25, `roaring: ${r2.total} ${JSON.stringify(r2.parts)} char ${p2.faceDown.char.toFixed(2)}`);
+});

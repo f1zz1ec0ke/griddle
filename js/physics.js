@@ -89,7 +89,13 @@
                  profile: (r) => (r <= 0.10 ? 1 : 0) },
     induction: { id: 'induction', name: 'Induction (1.8 kW, ~85 % to pan)',         pMax: 1800, eff: 0.85, tau: 0,
                  profile: (r) => (r >= 0.02 && r <= 0.105 ? 1 : 0) },
+    // A 22" kettle: 1.5 kg of lump charcoal under a steel grate. The knob is the vents (and how
+    // hard you fan): airflow sets the fire temperature and how fast the coals burn down.
+    charcoal:  { id: 'charcoal',  name: 'Charcoal kettle (22", lump charcoal)', kind: 'grill', pMax: 0, eff: 0, tau: 0, profile: () => 1 },
   };
+  /** The grate over the coals, standing in for the pan when the stove is a grill. */
+  const GRATE = { id: 'grate', name: 'Steel grate over charcoal', mass: 1.6, cp: 470, diam: 0.54, wall: 0.0, k: 50, thick: 0.004, emiss: 0.9, release: 0.7, hcMul: 1.0, maxT: 900, barFrac: 0.28 };
+  const COAL = { H: 30e6, view: 0.5, viewGrate: 0.4, viewSide: 0.2, tauUp: 150, tauDown: 300 };
 
   // Chef temperature bands for the *peak* centre temperature (°C).
   const DONENESS = [
@@ -200,8 +206,9 @@
 
   // ---------------------------------------------------------------- state
   function createState(cfg) {
-    const pan = PANS[cfg.pan] || PANS.castiron;
     const stove = STOVES[cfg.stove] || STOVES.gas;
+    const grill = stove.kind === 'grill';
+    const pan = grill ? GRATE : (PANS[cfg.pan] || PANS.castiron);
     const Tamb = cfg.Tamb == null ? 21 : cfg.Tamb;
     const Np = C.panRings, floorR = pan.diam / 2 * 0.95;
     const dr = floorR / Np;
@@ -221,6 +228,8 @@
         lostSpatter: 0, area: Math.PI * (pan.diam / 2) ** 2,
       },
       lid: false, lidAirT: Tamb,
+      // the fire, when the stove is a grill: coal left, bed temperature, ash, flare-ups, dome air
+      grill: grill ? { coal: 1.5, coal0: 1.5, Tfire: Tamb, ash: 0, lit: false, flare: 0, flareTotal: 0, Tdome: Tamb, fatOnCoals: 0, burnW: 0 } : null,
       patties: [], patty: null, where: 'board', // s.patty / s.where mirror the selected patty
       baste: 0,
       events: [], log: [], trace: [], traceEvery: 0.5, lastTrace: -1,
@@ -248,6 +257,7 @@
   function addFat(s, kind, grams) {
     const f = FATS[kind] || FATS.none;
     if (kind === 'none' || !grams) return;
+    if (s.grill) { logEvent(s, 'There is no pan on a grill. Fat goes on the meat, not the grate, and whatever renders out falls on the coals.', 'info'); return; }
     const m = grams / 1000;
     s.pan.water += m * f.water;
     s.pan.oil += m * (1 - f.water - f.solids);
@@ -278,8 +288,9 @@
     if (patty.dirtAtStart > 0.002) logEvent(s, 'The pan is dirty: burnt bits from earlier tickets will stick to this crust and smoke.', 'warn');
     const Tunder = panTat(s.pan, Math.hypot(patty.pos.x, patty.pos.y));
     const others = s.patties.filter((q) => q !== patty && q.where === 'pan').length;
-    logEvent(s, `Patty ${patty.id} (${(patty.massKg0 * 1000).toFixed(0)} g, ${(patty.h0 * 1000).toFixed(0)} mm, ${(patty.fatFrac * 100).toFixed(0)} % fat, ${patty.T0.toFixed(0)} °C) hits the pan at ${Tunder.toFixed(0)} °C under it` + (others ? ` — ${others + 1} in the pan now, and every cold patty drags the metal down.` : '.'), 'action');
-    if (Tunder < 120) logEvent(s, 'The pan is not hot enough there. The meat will steam in its own juice and go grey.', 'warn');
+    logEvent(s, `Patty ${patty.id} (${(patty.massKg0 * 1000).toFixed(0)} g, ${(patty.h0 * 1000).toFixed(0)} mm, ${(patty.fatFrac * 100).toFixed(0)} % fat, ${patty.T0.toFixed(0)} °C) hits the ${s.grill ? 'grate' : 'pan'} at ${Tunder.toFixed(0)} °C under it` + (others ? ` — ${others + 1} ${s.grill ? 'on the grate' : 'in the pan'} now, and every cold patty drags the metal down.` : '.'), 'action');
+    if (s.grill && (!s.grill.lit || s.grill.Tfire < 350)) logEvent(s, 'The coals are not ready. Meat over a cool fire steams and sticks; wait for the bed to glow.', 'warn');
+    else if (!s.grill && Tunder < 120) logEvent(s, 'The pan is not hot enough there. The meat will steam in its own juice and go grey.', 'warn');
   }
 
   function flipPatty(s, patty) {
@@ -333,9 +344,9 @@
       if (p.dM[c] > 0.3) out += p.w[c] * (hard ? 0.16 : 0.10) * p.dM[c] * (0.5 + 0.5 * p.dA[c] + 0.5 * p.dC[c]);
       out = Math.min(out, p.w[c]);
       p.w[c] -= out; expelled += out;
-      const fatOut = p.fr[c] * 0.7; p.fr[c] -= fatOut; s.pan.oil += fatOut; p.lostFat += fatOut;
+      const fatOut = p.fr[c] * 0.7; p.fr[c] -= fatOut; p.lostFat += fatOut; if (s.grill) s.grill.fatOnCoals += fatOut; else s.pan.oil += fatOut;
     }
-    s.pan.water += expelled; p.lostWaterDrip += expelled;
+    p.lostWaterDrip += expelled; if (s.grill) s.grill.juiceOnCoals = (s.grill.juiceOnCoals || 0) + expelled; else s.pan.water += expelled;
     p.dome = 0;
     if (cooked < 0.25 && hard) {
       let hNew = Math.max(0.004, p.h * 0.55);
@@ -379,7 +390,11 @@
     p.cheeses.push({ T: s.env.Tamb, melt: 0, mass: 0.02, rot: k * 0.42 + (Math.random() - 0.5) * 0.2, overhang: 0, contact: 0, skirt: null });
     logEvent(s, k === 0 ? `Slice of American cheese on patty ${p.id} (20 g). Processed cheese softens around 45 °C and flows by 60 °C; a lid speeds it up.` : `Another slice on patty ${p.id} (${k + 1} on the stack, ${(20 * (k + 1))} g). The top of the pile heats through the slices under it.`, 'action');
   }
-  function toggleLid(s) { s.lid = !s.lid; logEvent(s, s.lid ? 'Lid on. Steam trapped: the top face will cook from condensing vapour and the crust will soften.' : 'Lid off.', 'action'); }
+  function toggleLid(s) {
+    s.lid = !s.lid;
+    if (s.grill) logEvent(s, s.lid ? 'Lid on. The kettle is an oven now: hot air and the dome\'s radiant heat cook the top face; less air for the coals, so the fire calms down a little.' : 'Lid off. Full air to the coals.', 'action');
+    else logEvent(s, s.lid ? 'Lid on. Steam trapped: the top face will cook from condensing vapour and the crust will soften.' : 'Lid off.', 'action');
+  }
   function basteButter(s) {
     if (!s.patties.some((q) => q.where === 'pan')) return;
     addFat(s, 'butter', 15);
@@ -675,13 +690,15 @@
     p.lostFat += fatDrip + fatSide;
 
     // ---- surface chemistry per ring on the face in contact with the heat
-    const fd = p.faceDown; let surfT = 0, dryMean = 0;
+    const fd = p.faceDown; let surfT = 0, dryMean = 0; const TsLim = new Float64Array(Nr);
     for (let j = 0; j < Nr; j++) {
       const c = j;
       let Ts = T[c] + (Math.max(0, qBotR[j]) / Aj(j)) * (dz / 2) / Math.max(Kn[c], 0.05);
       if (p.w[c] > 0.25 * p.w0c[c] || p.poolB[j] > 1e-8) Ts = Math.min(Ts, C.Tboil + 2);
-      if (bc.bottom.type === 'pan') Ts = Math.min(Ts, TpanR[j]);
-      if (bc.bottom.type === 'grill') Ts = Math.min(Ts, bc.bottom.Tfire);
+      // a pan surface cannot exceed the pan; over coals the crust settles where the radiant input
+      // balances re-radiation and conduction inward — well below the bed, but hotter than a pan
+      const Tlim = bc.bottom.type === 'pan' ? TpanR[j] : bc.bottom.type === 'grill' ? bc.bottom.Tsurf : Infinity;
+      Ts = Math.min(Ts, Tlim); TsLim[j] = Tlim;
       if (p.cheeseUnder.length) Ts = Math.min(Ts, p.cheeseUnder[p.cheeseUnder.length - 1].T);
       surfT += Ts * p.aj[j];
       fd.maxT = Math.max(fd.maxT, Ts);
@@ -692,14 +709,14 @@
       fd.charR[j] += rC * dt;
       if (bc.bottom.type === 'grill') {
         // the bars press hotter lines into the face: a separate, faster browning track
-        const Tb = Math.min(bc.bottom.Tbar, T[c] + (Math.max(0, qBotR[j]) / Aj(j)) * (dz / 2) / Math.max(Kn[c], 0.05) + 40);
+        const Tb = Math.min(bc.bottom.Tbar, bc.bottom.Tsurf + 60, T[c] + (Math.max(0, qBotR[j]) / Aj(j)) * (dz / 2) / Math.max(Kn[c], 0.05) + 40);
         fd.marks = (fd.marks || 0) + (arrh(C.Am, C.EaM, Tb) * fAw * Math.max(0, 1 - (fd.marks || 0) / C.Bmax) * dt) * p.aj[j];
         fd.marksChar = (fd.marksChar || 0) + arrh(C.Ac, C.EaC, Tb) * (0.3 + 0.7 * smooth(0.6, 1, dryness)) * Math.max(0, 1 - (fd.marksChar || 0) / C.Cmax) * dt * p.aj[j];
       }
     }
     faceMean(p, fd);
     p.surfT = surfT;
-    fd.charRate = 0; for (let j = 0; j < Nr; j++) fd.charRate += arrh(C.Ac, C.EaC, TpanR[j]) * p.aj[j] * clamp(fd.charR[j] / 0.3, 0, 1);
+    fd.charRate = 0; for (let j = 0; j < Nr; j++) fd.charRate += arrh(C.Ac, C.EaC, Math.min(TpanR[j], TsLim[j])) * p.aj[j] * clamp(fd.charR[j] / 0.3, 0, 1);
     fd.crisp = clamp(fd.crisp + (dryMean > 0.6 ? 0.02 : -0.01) * dt, 0, 1);
     if (fd.stuck && (fd.brown >= 0.5 * (bc.bottom.release || 1) + 0.15 || dryMean > 0.6)) fd.stuck = false;
     // top face: submerged in hot fat or under a broiling lid it browns like the bottom
@@ -772,6 +789,36 @@
     return acc;
   }
 
+  /**
+   * The coal bed. Airflow (the knob: vents and fanning) sets the temperature the bed heads for
+   * and how fast it eats the charcoal; the lid throttles it. Fat that falls on a hot bed flares:
+   * a few grams within seconds is a foot of yellow flame that licks the meat, dies back in
+   * seconds, and leaves soot. Ash builds as the coals burn and dulls the bed.
+   */
+  function stepCoals(s, dt) {
+    const g = s.grill, Tamb = s.env.Tamb, v = s.stove.knob / 10;
+    if (!g.lit && s.stove.knob > 0) { g.lit = true; g.litAt = s.t; logEvent(s, 'A chimney of lit lump charcoal dumped in and raked out under the grate. Open the vents and wait for the bed to glow.', 'action'); }
+    if (!g.lit) { g.burnW = 0; g.flare = Math.max(0, g.flare - dt); g.smoke = 0; g.sizzle = 0; return; }
+    const air = (0.12 + 0.88 * v) * (s.lid ? 0.75 : 1);
+    const alive = clamp(g.coal / 0.25, 0, 1);
+    const target = Tamb + (300 + 430 * air) * alive * (1 - 0.25 * clamp(g.ash / 0.4, 0, 1)); // ~350 °C banked, ~750 °C wide open
+    const tau = target > g.Tfire ? COAL.tauUp * (s.t - g.litAt < 90 ? 0.4 : 1) : COAL.tauDown;
+    g.Tfire += ((target - g.Tfire) * dt) / tau;
+    const burn = ((0.35 + 1.4 * air) / 3600) * alive; // kg/s: a chimney lasts 45 min flat out, two hours banked
+    const used = Math.min(g.coal, burn * dt); g.coal -= used; g.ash += used * 0.06; g.burnW = (used / dt) * COAL.H * 0.3;
+    // fat on the coals: ignites above ~450 °C; the flare grows with the amount and dies in seconds
+    const hot = clamp((g.Tfire - 450) / 250, 0, 1);
+    const ignite = Math.min(g.fatOnCoals, g.fatOnCoals * Math.min(1, dt * (0.1 + 2 * hot)));
+    g.fatOnCoals -= ignite; g.fatOnCoals *= Math.exp(-dt / 30); // what does not burn soaks into the ash
+    const flareTarget = (ignite / dt) * 2000 * hot; // 0.5 g/s of burning fat is a foot of flame
+    g.flare += ((flareTarget - g.flare) * dt) / (flareTarget > g.flare ? 0.5 : 1.5);
+    g.flareTotal += ignite * hot;
+    const juice = g.juiceOnCoals || 0; g.juiceOnCoals = 0;
+    g.sizzle = clamp(juice * 400 / dt, 0, 1) * 0.6;
+    g.smoke = 0.12 * alive + clamp(g.flare, 0, 2) * 0.7 + clamp(juice / dt * 30, 0, 0.3) + (g.fatOnCoals > 0.001 && hot < 0.3 ? 0.4 : 0);
+    if (g.flare > 0.6 && (!g._flareLogT || s.t - g._flareLogT > 20)) { g._flareLogT = s.t; logEvent(s, `FLARE-UP: fat hit the coals and lit. Flames up through the grate, licking the meat${s.lid ? ' under the lid' : ''}. Move it or close the vents.`, 'warn'); }
+    if (g.coal < 0.2 && !g._lowLogged) { g._lowLogged = true; logEvent(s, 'The coals are burning down to ash. The bed is cooling; whatever is not cooked yet had better be close.', 'warn'); }
+  }
   /** Fraction of each pan ring's area covered by patties (sampled around the ring). */
   function ringCoverage(s) {
     const pan = s.pan, cov = new Float64Array(pan.Np);
@@ -797,14 +844,35 @@
     // ---- burner
     const pTarget = (st.knob / 10) * st.pMax * st.eff;
     if (st.tau > 0) st.pDelivered += ((pTarget - st.pDelivered) * dt) / st.tau; else st.pDelivered = pTarget;
-    // ---- lid air
-    const lidTarget = s.lid ? Math.min(104, 0.75 * pan.T + 25) : Tamb + 0.25 * (pan.T - Tamb);
-    s.lidAirT += ((lidTarget - s.lidAirT) * dt) / (s.lid ? 12 : 4);
+    // ---- the fire (charcoal grill)
+    const grill = s.grill;
+    if (grill) stepCoals(s, dt);
+
+    // ---- lid air: over a pan the lid traps steam; the kettle lid makes a hot dome
+    if (grill) {
+      const domeTarget = s.lid ? Tamb + 0.33 * (grill.Tfire - Tamb) : Tamb + 0.18 * (grill.Tfire - Tamb);
+      grill.Tdome += ((domeTarget - grill.Tdome) * dt) / (s.lid ? 60 : 20);
+      s.lidAirT = grill.Tdome;
+    } else {
+      const lidTarget = s.lid ? Math.min(104, 0.75 * pan.T + 25) : Tamb + 0.25 * (pan.T - Tamb);
+      s.lidAirT += ((lidTarget - s.lidAirT) * dt) / (s.lid ? 12 : 4);
+    }
 
     // ---- pan rings: burner input, losses from the uncovered area, radial conduction
     const Np = pan.Np, Tr = pan.Tr, qRing = new Float64Array(Np);
     const cov = ringCoverage(s);
-    {
+    if (grill) {
+      // the grate: thin bars heated by the coal bed's radiation and the hot gas coming up through
+      // it, losing heat upward to the sky (or the dome); the bars are only a fraction of the area
+      const Tf = grill.Tfire + 273.15, Tgas = Tamb + 0.5 * (grill.Tfire - Tamb);
+      const Tup = s.lid ? grill.Tdome : Tamb;
+      for (let j = 0; j < Np; j++) {
+        const A = pan.ringA[j] * pan.barFrac, Tk = Tr[j] + 273.15;
+        qRing[j] += A * (pan.emiss * C.sigma * COAL.viewGrate * (Tf ** 4 - Tk ** 4) + 25 * (Tgas - Tr[j]));
+        qRing[j] -= A * (1 - cov[j]) * ((s.lid ? 12 : 20) * (Tr[j] - Tup) + pan.emiss * C.sigma * 0.5 * (Tk ** 4 - (Tup + 273.15) ** 4));
+      }
+      st.pDelivered = grill.burnW;
+    } else {
       const weights = new Float64Array(Np); let wsum = 0;
       for (let j = 0; j < Np; j++) { weights[j] = st.profile((j + 0.5) * pan.dr, st.knob / 10) * pan.ringA[j]; wsum += weights[j]; }
       for (let j = 0; j < Np; j++) {
@@ -869,11 +937,34 @@
         const submerged = pan.oilDepth > p.h * (1 + 0.28 * p.dome) + 0.0005;
         if (submerged && !s._ms.deepfry) { s._ms.deepfry = true; logEvent(s, `The patty is under ${(pan.oilDepth * 1000).toFixed(0)} mm of fat: this is deep frying now. Both faces will brown.`, 'info'); }
         const carbonF = clamp(pan.carbon / 0.004, 0, 1);
-        const bc = {
-          bottom: { type: 'pan', Tat, T: Tunder, Tedge, oil: pan.oil, hcMul: pan.hcMul * (1 - 0.3 * carbonF), release: pan.release + 0.2 * carbonF },
-          top: submerged ? { h: C.hOil, T: Tunder, RH: 1, oil: true } : { h: s.lid ? C.hLid : C.hAirTop, T: s.lidAirT, RH: s.lid ? clamp((s.lidAirT - 60) / 40, s.env.RH, 1) : s.env.RH },
-          side: { T: Tamb + 0.25 * (Tedge - Tamb), oilDepth: pan.oilDepth, oilT: Tunder },
-        };
+        let bc;
+        if (grill) {
+          // over the coals: bar contact on a fraction of the face, radiation and hot gas on the
+          // rest, radiant heat on the edge, and a flare-up licking the underside adds soot
+          const fl = clamp(grill.flare, 0, 1.5);
+          const TfireEff = grill.Tfire + 350 * Math.min(1, fl);
+          const Tgas = Tamb + 0.5 * (grill.Tfire - Tamb) + 200 * Math.min(1, fl);
+          bc = {
+            bottom: { type: 'grill', Tat, T: Tunder, Tedge, oil: 0, hcMul: 1, release: pan.release + 0.2 * carbonF, barFrac: pan.barFrac, Tbar: Tunder, Tfire: TfireEff, view: COAL.view, Tair: Tgas, Tsurf: 150 + 0.16 * (TfireEff - 150) },
+            top: s.lid ? { h: 14, T: grill.Tdome, RH: 0.3, rad: true, radT: grill.Tdome, radView: 0.85 } : { h: C.hAirTop, T: Tamb + 0.2 * (grill.Tfire - Tamb), RH: 0.25 },
+            side: { T: Tgas * 0.6 + Tamb * 0.4, oilDepth: 0, oilT: Tamb, rad: true, radT: TfireEff, radView: COAL.viewSide, h: 15 },
+          };
+          p.grilled = true;
+          if (fl > 0.05) {
+            // flames on the underside and the edge: pyrolysis without Maillard, i.e. soot
+            const soot = 0.0025 * fl * dt;
+            for (let j = 0; j < p.Nr; j++) p.faceDown.charR[j] = Math.min(C.Cmax, p.faceDown.charR[j] + soot * (0.6 + 0.8 * (j / p.Nr)));
+            p.faceSide.char = Math.min(C.Cmax, p.faceSide.char + soot * 1.5);
+            p.flareChar = (p.flareChar || 0) + soot;
+            faceMean(p, p.faceDown);
+          }
+        } else {
+          bc = {
+            bottom: { type: 'pan', Tat, T: Tunder, Tedge, oil: pan.oil, hcMul: pan.hcMul * (1 - 0.3 * carbonF), release: pan.release + 0.2 * carbonF },
+            top: submerged ? { h: C.hOil, T: Tunder, RH: 1, oil: true } : { h: s.lid ? C.hLid : C.hAirTop, T: s.lidAirT, RH: s.lid ? clamp((s.lidAirT - 60) / 40, s.env.RH, 1) : s.env.RH },
+            side: { T: Tamb + 0.25 * (Tedge - Tamb), oilDepth: pan.oilDepth, oilT: Tunder },
+          };
+        }
         const pr = stepPattyStable(s, p, dt, bc);
         p.cookTime += dt; p.timeDown += dt;
         // heat drawn from the rings under each patty ring
@@ -881,10 +972,20 @@
         for (let j = 0; j < p.Nr; j++) {
           const rho = Math.sqrt(d * d + ((j + 0.5) * dr) ** 2);
           const x = clamp(rho / pan.dr - 0.5, 0, Np - 1); const j0 = Math.floor(x), t = x - j0;
-          if (j0 >= Np - 1) qRing[Np - 1] -= pr.qBotR[j]; else { qRing[j0] -= pr.qBotR[j] * (1 - t); qRing[j0 + 1] -= pr.qBotR[j] * t; }
+          const share = grill ? 0.35 : 1; // on a grill most of the heat is radiant, not drawn from the bars
+          if (j0 >= Np - 1) qRing[Np - 1] -= pr.qBotR[j] * share; else { qRing[j0] -= pr.qBotR[j] * (1 - t) * share; qRing[j0 + 1] -= pr.qBotR[j] * t * share; }
         }
-        pan.water += pr.juiceSide * dt;
-        pan.oil += (pr.fatDrip + pr.fatSide) * dt;
+        if (grill) {
+          // juice and fat fall through the grate onto the coals: steam, sizzle, and a flare when
+          // enough fat lands on a hot bed at once
+          let drip = 0; for (let j = 0; j < p.Nr; j++) { drip += p.poolB[j]; p.poolB[j] = 0; } p.poolBottom = 0;
+          p.lostWaterDrip += drip;
+          grill.fatOnCoals += (pr.fatDrip + pr.fatSide) * dt;
+          grill.juiceOnCoals = (grill.juiceOnCoals || 0) + drip + pr.juiceSide * dt;
+        } else {
+          pan.water += pr.juiceSide * dt;
+          pan.oil += (pr.fatDrip + pr.fatSide) * dt;
+        }
         boilBottomAll += pr.boilBottom; fatDripAll += pr.fatDrip; fatSideAll += pr.fatSide; juiceSideAll += pr.juiceSide; evapTopAll += pr.evapTop; steamAll += p.steamRate; panQ += pr.qBot;
         if (p === s.patty) { hcSel = pr.hc; TsSel = pr.Ts; }
         let cheeseSmoke = 0; for (const ch of p.cheeses.concat(p.cheeseUnder)) if (ch.skirt) cheeseSmoke += ch.skirt.charRate * 40 * (0.3 + ch.skirt.char) * ch.skirt.mass / 0.01;
@@ -929,10 +1030,11 @@
     const oilBubble = pan.oil > 1e-5 ? clamp((pan.T - 140) / 100, 0, 1) * clamp(pan.oil / 0.005, 0, 1) : 0;
     const sel = s.patty;
     s.diag = {
-      sizzle: clamp(boilTotal * 300 + oilBubble * 0.15 + evapTopAll * 20, 0, 1.5),
+      sizzle: clamp(boilTotal * 300 + oilBubble * 0.15 + evapTopAll * 20 + (grill ? grill.sizzle : 0), 0, 1.5),
       spatter, steam: steamAll + evapPan,
-      smoke: pan.smokeOil + pan.smokeChar + pan.smokeFond + (pan.flare > 0 ? 1.5 : 0),
-      flare: pan.flare, oilDepth: pan.oilDepth, overflow: pan.overflow,
+      smoke: pan.smokeOil + pan.smokeChar + pan.smokeFond + (pan.flare > 0 ? 1.5 : 0) + (grill ? grill.smoke : 0),
+      flare: grill ? grill.flare : pan.flare, oilDepth: pan.oilDepth, overflow: pan.overflow,
+      fire: grill ? grill.Tfire : 0,
       evapBottom: boilBottomAll, evapPan, oilBubble,
       fatDrip: fatDripAll + fatSideAll, juiceTop: sel ? sel.poolTop : 0, juiceSide: juiceSideAll,
       panQ, Ts: TsSel, hc: hcSel,
@@ -952,10 +1054,16 @@
   function checkMilestones(s) {
     const p = s.patty; const pan = s.pan; const ms = s._ms || (s._ms = {});
     const once = (key, cond, text, kind) => { if (!ms[key] && cond) { ms[key] = true; logEvent(s, text, kind); } };
-    once('preheat150', pan.Tcenter >= 150, 'Pan centre at 150 °C. A drop of water would sizzle and vanish in a second.', 'info');
-    once('leiden', pan.Tcenter >= 200, 'Pan centre past ~200 °C: water drops would now bead and skate (Leidenfrost). Proper searing territory.', 'info');
-    once('hotspot', pan.Tcenter - pan.Tedge > 60 && pan.Tcenter > 150, `Hot spot: the pan is ${(pan.Tcenter - pan.Tedge).toFixed(0)} °C hotter over the burner than at the edge.`, 'info');
-    once('oilsmoke', pan.smokeOil > 0.3, 'The oil is smoking — it is past its smoke point and breaking down (acrolein). Slightly acrid.', 'warn');
+    if (s.grill) {
+      once('coalglow', s.grill.Tfire >= 450, 'The bed is glowing orange under a skin of grey ash. Hold a hand over the grate: two seconds is all you get.', 'info');
+      once('grateHot', pan.Tcenter >= 250, `Grate at ${pan.Tcenter.toFixed(0)} °C: hot enough to brand the meat with bars.`, 'info');
+      once('coalfull', s.grill.Tfire >= 800, 'Vents wide open: the bed is white-hot, well past 800 °C. Radiant heat like that sears in a minute and chars in three.', 'warn');
+    } else {
+      once('preheat150', pan.Tcenter >= 150, 'Pan centre at 150 °C. A drop of water would sizzle and vanish in a second.', 'info');
+      once('leiden', pan.Tcenter >= 200, 'Pan centre past ~200 °C: water drops would now bead and skate (Leidenfrost). Proper searing territory.', 'info');
+      once('hotspot', pan.Tcenter - pan.Tedge > 60 && pan.Tcenter > 150, `Hot spot: the pan is ${(pan.Tcenter - pan.Tedge).toFixed(0)} °C hotter over the burner than at the edge.`, 'info');
+      once('oilsmoke', pan.smokeOil > 0.3, 'The oil is smoking — it is past its smoke point and breaking down (acrolein). Slightly acrid.', 'warn');
+    }
     if (!p) return;
     const key = (k) => `${k}#${p.id}`;
     if (p.where === 'pan') {
@@ -990,6 +1098,13 @@
   function panDirt(pan) { return pan.fond + pan.fondBurnt + pan.cheeseBits + pan.meatBits + pan.carbon; }
   function washPan(s) {
     const pan = s.pan; if (s.patties.some((p) => p.where === 'pan')) return false;
+    if (s.grill) {
+      // a wire brush on the hot grate: carbon and stuck bits come off, the bars stay hot
+      const dirt = panDirt(pan);
+      pan.fond = 0; pan.fondBurnt = 0; pan.cheeseBits = 0; pan.meatBits = 0; pan.carbon *= 0.15; pan.washes++;
+      logEvent(s, `Brushed the grate${dirt > 0.002 ? ' (it needed it)' : ''}. Bars at ${pan.T.toFixed(0)} °C, clean enough.`, 'action');
+      return true;
+    }
     const wasHot = pan.T > 90, dirt = panDirt(pan);
     pan.oil = 0; pan.oilKind = 'none'; pan.oilSmoke = Infinity; pan.oilDepth = 0; pan.fond = 0; pan.fondBurnt = 0; pan.cheeseBits = 0; pan.meatBits = 0; pan.flare = 0;
     pan.carbon *= pan.id === 'castiron' || pan.id === 'carbonsteel' ? 0.55 : 0.02;
@@ -1034,7 +1149,8 @@
     const dist = peak < target.lo ? target.lo - peak : peak > target.hi ? peak - target.hi : 0;
     const doneScore = 50 * clamp(1 - dist / 9, 0, 1);
     const faceScore = (f) => {
-      const b = f.brown;
+      // on a grill the bars brand their own, darker crust into a fraction of the face
+      const b = p.grilled ? f.brown * (1 - GRATE.barFrac) + (f.marks || 0) * GRATE.barFrac : f.brown;
       let sc = b < 1 ? b * 0.3 : b < 2.5 ? 0.3 + ((b - 1) / 1.5) * 0.7 : b < 4.5 ? 1 : b < 6 ? 1 - (b - 4.5) * 0.4 : 0.4;
       sc *= 1 - clamp((f.char - 0.15) / 0.6, 0, 0.9);
       sc *= 1 - f.torn * 2;
@@ -1048,7 +1164,8 @@
     const crustScore = 20 * 0.5 * (faceScore(p.faceDown) + faceScore(p.faceUp)) * (1 - dirtPen);
     let wNow = 0, w0 = 0; for (let c = 0; c < p.T.length; c++) { wNow += p.w[c]; w0 += p.w0c[c]; }
     const wRet = wNow / w0;
-    const expected = { rare: 0.72, 'medium-rare': 0.69, medium: 0.63, 'medium-well': 0.56, 'well-done': 0.50 }[target.id] || 0.6;
+    // a grilled patty loses more: juice falls through the grate and radiant heat dries the edge
+    const expected = ({ rare: 0.72, 'medium-rare': 0.69, medium: 0.63, 'medium-well': 0.56, 'well-done': 0.50 }[target.id] || 0.6) - (p.grilled ? 0.10 : 0);
     const juiceScore = 15 * clamp((wRet - (expected - 0.15)) / 0.15, 0, 1);
     // grey band: volume fraction that has been cooked a whole doneness step past the order — for a
     // rare or medium-rare order that is the myoglobin line (~64 °C, where pink turns grey); for a
@@ -1058,7 +1175,7 @@
     const greyLine = { rare: 64, 'medium-rare': 64, medium: 68, 'medium-well': 72 }[target.id] || 999;
     let over = 0; for (let k = 0; k < p.Nz; k++) for (let j = 0; j < p.Nr; j++) if (p.Tpk[k * p.Nr + j] > greyLine) over += p.aj[j] / p.Nz;
     const overFrac = over;
-    const allowedGrey = { rare: 0.42, 'medium-rare': 0.48, medium: 0.6, 'medium-well': 0.8 }[target.id] || 1;
+    const allowedGrey = ({ rare: 0.42, 'medium-rare': 0.48, medium: 0.6, 'medium-well': 0.8 }[target.id] || 1) + (p.grilled ? 0.3 : 0); // the edge cooks from the side over coals, so a grilled patty is greyer by nature
     const evenScore = 10 * clamp(1 - Math.max(0, overFrac - allowedGrey) / 0.3, 0, 1);
     let structure = 1;
     if (p.work > 0.8) structure -= 0.4;
@@ -1086,10 +1203,10 @@
     else if (p.cheeses.some((c) => c.skirt && c.skirt.char > 0.3)) notes.push('Burnt cheese lace welded to the edges: acrid.');
     else if (p.cheeses.some((c) => c.skirt && c.skirt.brown > 2)) notes.push('A crisp golden cheese skirt around the edge. Good.');
     if (s._ms && s._ms.deepfry) notes.push('It was deep-fried: cooked in enough fat to cover it, so heat came in from every side at once.');
-    if (p.grilled) notes.push(p.flareChar > 0.2 ? 'Flare-ups from dripping fat licked the underside: sooty, acrid patches.' : 'Grilled over charcoal: smoke and radiant heat, the edges browned too.');
+    if (p.grilled) notes.push(p.flareChar > 0.15 ? 'Flare-ups from dripping fat licked the underside: sooty, acrid patches.' : 'Grilled over charcoal: smoke and radiant heat, the edges browned too.');
     if ((p.bunSoak || 0) > 0.004) notes.push(`${(p.bunSoak * 1000).toFixed(0)} g of juice soaked into the bottom bun. It will not survive the walk to the table.`);
-    if (p.lostWaterDrip > 0.006) notes.push(`${(p.lostWaterDrip * 1000).toFixed(0)} g of juice ran out onto the pan instead of staying in the meat.`);
-    if (p.lostFat > 0.004) notes.push(`${(p.lostFat * 1000).toFixed(0)} g of fat rendered out and pooled in the pan.`);
+    if (p.lostWaterDrip > 0.006) notes.push(`${(p.lostWaterDrip * 1000).toFixed(0)} g of juice ran out ${p.grilled ? 'through the grate onto the coals' : 'onto the pan'} instead of staying in the meat.`);
+    if (p.lostFat > 0.004) notes.push(`${(p.lostFat * 1000).toFixed(0)} g of fat rendered out and ${p.grilled ? 'fell on the coals' : 'pooled in the pan'}.`);
     if (overFrac > 0.5 && target.hi < 68) notes.push('A wide grey band: the outside went well past target before the centre got there. Thicker patty, lower heat, or flip more often.');
     if (p.dome > 0.5) notes.push('The patty domed into a meatball: the centre lifted off the pan and browned unevenly. A thumb dimple prevents that.');
     if (p.salt === 'mixed') notes.push('Salt was mixed through the meat early: dissolved myosin cross-linked into a springy, sausage-like bite.');
@@ -1133,7 +1250,7 @@
   }
 
   return {
-    C, BLENDS, PANS, FATS, STOVES, DONENESS,
+    C, BLENDS, PANS, FATS, STOVES, GRATE, DONENESS,
     makePatty, createState, step, stepPatty, pattySpots, panTat, selectPatty,
     setKnob, addFat, placePatty, flipPatty, pressPatty, removePatty, addCheese, toggleLid, basteButter, washPan, wipeStove, panDirt, serve,
     evaluate, evaluateTicket, donenessOf, centerT, cellT, layerMean, gridMean, pattyMass, nodeMass, waterHolding, fmtTime, clamp, lerp, rhoVapSat, logEvent,
