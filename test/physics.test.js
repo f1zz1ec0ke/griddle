@@ -673,3 +673,175 @@ test('toppings over coals: the bars toast a bun, an egg runs through them, and n
   }
   assert.equal(P.washPan(s), false, 'the grate cannot be brushed with food on it');
 });
+
+// ---------------------------------------------------------------- the spatula: moving things about
+// Everything the pan does to a patty is read from where it is standing, every step: which rings it
+// draws heat from, which part of the burner's profile is under it, and — on a banked kettle — which
+// side of the fire it is on. These tests are about that following the patty when it moves.
+function footprintT(s, pos, rad) {
+  const rings = P.footprintRings(s.pan, pos, rad), Tr = s.pan.Tr;
+  let T = 0; for (const o of rings) T += o.w * (o.t ? Tr[o.j0] * (1 - o.t) + Tr[o.j0 + 1] * o.t : Tr[o.j0]);
+  return T;
+}
+function meanTat(p) { let T = 0; for (let j = 0; j < p.Nr; j++) T += p.sc.TatR[j] * p.aj[j]; return T; }
+
+test('the rim of a gas pan is cooler metal than the middle, and a patty dragged out there reads it', () => {
+  const s = P.createState({ pan: 'castiron', stove: 'gas' }); preheat(s, 200);
+  P.setKnob(s, 4); cookFor(s, 300); P.addFat(s, 'canola', 8);
+  const p = std({ thicknessMm: 18 }), R = p.D / 2, lim = s.pan.floorR - R;
+  const Tmid = footprintT(s, { x: 0, y: 0 }, R), Trim = footprintT(s, { x: lim, y: 0 }, R);
+  assert.ok(Tmid - Trim > 30, `the metal under the rim should be well cooler: middle ${Tmid.toFixed(0)}, rim ${Trim.toFixed(0)}`);
+  // laid in the middle, it reads the middle; slid to the rim, it reads the rim, within a step
+  P.placePatty(s, p, { x: 0, y: 0 }); cookFor(s, 2);
+  const mid = meanTat(p);
+  assert.ok(Math.abs(mid - Tmid) < 25, `in the middle it reads the middle: ${mid.toFixed(0)} vs ${Tmid.toFixed(0)}`);
+  const r = P.movePatty(s, p, { x: lim, y: 0 });
+  assert.ok(r.ok && r.moved > 0.08, `moved ${JSON.stringify(r)}`);
+  cookFor(s, 2);
+  assert.ok(meanTat(p) < mid - 25, `the metal it reads should follow it out: ${mid.toFixed(0)} → ${meanTat(p).toFixed(0)}`);
+  // and the heat comes out of the rings it is actually standing on now: ring 0 recovers, the rings
+  // under the rim start to sag
+  const T0 = s.pan.Tr[0], T8 = s.pan.Tr[8];
+  cookFor(s, 60);
+  assert.ok(s.pan.Tr[0] > T0, `ring 0 should stop being drained once nothing is on it: ${T0.toFixed(0)} → ${s.pan.Tr[0].toFixed(0)}`);
+  assert.ok(s.pan.Tr[8] < T8, `and the rings under it now should give up heat: ${T8.toFixed(0)} → ${s.pan.Tr[8].toFixed(0)}`);
+  // What does NOT follow is the time to the centre, and that is not an oversight. The middle of a
+  // 12" pan over a ring burner is a small reservoir with no flame under it, the rim is a big one
+  // sitting right over the flame, and while the underside is still boiling the surface is pinned at
+  // 100 °C either way — so hotter metal buys crust and evaporation, not a faster centre. The place
+  // where position really does change the clock is a banked fire, where it changes the radiant load
+  // by a factor of five (see the two-zone tests below).
+});
+
+test('a patty dragged across the pan before it releases tears exactly as an early flip does', () => {
+  const tear = (how) => {
+    const s = P.createState({ pan: 'stainless', stove: 'gas' }); preheat(s, 220);
+    const p = std({ thicknessMm: 18 }); P.placePatty(s, p, { x: 0, y: 0 });
+    cookFor(s, 25); // far too early: raw protein still welded to the steel
+    assert.ok(p.faceDown.stuck, 'it should still be stuck this early');
+    if (how === 'flip') P.flipPatty(s, p);
+    else if (how === 'move') P.movePatty(s, p, { x: 0.05, y: 0 });
+    else P.scrape(s, p);
+    return p.faceDown.torn + p.faceUp.torn;
+  };
+  const flipped = tear('flip'), moved = tear('move'), scraped = tear('scrape');
+  assert.ok(moved > 0.02, `dragging a stuck patty must cost it: torn ${moved}`);
+  assert.ok(Math.abs(moved - flipped) < 1e-9, `a drag tears exactly like an early flip: ${moved} vs ${flipped}`);
+  assert.ok(scraped < moved * 0.5 && scraped > 0, `the blade tears less than the lift: ${scraped} vs ${moved}`);
+  assert.ok(Math.abs(scraped - moved * 0.4) < 1e-9, `and it is the 40 % the model claims: ${scraped / moved}`);
+});
+
+test('scraping frees a stuck patty, costs it a second of contact, and says so when it was already free', () => {
+  const s = P.createState({ pan: 'stainless', stove: 'gas' }); preheat(s, 220); // dry steel: the worst case for sticking
+  const p = std({ thicknessMm: 18 }); P.placePatty(s, p, { x: 0, y: 0 });
+  cookFor(s, 25);
+  const r = P.scrape(s, p);
+  assert.ok(r.ok && r.torn > 0 && !p.faceDown.stuck, `scrape: ${JSON.stringify(r)} stuck=${p.faceDown.stuck}`);
+  assert.ok(s.events.some((e) => /spatula under patty/.test(e.text)), s.events.map((e) => e.text).join(' | '));
+  assert.ok(p.scrapeT > 0.9 && p.scrapeT <= 1, `a scrape is a second of work: ${p.scrapeT}`);
+  // during that second the face is up on the blade: far less heat crosses than in the second before
+  const before = s.diag.panQ;
+  P.step(s, DT);
+  assert.ok(s.diag.panQ < before * 0.6, `on the blade it should draw much less: ${before.toFixed(0)} → ${s.diag.panQ.toFixed(0)} W`);
+  cookFor(s, 1.2);
+  assert.equal(p.scrapeT, 0, 'and the second runs out in simulated time');
+  const after = s.diag.panQ;
+  assert.ok(after > s.diag.panQ * 0.5 && after > 100, `and the heat comes back once it is down: ${after.toFixed(0)} W`);
+  // a released patty just slides
+  cookFor(s, 200);
+  assert.ok(!p.faceDown.stuck);
+  const r2 = P.scrape(s, p);
+  assert.equal(r2.torn, 0);
+  assert.ok(s.events.some((e) => /moves freely/.test(e.text)), 'it should say it moves freely');
+});
+
+test('moving is bounded by the floor and refuses to stack meat on meat', () => {
+  const s = P.createState({}); preheat(s, 200);
+  const a = std({ thicknessMm: 18 }), b = std({ thicknessMm: 18, massG: 120 });
+  const spots = P.pattySpots(2, s.pan.floorR, a.D / 2);
+  P.placePatty(s, a, spots[0]); P.placePatty(s, b, spots[1]);
+  // way outside the pan: clamped to the floor with the whole patty on the metal
+  const r = P.movePatty(s, a, { x: 1, y: 0 });
+  assert.ok(r.ok, 'a move off the edge is clamped, not refused');
+  assert.ok(Math.hypot(a.pos.x, a.pos.y) + a.D / 2 <= s.pan.floorR + 1e-9, `it must stay on the floor: ${Math.hypot(a.pos.x, a.pos.y) + a.D / 2} > ${s.pan.floorR}`);
+  // straight on top of the other one: nudged clear, and never overlapping
+  const r2 = P.movePatty(s, a, { x: b.pos.x, y: b.pos.y });
+  const gap = Math.hypot(a.pos.x - b.pos.x, a.pos.y - b.pos.y) - a.D / 2 - b.D / 2;
+  assert.ok(gap > -0.001, `two patties must not end up on top of each other: gap ${(gap * 1000).toFixed(1)} mm (${JSON.stringify(r2)})`);
+  // a pan with no room left refuses rather than stacking
+  const s2 = P.createState({ pan: 'nonstick' }); preheat(s2, 200);
+  const big = std({ massG: 320, thicknessMm: 14 }), small = std({ massG: 90, thicknessMm: 14 });
+  P.placePatty(s2, big, { x: 0, y: 0 });
+  P.placePatty(s2, small, { x: s2.pan.floorR - small.D / 2, y: 0 });
+  const r3 = P.movePatty(s2, small, { x: 0, y: 0 });
+  assert.equal(r3.ok, false, 'nowhere to put it: refused');
+  assert.ok(s2.events.some((e) => /No room/.test(e.text)));
+});
+
+test('a topping drags its footprint with it: the rings it draws from and shades follow', () => {
+  const s = panAt(200, 8);
+  const [heel] = P.addItem(s, 'bun');
+  P.moveItem(s, heel, { x: 0, y: 0 });
+  cookItem(s, 20, 200);
+  assert.ok(Math.hypot(heel.pos.x, heel.pos.y) < 0.005, `it should be in the middle now: ${JSON.stringify(heel.pos)}`);
+  assert.equal(heel.rings[0].j0, 0, 'and drawing from the middle rings');
+  const cov = P.ringCoverage(s);
+  assert.ok(cov[0] > 0.5, `the middle of the pan is shaded by it now: ${cov[0]}`);
+  const T0 = heel.Tat;
+  P.moveItem(s, heel, { x: s.pan.floorR - heel.Dcov / 2, y: 0 });
+  cookItem(s, 20, 200);
+  assert.ok(heel.Tat < T0 - 10, `out at the rim it sits on cooler metal: ${T0.toFixed(0)} → ${heel.Tat.toFixed(0)}`);
+  assert.ok(P.ringCoverage(s)[0] < 0.2, 'and the middle is bare again');
+});
+
+// ---------------------------------------------------------------- two-zone fire
+test('banked coals: a hot side and a cool side 150 °C apart, and raking them out again evens it up', () => {
+  const s = litGrill(8, 600); P.setKnob(s, 7); cookFor(s, 240);
+  const even = s.pan.Tr[4];
+  assert.equal(s.pan.zoned, false, 'a bed spread flat has no two zones');
+  const coal0 = s.grill.coal;
+  P.setBank(s, 1);
+  cookFor(s, 600);
+  const R = s.pan.floorR;
+  const hot = P.panTatXY(s, 0.66 * R, 0), cool = P.panTatXY(s, -0.66 * R, 0);
+  assert.ok(hot - cool >= 150, `the two sides should be at least 150 K apart: hot ${hot.toFixed(0)}, cool ${cool.toFixed(0)}`);
+  assert.ok(hot - cool < 300, `and not absurdly more: ${(hot - cool).toFixed(0)}`);
+  assert.ok(hot > even - 40 && cool < even - 100, `hot side near the old bed (${even.toFixed(0)}), cool side far below: ${hot.toFixed(0)} / ${cool.toFixed(0)}`);
+  // banking moves the charcoal, it does not burn more or less of it
+  const burnt = coal0 - s.grill.coal;
+  const s2 = litGrill(8, 600); P.setKnob(s2, 7); cookFor(s2, 240); const c2 = s2.grill.coal; cookFor(s2, 600);
+  assert.ok(Math.abs(burnt - (c2 - s2.grill.coal)) < 0.01, `the same coal burns either way: ${burnt} vs ${c2 - s2.grill.coal}`);
+  // the meat's view of the fire follows the same profile
+  const bHot = P.bedAt(s, 0.66 * R), viewHot = bHot.view, TfHot = bHot.Tfire;
+  const bCool = P.bedAt(s, -0.66 * R), viewCool = bCool.view, TfCool = bCool.Tfire;
+  assert.equal(viewHot, 1, 'over the pile it sees the whole fire');
+  assert.ok(viewCool > 0.3 && viewCool < 0.4, `and about a third of it off the pile: ${viewCool}`);
+  assert.ok(TfCool < TfHot - 130, `radiating at a fraction of the bed: ${TfCool.toFixed(0)} vs ${TfHot.toFixed(0)}`);
+  // rake it flat again and the bars come back together
+  P.setBank(s, 0);
+  cookFor(s, 900);
+  assert.ok(P.panTatXY(s, 0.66 * R, 0) - P.panTatXY(s, -0.66 * R, 0) < 40, `spread out again: ${(P.panTatXY(s, 0.66 * R, 0) - P.panTatXY(s, -0.66 * R, 0)).toFixed(0)} K apart`);
+});
+
+test('two-zone technique: sear over the coals, finish off them — medium-rare with a quarter of the char', () => {
+  const cook = (move) => {
+    const s = litGrill(8, 600); P.setKnob(s, 9); P.setBank(s, 1); cookFor(s, 420);
+    const p = std({ thicknessMm: 20, massG: 150, work: 0.35 });
+    const R = s.pan.floorR, hot = { x: 0.6 * R, y: 0 }, cool = { x: -0.6 * R, y: 0 };
+    P.placePatty(s, p, hot);
+    let since = 0, moved = false, g = 0;
+    while (P.centerT(p) < (move ? 49 : 47) && g++ < 200000) {
+      P.step(s, DT); since += DT;
+      if (since >= 60 && !p.faceDown.stuck) { P.flipPatty(s); since = 0; if (move && !moved && p.cookTime >= 180) { P.movePatty(s, p, cool); moved = true; } }
+    }
+    P.removePatty(s); cookFor(s, 150);
+    const r = P.evaluate(s, 'medium-rare', p);
+    return { r, char: p.faceDown.char + p.faceUp.char, t: p.cookTime };
+  };
+  const stay = cook(false), two = cook(true);
+  console.log(`   stayed on the coals: ${stay.t.toFixed(0)} s, char ${stay.char.toFixed(2)}, ${stay.r.total}/100; moved across: ${two.t.toFixed(0)} s, char ${two.char.toFixed(2)}, ${two.r.total}/100`);
+  for (const c of [stay, two]) assert.ok(c.r.peak > 54 && c.r.peak < 57.5, `both should land medium-rare: ${c.r.peak}`);
+  assert.ok(two.char < stay.char * 0.5, `the cool side should char far less: ${two.char.toFixed(2)} vs ${stay.char.toFixed(2)}`);
+  assert.ok(two.t > stay.t + 30, `and take longer to get there: ${two.t.toFixed(0)} vs ${stay.t.toFixed(0)} s`);
+  assert.ok(two.r.total > stay.r.total + 5, `which is the whole point: ${two.r.total} vs ${stay.r.total}`);
+});

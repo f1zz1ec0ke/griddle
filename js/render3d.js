@@ -9,6 +9,7 @@
   const P = root.BurgerPhysics;
   const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
   const lerp = (a, b, t) => a + (b - a) * t;
+  const smoothstep = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
   const mix3 = (a, b, t) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
   const rgb = (c) => `rgb(${c[0] | 0},${c[1] | 0},${c[2] | 0})`;
   const rand = (a, b) => a + Math.random() * (b - a);
@@ -468,7 +469,7 @@
     update(state, dt, where, position, mode) {
       const p = this.p, g = this.group;
       this.texClock += dt;
-      if (where === 'pan') g.position.set(position.x, this.vp.panFloorY + 0.0012 * p.cheeseUnder.length, position.z);
+      if (where === 'pan') g.position.set(position.x, this.vp.panFloorY + 0.0012 * p.cheeseUnder.length + (position.lift || 0), position.z);
       else if (where === 'board') g.position.set(position.x, 0, position.z);
       else {
         const served = where === 'cut';
@@ -884,6 +885,12 @@
       for (let i = 0; i < 30; i++) { const f = new T.Mesh(flareGeo, flareMat.clone()); f.userData.a = (i / 30) * Math.PI * 2 + (Math.random() - 0.5) * 0.1; f.visible = false; g.add(f); this.flareFlames.push(f); }
       const plate = new T.Mesh(new T.CylinderGeometry(0.11, 0.09, 0.008, 48), new T.MeshStandardMaterial({ color: 0xe9e4da, roughness: 0.35 }));
       plate.position.set(0.42, 0.004, 0.12); plate.receiveShadow = true; plate.castShadow = true; g.add(plate); this.plate = plate;
+      // where a dragged patty will land: a ring on the metal, green if it fits, red if it does not
+      this.ghostMat = new T.MeshBasicMaterial({ color: 0x7fe08a, transparent: true, opacity: 0.65, depthWrite: false, side: T.DoubleSide });
+      this.ghost = new T.Mesh(new T.RingGeometry(1.0, 1.2, 64), this.ghostMat); // just outside the footprint, so the patty being dragged never hides it
+      this.ghost.rotation.x = -Math.PI / 2; this.ghost.visible = false; g.add(this.ghost);
+      // the spatula: a thin offset blade on a handle, shown while a scrape is actually happening
+      this.spatula = this._buildSpatula(); this.spatula.visible = false; g.add(this.spatula);
       this.stainGroup = new T.Group(); g.add(this.stainGroup); this.stains = [];
       this.stainMat = new T.MeshStandardMaterial({ color: 0x6b4a1e, transparent: true, opacity: 0.6, roughness: 0.3, depthWrite: false });
       this.stainGeo = new T.CircleGeometry(1, 10);
@@ -945,11 +952,16 @@
         const lumpGeo = new T.DodecahedronGeometry(0.019, 0);
         const lumps = new T.InstancedMesh(lumpGeo, this.coalMat, 160); lumps.castShadow = true; lumps.receiveShadow = true;
         let sd = 99; const rnd = () => { sd = (sd * 1103515245 + 12345) & 0x7fffffff; return sd / 0x7fffffff; };
-        const dm = new T.Object3D();
         const lc = new T.Color();
-        for (let i = 0; i < 160; i++) { const a = rnd() * Math.PI * 2, rr = Math.sqrt(rnd()) * 0.185; const sc = 0.6 + rnd() * 0.9; dm.position.set(Math.cos(a) * rr, bedY + (rnd() - 0.5) * 0.02 + 0.004 * sc, Math.sin(a) * rr); dm.rotation.set(rnd() * 3, rnd() * 3, rnd() * 3); dm.scale.set(sc, sc * (0.6 + rnd() * 0.6), sc); dm.updateMatrix(); lumps.setMatrixAt(i, dm.matrix); const k = 0.35 + rnd() * 0.9; lumps.setColorAt(i, lc.setRGB(k, k * (0.85 + 0.15 * rnd()), k * 0.8)); }
+        this.coalSeeds = [];
+        for (let i = 0; i < 160; i++) {
+          const a = rnd() * Math.PI * 2, rr = Math.sqrt(rnd()) * 0.185, sc = 0.6 + rnd() * 0.9;
+          this.coalSeeds.push({ x: Math.cos(a) * rr, z: Math.sin(a) * rr, jy: (rnd() - 0.5) * 0.02, sc, sy: sc * (0.6 + rnd() * 0.6), rx: rnd() * 3, ry: rnd() * 3, rz: rnd() * 3 });
+          const k = 0.35 + rnd() * 0.9; lumps.setColorAt(i, lc.setRGB(k, k * (0.85 + 0.15 * rnd()), k * 0.8));
+        }
         lumps.instanceColor.needsUpdate = true;
-        g.add(lumps); this.coals = lumps; this.coalY = bedY;
+        g.add(lumps); this.coals = lumps; this.coalY = bedY; this.coalBank = -1;
+        this.setBank(0);
         // the grate: a ring with rods across it
         const Rg = Rk * 0.93, rodR = 0.003, gy = this.PAN_Y - rodR;
         const ringG = new T.Mesh(new T.TorusGeometry(Rg, rodR * 1.2, 8, 96), steel); ringG.rotation.x = Math.PI / 2; ringG.position.y = gy; ringG.castShadow = true; g.add(ringG);
@@ -998,7 +1010,7 @@
         }
       }
       this.flameLight.position.y = id === 'charcoal' ? this.coalY + 0.03 : this.PAN_Y - 0.01;
-      if (id !== 'charcoal') { this.coals = null; this.coalMat = null; this.kettleLid = null; }
+      if (id !== 'charcoal') { this.coals = null; this.coalMat = null; this.kettleLid = null; this.coalSeeds = null; }
       if (this.panSpec) this.setPan(this.panSpec.id);
       if (this.panGroup) this.panGroup.visible = id !== 'charcoal';
       if (id === 'charcoal') { this.panFloorY = this.PAN_Y; this.panR = 0.26; }
@@ -1117,6 +1129,85 @@
       for (const [p, v] of this.views) if (!keep.has(p)) { v.dispose(); this.views.delete(p); }
       for (const p of list) if (!this.views.has(p)) this.views.set(p, new PattyView(this, p));
     }
+    /** A 10 cm offset spatula: a thin steel blade, a cranked neck and a wooden handle. */
+    _buildSpatula() {
+      const g = new T.Group();
+      const steel = new T.MeshStandardMaterial({ color: 0xb9bcc0, metalness: 0.9, roughness: 0.3 });
+      const wood = new T.MeshStandardMaterial({ color: 0x6b4a2a, roughness: 0.8 });
+      const blade = new T.Mesh(new T.BoxGeometry(0.075, 0.0012, 0.095), steel); // 7.5 × 9.5 cm, 1.2 mm
+      blade.position.set(0, 0.0006, -0.02); blade.castShadow = true; g.add(blade);
+      const bevel = new T.Mesh(new T.BoxGeometry(0.075, 0.0006, 0.012), steel); bevel.position.set(0, 0.0003, -0.0715); g.add(bevel); // the thin leading edge
+      const neck = new T.Mesh(new T.BoxGeometry(0.016, 0.0025, 0.05), steel); neck.position.set(0, 0.008, 0.045); neck.rotation.x = -0.5; g.add(neck);
+      const handle = new T.Mesh(new T.CylinderGeometry(0.008, 0.009, 0.1, 12), wood);
+      handle.rotation.x = Math.PI / 2 - 0.15; handle.position.set(0, 0.022, 0.115); handle.castShadow = true; g.add(handle);
+      return g;
+    }
+    /**
+     * Rake the coal bed. The lumps are the same lumps — banking moves charcoal, it does not make or
+     * burn any — so each one keeps its identity and is pushed toward the hot half, with the ones
+     * that came from the far side ending up on top of the pile: twice as deep over half the bed.
+     */
+    setBank(bank) {
+      if (!this.coals || !this.coalSeeds) return;
+      const b = clamp(bank || 0, 0, 1);
+      if (Math.abs(b - this.coalBank) < 0.01) return;
+      this.coalBank = b;
+      const dm = new T.Object3D(), R = 0.185;
+      for (let i = 0; i < this.coalSeeds.length; i++) {
+        const c = this.coalSeeds[i];
+        const x = lerp(c.x, c.x * 0.5 + R * 0.42, b);      // the whole bed squeezed into the +x half
+        const z = lerp(c.z, c.z * 0.85, b);
+        const layer = smoothstep(0.15, -0.15, c.x / R);     // lumps raked in from the far side ride on top
+        const y = this.coalY + c.jy * (1 - 0.4 * b) + 0.004 * c.sc + b * layer * 0.024;
+        dm.position.set(x, y, z); dm.rotation.set(c.rx, c.ry + b * 0.6, c.rz); dm.scale.set(c.sc, c.sy, c.sc);
+        dm.updateMatrix(); this.coals.setMatrixAt(i, dm.matrix);
+      }
+      this.coals.instanceMatrix.needsUpdate = true;
+    }
+    // ---- dragging things around the pan
+    /** Where a screen point lands on the pan floor (the plane the meat sits on). */
+    floorPoint(clientX, clientY) {
+      const rect = this.canvas.getBoundingClientRect();
+      const ndc = new T.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+      const ray = new T.Raycaster(); ray.setFromCamera(ndc, this.camera);
+      const plane = new T.Plane(new T.Vector3(0, 1, 0), -this.panFloorY);
+      const hit = new T.Vector3();
+      return ray.ray.intersectPlane(plane, hit) ? hit : null;
+    }
+    /**
+     * Start dragging whatever is under the cursor. Returns false if there is nothing draggable
+     * there, which is how the orbit control knows this was a look-around and not a move.
+     */
+    startDrag(clientX, clientY) {
+      if (this.mode !== 'stove' || !this.canDrag) return false;
+      const o = this.pickPatty(clientX, clientY);
+      if (!o || !this.canDrag(o)) return false;
+      const pt = this.floorPoint(clientX, clientY); if (!pt) return false;
+      this.dragging = { o, gx: pt.x - o.pos.x, gy: pt.z - o.pos.y, pos: { x: o.pos.x, y: o.pos.y }, land: { x: o.pos.x, y: o.pos.y }, ok: true, moved: 0 };
+      this.moveDrag(clientX, clientY);
+      return true;
+    }
+    moveDrag(clientX, clientY) {
+      const d = this.dragging; if (!d) return;
+      const pt = this.floorPoint(clientX, clientY); if (!pt) return;
+      const want = { x: pt.x - d.gx, y: pt.z - d.gy };
+      d.moved += Math.abs(want.x - d.pos.x) + Math.abs(want.y - d.pos.y);
+      d.pos = want;
+      const r = this.dropSpot ? this.dropSpot(d.o, want) : { pos: want, ok: true };
+      d.land = r.pos; d.ok = r.ok;
+      const rad = (d.o.D != null ? d.o.D : d.o.Dcov) / 2;
+      this.ghost.visible = true;
+      this.ghost.position.set(d.land.x, this.panFloorY + 0.0015, d.land.y);
+      this.ghost.scale.set(rad, rad, 1);
+      this.ghostMat.color.setHex(d.ok ? 0x7fe08a : 0xe06a5a);
+    }
+    /** Let go: the object lands on the legal spot, and the physics decides what that cost. */
+    endDrag() {
+      const d = this.dragging; this.dragging = null; this.ghost.visible = false;
+      if (!d) return null;
+      if (this.onDrop) this.onDrop(d.o, d.land, d.moved);
+      return d;
+    }
     /** Keep one ItemView per topping in `list`. */
     syncItems(list) {
       const keep = new Set(list);
@@ -1184,6 +1275,7 @@
         this.flameLight.color.setHex(0xff6a1a);
         this.flameLight.intensity = 1.4 * glow * flick + 2.5 * clamp(gr.flare, 0, 1.5);
         if (this.kettleLid) this.kettleLid.visible = !!state.lid;
+        this.setBank(gr.bank || 0);
       } else if (this.stoveType === 'electric' && this.coilMat) {
         const glow = clamp((stv.pDelivered || 0) / (stv.pMax * stv.eff), 0, 1);
         this.coilMat.emissiveIntensity = 2.4 * glow * glow;
@@ -1277,11 +1369,19 @@
         }
         stackOf.set(q, extra);
       }
+      const drag = this.dragging;
+      let scraping = null;
       for (const q of list) {
         const v = this.views.get(q);
         const where = state.patties && state.patties.length ? q.where : 'board';
         let pos;
-        if (where === 'pan') pos = { x: q.pos.x, y: 0, z: q.pos.y };
+        if (where === 'pan') {
+          // a patty being dragged follows the cursor; one on the blade is lifted off the metal
+          const at = drag && drag.o === q ? drag.pos : q.pos;
+          const u = q.scrapeT > 0 ? 1 - q.scrapeT : 0, lift = q.scrapeT > 0 ? 0.005 * Math.sin(Math.PI * u) : 0;
+          if (q.scrapeT > 0) scraping = { p: q, at, u };
+          pos = { x: at.x, y: 0, z: at.y, lift };
+        }
         else if (where === 'board') pos = { x: 0, y: 0, z: 0 };
         else { const i = offPan.indexOf(q); pos = { x: plateBase.x + (i - (offPan.length - 1) / 2) * 0.115, y: plateBase.y, z: plateBase.z }; }
         if (this.forceTex) v.forceTex = true;
@@ -1292,7 +1392,7 @@
       for (const it of items) {
         const v = this.itemViews.get(it); if (!v) continue;
         let pos;
-        if (it.where === 'pan') pos = { x: it.pos.x, y: this.panFloorY, z: it.pos.y };
+        if (it.where === 'pan') { const at = drag && drag.o === it ? drag.pos : it.pos; pos = { x: at.x, y: this.panFloorY, z: at.y }; }
         else if (it.where === 'cut' && it.burger != null) {
           // on the burger: between the patty (and its cheese) and the top bun
           const host = list.find((q) => q.id === it.burger);
@@ -1314,6 +1414,20 @@
         v.update(state, dt, it.where, pos, this.mode);
       }
       this.forceTex = false;
+      // the spatula: it slides in under the patty and back out over the second the scrape takes,
+      // from whichever side the camera is on, because that is the side the cook is standing
+      if (this.spatula) {
+        this.spatula.visible = !!scraping && stoveOn;
+        if (scraping) {
+          const R = scraping.p.D / 2, depth = Math.sin(Math.PI * scraping.u);
+          const az = this.controls.azimuth, cx = scraping.at.x, cz = scraping.at.y;
+          const out = R + 0.075 - depth * (R + 0.09);
+          this.spatula.position.set(cx + Math.cos(az) * out, this.panFloorY + 0.0022, cz + Math.sin(az) * out);
+          this.spatula.rotation.set(0, -az + Math.PI / 2, 0);
+          this.spatula.rotation.x = 0; // set below, in the blade's own frame
+          this.spatula.children[0].rotation.x = this.spatula.children[1].rotation.x = -0.06; // the blade rides tip-down under the crust
+        }
+      }
 
       this._updateParticles(state, dt, list, stoveOn);
 
@@ -1451,11 +1565,14 @@
     dolly(f) { this.goal.dist = clamp(this.goal.dist * f, 0.06, 2.5); }
     onDown(e) {
       this.el.setPointerCapture && this.el.setPointerCapture(e.pointerId);
-      this.drag = { b: e.button, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, moved: 0, shift: e.shiftKey };
+      // a left-drag that starts on a patty or a topping moves it; anywhere else it orbits
+      const moving = e.button === 0 && !e.shiftKey && this.vp.startDrag(e.clientX, e.clientY);
+      this.drag = { b: e.button, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, moved: 0, shift: e.shiftKey, moving };
     }
     onMove(e) {
       const d = this.drag; if (!d) return;
       const dx = e.clientX - d.x, dy = e.clientY - d.y; d.x = e.clientX; d.y = e.clientY; d.moved += Math.abs(dx) + Math.abs(dy);
+      if (d.moving) { this.vp.moveDrag(e.clientX, e.clientY); return; }
       if (d.b === 0 && !d.shift) { this.goal.azimuth -= dx * 0.006; this.goal.polar = clamp(this.goal.polar - dy * 0.006, 0.05, 1.52); }
       else if (d.b === 2) { this.dolly(Math.exp(dy * 0.006)); }
       else { // pan (middle, or shift+left)
@@ -1467,6 +1584,12 @@
     }
     onUp(e) {
       const d = this.drag; if (!d) return; this.drag = null;
+      if (d.moving) {
+        const drop = this.vp.endDrag();
+        // a click that never went anywhere is a click: it selects, it does not move anything
+        if (d.moved < 6 && drop && this.vp.onPick) this.vp.onPick(drop.o);
+        return;
+      }
       if (d.b === 2 && d.moved < 6) this.zoomToPoint(e.clientX, e.clientY);
       if (d.b === 0 && d.moved < 6 && this.vp.onPick) { const p = this.vp.pickPatty(e.clientX, e.clientY); if (p) this.vp.onPick(p); }
     }

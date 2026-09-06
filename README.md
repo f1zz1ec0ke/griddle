@@ -29,7 +29,9 @@ npm run perf         # how many milliseconds of CPU a simulated second costs
 
 | Input | Effect |
 |---|---|
-| Left-drag | orbit / mouse look |
+| Left-drag | orbit / mouse look — unless you start on a patty, in which case you drag it across the pan |
+| Drag a patty | slide it to another part of the pan or grate; a ring shows where it will land (red if something is in the way). **Move to centre / Move to edge** do the same from the keyboard |
+| `S` | scrape: work the spatula under a patty that has welded itself to the metal |
 | Wheel, right-drag | zoom |
 | Right-click | zoom onto the point under the cursor; right-click again to back out |
 | Middle-drag / shift-drag | pan |
@@ -40,6 +42,7 @@ npm run perf         # how many milliseconds of CPU a simulated second costs
 | **Extras** row | put bun halves, bacon, an egg or sliced onions in the pan beside the patties |
 | `F` with a topping selected | turn the bun / rasher / egg — or stir the onions |
 | Stove: charcoal kettle | the knob becomes the vents, the pan goes away, and the lid is the kettle's |
+| **Bank coals** (kettle only) | rake the bed to one side: a searing zone over the coals and a gentle one off them |
 
 The **Inspector** button opens a live chart (pan, crust surface, bottom layer, centre, top) and a
 table of everything the model knows. **Hard mode** hides the thermometers.
@@ -85,6 +88,18 @@ a minute to recover. Burner models for gas, a lagging electric coil and inductio
 convection and radiation losses from the uncovered metal; juice boil-off with a Leidenfrost
 regime; fond that browns and then burns; spatter that throws fat out of the pan when water
 flashes under it.
+
+**Where it sits** is part of the cook, and it can be changed: drag a patty and it slides across the
+metal. The rings it draws heat from, the part of the burner's profile under it and the fraction of
+each ring it shades all follow it on the next step — a patty's own ring is a circle, so the metal
+under that ring is averaged around it rather than read at one radius, and the heat the meat takes
+goes back into exactly the rings it came out of. Meat welds itself to hot metal and only lets go
+once its crust has set and dried, so sliding a patty before then tears the bottom face off exactly
+as an early flip would; the strips stay on the pan as fond. **Scrape** works a thin blade under it
+first: a steel edge breaks a half-set crust a strip at a time instead of ripping the whole face at
+once, which costs about 40 % of the tearing — and a second of searing, because for that second most
+of the face is up on the blade rather than on the metal. On a patty that has already released it
+just confirms that it slides.
 
 **Cheese** is a stack of lumped slices (each added slice rotated a little further) with heat
 passing meat → slice → slice → air. The part of a slice hanging past the patty droops as it melts;
@@ -156,6 +171,22 @@ the dome's radiation cook and brown the top face while the coals calm down. Gril
 judged with the grill in mind (more juice is lost through the grate, the edge cooks from the
 side), and the bars' marks count as crust.
 
+**Banking the coals** rakes the bed to one side. It moves the charcoal, it does not change how much
+of it is burning: the same mass, twice as deep over half the grate, bare ash under the other half.
+What that changes is what a point over the grate *sees*. Over the pile it is glowing coal filling
+its view and the fire's own gas coming up through the bars. Over the bare half it is ash and the
+enamel of the bowl — warmed by the pile, but radiating at three quarters of its temperature through
+about a third of the view factor, with gas that has crossed the kettle and mixed with room air on
+the way. The bars answer accordingly: the grate is still solved as rings (that is where its heat
+capacity and everything the meat draws out of it live), with the two-zone difference carried as a
+zero-mean departure across the bank axis, each strip a thin bar in balance with the fire under it
+and conducting along the bars to its neighbours. 4 mm of steel is about 13 kJ/(m²K), so a strip
+takes a couple of minutes to settle and the zones then hold: **150–250 °C between the two sides**,
+and about a sixth of the radiant load (0.36 of the view factor at 0.75 of the bed's rise over
+ambient, and radiation goes as T⁴). A patty reads the fire at its own position — bottom boundary,
+crust temperature cap, edge radiation and flare-ups included, because a flare burns where the fat
+lands, not over bare ash. Sear over the coals, slide it across, and finish it gently.
+
 **Speed and the timestep.** The model steps at 0.05 s of simulated time (20 Hz). That is a long
 way inside the stability limit of the explicit conduction — 0.6 mm layers of meat allow about
 0.6 s, twelve rings of cast iron about 1.7 s — and the patty automatically sub-cycles its
@@ -208,6 +239,23 @@ On the charcoal kettle the window is narrower, but it is there: light it on 8, w
 bed to glow and the grate to pass 250 °C, then run the vents on 7 (bed around 630 °C). An 18 mm
 patty flipped every 45 s and pulled at 47 °C lands a medium-rare 100 with bars branded into
 both faces. Vents wide open, a thick patty and lazy flips is a charred one.
+
+That last one is what the **two-zone fire** is for. Bank the coals fully, give the bars two minutes
+to settle, and sear over the pile — then, once the crust has set (about three minutes, so it lifts
+without tearing), drag it across to the bare side and let it coast. A 20 mm patty over vents on 9
+that stays over the coals lands medium-rare with a face and a half of char and scores in the
+seventies; the same patty seared for three minutes and then moved finishes with a quarter of the
+char and scores in the high eighties. It takes a minute or so longer, and pull it about 2 °C higher
+than you would on the hot side: a patty that finished gently carries less heat in its crust, so
+there is less carry-over coming.
+
+On a **pan**, position moves the metal but not the clock. The rim of a 12" pan on gas really is
+40–60 °C cooler than the middle when you lay the meat down, and the patty reads it. But the middle
+of a pan over a ring burner is a small reservoir with no flame directly under it while the rim is a
+big one sitting right over the flame, and while the underside is still boiling the surface is
+pinned at 100 °C either way — so on a pan, moving a patty buys you a different sear, room for
+another burger, and a way off the hot spot, not a different cooking time. On coals it buys you the
+cooking time as well.
 
 ## Layout
 

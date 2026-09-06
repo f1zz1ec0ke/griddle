@@ -204,6 +204,10 @@
       $('btn-wash').title = grill ? 'Wire-brush the bars while they are hot.' : 'Empty and scrub the pan under the tap. Cools it, leaves it wet.';
       $('btn-fat').disabled = grill; $('e-fat').disabled = grill; $('e-fatg').disabled = grill;
       $('e-pan').hidden = grill; $('e-pan-wrap').hidden = grill;
+      $('bank-row').hidden = !grill;
+      if (grill) { $('bank').value = Math.round((this.state.grill.bank || 0) * 100); $('bank-v').textContent = $('bank').value; }
+      $('btn-move-in').textContent = grill ? 'Over the coals' : 'Move to centre';
+      $('btn-move-out').textContent = grill ? 'Off the coals' : 'Move to edge';
       $('btn-lid').title = grill ? 'The kettle lid: turns the grill into an oven and calms the coals.' : 'A glass lid: traps steam, cooks the top, softens the crust.';
     }
     layoutSpots() {
@@ -235,7 +239,21 @@
       $('e-fatg').addEventListener('input', (e) => { s.equip.fatG = Number(e.target.value); $('e-fatg-v').textContent = e.target.value + ' g'; });
       $('btn-fat').onclick = () => { P.addFat(s.state, s.equip.fat, s.equip.fatG); s.audio.click(); };
       $('knob').addEventListener('input', (e) => { P.setKnob(s.state, Number(e.target.value)); $('knob-v').textContent = e.target.value; });
+      $('bank').addEventListener('input', (e) => { P.setBank(s.state, Number(e.target.value) / 100); $('bank-v').textContent = e.target.value; });
       $('btn-place').onclick = () => s.place();
+      $('btn-scrape').onclick = () => { const p = s.patty; if (!p || p.where !== 'pan') return; P.scrape(s.state, p); s.audio.hiss(0.3); s.vp.forceTex = true; s.refreshButtons(); };
+      $('btn-move-in').onclick = () => s.slide(false);
+      $('btn-move-out').onclick = () => s.slide(true);
+      // dragging in the viewport: the renderer asks what may be dragged and where a drop would land,
+      // and hands the drop back here so the physics decides what the move costs
+      s.vp.canDrag = (o) => s.phase === 'cook' && o && o.where === 'pan';
+      s.vp.dropSpot = (o, want) => P.slideTo(s.state, o, (o.D != null ? o.D : o.Dcov) / 2, want);
+      s.vp.onDrop = (o, land, moved) => {
+        if (moved < 0.004) return; // a nudge of a few millimetres on screen is a click, not a move
+        const r = s.patties.indexOf(o) >= 0 ? P.movePatty(s.state, o, land) : P.moveItem(s.state, o, land);
+        if (r && r.ok) { s.audio.hiss(0.25); s.vp.forceTex = true; }
+        s.refreshButtons(); s.updateChips();
+      };
       $('btn-flip').onclick = () => {
         // one button, whatever is selected: turn the patty, turn the bun or the rasher or the egg,
         // or stir the onions
@@ -297,6 +315,7 @@
         if (e.key === 'f' || e.key === 'F') $('btn-flip').click();
         if (e.key === ' ') { e.preventDefault(); if (s.patty && s.patty.where === 'board') $('btn-place').click(); else $('btn-flip').click(); }
         if (e.key === 'p' || e.key === 'P') $('btn-press').click();
+        if (e.key === 's' || e.key === 'S') $('btn-scrape').click();
         if (e.key === 'c' || e.key === 'C') $('btn-cutaway').click();
       });
     }
@@ -307,9 +326,31 @@
     inPan() { return this.patties.filter((p) => p.where === 'pan'); }
     place() {
       const p = this.patty; if (!p || p.where !== 'board') return;
-      P.placePatty(this.state, p, this.spots[this.sel]);
-      this.audio.hiss(Math.min(1, (P.panTat(this.state.pan, Math.hypot(p.pos.x, p.pos.y)) - 60) / 200));
+      let pos = this.spots[this.sel];
+      const g = this.state.grill;
+      if (g && (g.bank || 0) > 0.05) {
+        // a banked fire has a searing side and a finishing side, and meat goes on over the coals
+        const r = P.slideTo(this.state, p, p.D / 2, { x: 0.55 * this.state.pan.floorR + pos.x * 0.4, y: pos.y });
+        if (r.ok) pos = r.pos;
+      }
+      P.placePatty(this.state, p, pos);
+      this.audio.hiss(Math.min(1, (P.panTatXY(this.state, p.pos.x, p.pos.y) - 60) / 200));
       this.vp.forceTex = true;
+      this.refreshButtons(); this.updateChips();
+    }
+    /**
+     * Keyboard-friendly moving: slide whatever is selected to the middle of the pan, or out to the
+     * edge of it (over the coals, or off them, on a banked kettle — the hot half is +x).
+     */
+    slide(out) {
+      const o = this.selItem || this.patty; if (!o || o.where !== 'pan') return;
+      const rad = (o.D != null ? o.D : o.Dcov) / 2;
+      const grill = !!this.state.grill, bank = grill ? this.state.grill.bank || 0 : 0;
+      const lim = Math.max(0, this.state.pan.floorR - rad);
+      // on a banked fire "in" and "out" are the two zones, not the middle and the rim
+      const want = bank > 0.05 ? { x: (out ? -0.62 : 0.62) * this.state.pan.floorR, y: 0 } : out ? { x: lim * Math.cos(0.6), y: lim * Math.sin(0.6) } : { x: 0, y: 0 };
+      const r = this.selItem ? P.moveItem(this.state, o, want) : P.movePatty(this.state, o, want);
+      if (r && r.ok) { this.audio.hiss(0.25); this.vp.forceTex = true; }
       this.refreshButtons(); this.updateChips();
     }
     remove() {
@@ -351,6 +392,10 @@
       $('btn-remove').disabled = it ? !itemOn : !inPan;
       $('btn-remove').textContent = it ? `Take the ${it.spec.short} off` : 'Off the heat → rest';
       $('btn-lid').disabled = !on || (this.inPan().length === 0 && !this.items.some((q) => q.where === 'pan'));
+      // the spatula acts on whatever is selected, and only on the metal
+      const onMetal = it ? itemOn : inPan;
+      $('btn-scrape').disabled = !inPan || !!it; // only meat welds itself down
+      for (const id of ['btn-move-in', 'btn-move-out']) $(id).disabled = !onMetal;
       if (inPan && !it) { const raw = P.gridMean(p, p.dM) < 0.25; $('btn-smash').disabled = !raw || p.h < 0.006 || !!this.state.grill; $('btn-cheese').disabled = p.cheeses.length >= 24; $('btn-baste').disabled = !!this.state.grill; }
       for (const id of ['btn-bun', 'btn-bacon', 'btn-egg', 'btn-onion']) $(id).disabled = !(on || this.phase === 'rest');
       // the build step: with more than one burger on the ticket, say which one this topping is for
@@ -416,6 +461,10 @@
       $('h-side').textContent = it
         ? `${it.label} · ${P.itemState(it).state}${it.where === 'pan' ? ` · ${fmt(P.itemT(it), 0)} °C · ${P.fmtTime(it.timeDown)} this side` : it.burger ? ` · on burger ${it.burger}` : ' · at the pass'}`
         : p && where === 'pan' ? `${this.patties.length > 1 ? `patty ${p.id} · ` : ''}face ${p.faceDown.id} down · ${P.fmtTime(p.timeDown)} this side` : '';
+      if (st.grill && (st.grill.bank || 0) > 0.05 && !this.hard) {
+        $('h-pan').textContent = `${fmt(st.grill.Thot, 0)} / ${fmt(st.grill.Tcool, 0)} °C`;
+        $('h-pan-label').textContent = 'IR gun · hot / cool';
+      } else if (st.grill) $('h-pan-label').textContent = 'IR gun · grate';
       $('h-smoke').hidden = d.smoke < 0.25; $('h-smoke').textContent = d.smoke > 1.2 ? '🚨 Heavy smoke — open a window' : '💨 Smoking';
       $('h-lid').hidden = !st.lid;
       // inspector
@@ -425,6 +474,7 @@
         if (st.grill) {
           add('Coal bed', fmt(st.grill.Tfire, 0) + ' °C · ' + fmt(st.grill.coal * 1000, 0) + ' g of charcoal left · burning ' + fmt(st.stove.pDelivered / 1000, 1) + ' kW');
           add('Flare / fat on the coals', fmt(st.grill.flare, 2) + ' · ' + fmt(st.grill.fatOnCoals * 1000, 2) + ' g');
+          add('Bed raked', fmt((st.grill.bank || 0) * 100, 0) + ' % to one side' + ((st.grill.bank || 0) > 0.05 ? ` · bars ${fmt(st.grill.Thot, 0)} °C over the coals, ${fmt(st.grill.Tcool, 0)} °C off them` : ' (spread flat)'));
           add('Dome air', fmt(st.grill.Tdome, 0) + ' °C' + (st.lid ? ' (lid on)' : ''));
         } else add('Burner power to pan', fmt(st.stove.pDelivered, 0) + ' W');
         add(st.grill ? 'Grate temperature' : 'Pan temperature', fmt(st.pan.T, 1) + ' °C mean · centre ' + fmt(st.pan.Tcenter, 0) + ' · edge ' + fmt(st.pan.Tedge, 0));
@@ -443,6 +493,7 @@
           add('Fat rendered out', fmt(p.lostFat * 1000, 1) + ' g (' + fmt(d.fatDrip * 1000, 2) + ' g/s)');
           add('Water lost (steam / drip)', fmt(p.lostWaterEvap * 1000, 1) + ' / ' + fmt(p.lostWaterDrip * 1000, 1) + ' g');
           add('Mass now', fmt(P.pattyMass(p) * 1000, 1) + ' g of ' + fmt(p.massKg0 * 1000, 0));
+          add('Metal under it', fmt(P.panTatXY(st, p.pos.x, p.pos.y), 0) + ' °C · ' + fmt(Math.hypot(p.pos.x, p.pos.y) * 100, 1) + ' cm from the middle' + (p.scrapeT > 0 ? ' · ON THE SPATULA' : ''));
           add('Face down: brown / char', fmt(p.faceDown.brown, 2) + ' / ' + fmt(p.faceDown.char, 2) + (p.faceDown.stuck ? ' · STUCK' : ' · released'));
           add('Face up: brown / char', fmt(p.faceUp.brown, 2) + ' / ' + fmt(p.faceUp.char, 2));
           add('Bottom crust centre → rim', Array.from(p.faceDown.brownR).filter((_, j) => j % Math.ceil(p.Nr / 6) === 0 || j === p.Nr - 1).map((b) => b.toFixed(1)).join(' '));

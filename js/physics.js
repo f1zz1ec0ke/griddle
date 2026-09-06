@@ -96,6 +96,25 @@
   /** The grate over the coals, standing in for the pan when the stove is a grill. */
   const GRATE = { id: 'grate', name: 'Steel grate over charcoal', mass: 1.6, cp: 470, diam: 0.54, wall: 0.0, k: 50, thick: 0.004, emiss: 0.9, release: 0.7, hcMul: 1.0, maxT: 900, barFrac: 0.28 };
   const COAL = { H: 30e6, view: 0.5, viewGrate: 0.4, viewSide: 0.2, tauUp: 150, tauDown: 300 };
+  /**
+   * Raking the coals to one side. `bank` 0 spreads the same charcoal under the whole grate, 1 piles
+   * it into the +x half: twice as deep over half the bed, bare ash under the rest. It moves the
+   * mass, it does not change it — the bed still burns at `Tfire` — but what a point over the grate
+   * *sees* changes completely. Over the pile a face sees glowing coal filling its view and the
+   * fire's own gas coming up past it. Over the bare half it sees ash and the enamel of the bowl,
+   * warmed by the pile but radiating at a fraction of its temperature, through about a third of the
+   * view factor, with gas that has crossed the kettle and mixed with room air on the way. That is
+   * worth 150–250 K at the bars, which is the entire point of a two-zone fire: sear on one side,
+   * finish on the other.
+   */
+  const BANK = {
+    edge0: -0.2, edge1: 0.2, // where the pile ends, as a fraction of the bed radius: a ~10 cm slope on a 22" kettle
+    view: 0.36,              // the bare side's view factor as a fraction of the pile's (0.5 → 0.18 for meat, 0.4 → 0.14 for the bars)
+    src: 0.75,               // and the temperature of what it does see, as a fraction of the bed's rise over ambient
+    gas: 0.55,               // hot gas that has crossed from the coals, about half diluted with room air
+    flare: 0.15,             // a flare burns where the fat lands, so bare ash only smokes at the meat above it
+    N: 9,                    // strips across the bank axis that the bars' own two-zone temperature is solved on
+  };
 
   // Chef temperature bands for the *peak* centre temperature (°C).
   const DONENESS = [
@@ -173,7 +192,7 @@
       aj: new Float64Array(Nr), // ring area fractions
       faceDown: makeFace('A', Nr), faceUp: makeFace('B', Nr), faceSide: { brown: 0, char: 0 },
       poolB: new Float64Array(Nr), poolT: new Float64Array(Nr), poolBottom: 0, poolTop: 0, fatTop: 0,
-      dome: 0, pressT: 0, pressed: false,
+      dome: 0, pressT: 0, pressed: false, scrapeT: 0, moved: 0,
       lostWaterEvap: 0, lostWaterDrip: 0, lostFat: 0, lostStuck: 0,
       flips: 0, cookTime: 0, timeDown: 0,
       peakCenter: T0, cheeses: [], cheeseUnder: [],
@@ -209,7 +228,7 @@
       Cn: new Float64Array(n), Kn: new Float64Array(n), Q: new Float64Array(n),
       X: new Float64Array(n), flux: new Float64Array(n), fmv: new Float64Array(n), dir: new Int8Array(n),
       Aj: new Float64Array(Nr), qBotR, TpanR: new Float64Array(Nr), hcR: new Float64Array(Nr), TsLim: new Float64Array(Nr),
-      TatR: new Float64Array(Nr), ringJ0: new Int32Array(Nr), ringF: new Float64Array(Nr),
+      TatR: new Float64Array(Nr),
       cheeseFlux: new Float64Array(26), cheeseFluxTop: new Float64Array(26), // at most 24 slices, plus the air above
       res: { qBot: 0, qBotR, hc: 0, boilBottom: 0, evapTop: 0, fatDrip: 0, fatSide: 0, juiceSide: 0, Ts: 0, qSide: 0 },
       acc: { qBot: 0, qBotR: new Float64Array(Nr), hc: 0, boilBottom: 0, evapTop: 0, fatDrip: 0, fatSide: 0, juiceSide: 0, Ts: 0, qSide: 0 },
@@ -249,10 +268,16 @@
         floorR, oilDepth: 0, overflow: 0, flare: 0,
         smoke: 0, smokeOil: 0, smokeChar: 0, smokeFond: 0, smokeItems: 0,
         lostSpatter: 0, area: Math.PI * (pan.diam / 2) ** 2,
+        // the bars' two-zone field (a grate only): the absolute temperature of each strip across the
+        // bank axis, the zero-mean departure from the ring solution it implies, and how much of the
+        // bed's area each strip carries. `zoned` is false while the fire is spread evenly, and then
+        // every lookup is exactly the ring lookup it always was.
+        zoneT: grill ? new Float64Array(BANK.N).fill(Tamb) : null, zoneDT: grill ? new Float64Array(BANK.N) : null, zoneW: grill ? zoneWeights() : null, zoned: false,
       },
       lid: false, lidAirT: Tamb,
-      // the fire, when the stove is a grill: coal left, bed temperature, ash, flare-ups, dome air
-      grill: grill ? { coal: 1.5, coal0: 1.5, Tfire: Tamb, ash: 0, lit: false, flare: 0, flareTotal: 0, Tdome: Tamb, fatOnCoals: 0, burnW: 0 } : null,
+      // the fire, when the stove is a grill: coal left, bed temperature, ash, flare-ups, dome air,
+      // and how the bed is raked (0 = spread under the whole grate, 1 = banked into one half)
+      grill: grill ? { coal: 1.5, coal0: 1.5, Tfire: Tamb, ash: 0, lit: false, flare: 0, flareTotal: 0, Tdome: Tamb, fatOnCoals: 0, burnW: 0, bank: 0, mView: COAL.viewGrate, mViewTs4: 0, mTgas: Tamb } : null,
       patties: [], patty: null, where: 'board', // s.patty / s.where mirror the selected patty
       items: [], item: null, // toppings sharing the pan: bun halves, bacon, an egg, onions
       baste: 0,
@@ -267,6 +292,46 @@
     const x = clamp(r / pan.dr - 0.5, 0, pan.Np - 1); const j = Math.floor(x), t = x - j;
     return j >= pan.Np - 1 ? pan.Tr[pan.Np - 1] : lerp(pan.Tr[j], pan.Tr[j + 1], t);
   }
+  /** Share of the round bed's area in each strip across the bank axis (a chord is ∝ √(1−u²) long). */
+  function zoneWeights() {
+    const w = new Float64Array(BANK.N); let sum = 0;
+    for (let i = 0; i < BANK.N; i++) { const u = -1 + (2 * i + 1) / BANK.N; w[i] = Math.sqrt(Math.max(0, 1 - u * u)); sum += w[i]; }
+    for (let i = 0; i < BANK.N; i++) w[i] /= sum;
+    return w;
+  }
+  /** How much of the bed under `u` (x as a fraction of the bed radius) is glowing coal, 0..1. */
+  function coalAt(g, u) { return g.bank > 0 ? 1 - g.bank * (1 - smooth(BANK.edge0, BANK.edge1, u)) : 1; }
+  /**
+   * The fire as seen from a point on the bank axis: the coal fraction under it, its view factor of
+   * the fire as a fraction of the pile's, the temperature of what it sees, and the gas coming up
+   * past it. Filled into one reused object — it is read once per patty and once per topping every
+   * step, and nothing in here allocates. With the coals spread it is the bed itself, unchanged.
+   */
+  const BED = { f: 1, view: 1, Tfire: 0, Tgas: 0 };
+  function bedAt(s, x) {
+    const g = s.grill, Tamb = s.env.Tamb, Tgas0 = Tamb + 0.5 * (g.Tfire - Tamb);
+    if (!g.bank) { BED.f = 1; BED.view = 1; BED.Tfire = g.Tfire; BED.Tgas = Tgas0; return BED; }
+    const f = coalAt(g, clamp(x / s.pan.floorR, -1, 1));
+    BED.f = f; BED.view = f + BANK.view * (1 - f);
+    BED.Tfire = Tamb + (g.Tfire - Tamb) * (f + BANK.src * (1 - f));
+    BED.Tgas = Tamb + (Tgas0 - Tamb) * (f + BANK.gas * (1 - f));
+    return BED;
+  }
+  /** The bars' departure from the ring solution at x. Zero unless the fire has been banked. */
+  function zoneAt(pan, x) {
+    if (!pan.zoned) return 0;
+    const q = clamp((x / pan.floorR + 1) * 0.5 * BANK.N - 0.5, 0, BANK.N - 1), i = Math.floor(q);
+    return i >= BANK.N - 1 ? pan.zoneDT[BANK.N - 1] : lerp(pan.zoneDT[i], pan.zoneDT[i + 1], q - i);
+  }
+  /**
+   * Metal temperature under a *point* on the pan: the rings, plus the two-zone offset when the coals
+   * have been raked to one side. This is panTat() with the axis the rings cannot see added back.
+   */
+  function panTatXY(s, x, y) {
+    const T = panTat(s.pan, hyp(x, y));
+    if (!s.grill || !s.pan.zoned) return T;
+    return Math.max(s.env.Tamb, T + zoneAt(s.pan, x));
+  }
   function selectPatty(s, p) { s.patty = p || null; s.where = p ? p.where : 'board'; s.item = null; }
   function syncSelected(s) { if (s.patty) s.where = s.patty.where; }
 
@@ -277,6 +342,15 @@
 
   // ---------------------------------------------------------------- actions
   function setKnob(s, v) { s.stove.knob = clamp(v, 0, 10); }
+  /** Rake the coals: 0 spreads them under the whole grate, 1 piles them into one half. */
+  function setBank(s, v) {
+    if (!s.grill) return;
+    const b = clamp(v, 0, 1), was = s.grill.bank;
+    s.grill.bank = b;
+    if (Math.abs(b - was) < 0.05) return;
+    if (b < 0.05) logEvent(s, 'Raked the coals back out flat under the grate. One temperature everywhere again.', 'action');
+    else logEvent(s, `Banked the coals ${b > 0.75 ? 'hard' : 'partly'} to one side with the tongs (${(b * 100).toFixed(0)} %). The bed is deeper over there and bare ash on the other side: sear over the coals, then slide it across to finish. The bars take a minute or two to settle into two zones.`, 'action');
+  }
 
   function addFat(s, kind, grams) {
     const f = FATS[kind] || FATS.none;
@@ -310,26 +384,146 @@
     patty.timeDown = 0;
     patty.dirtAtStart = panDirt(s.pan);
     if (patty.dirtAtStart > 0.002) logEvent(s, 'The pan is dirty: burnt bits from earlier tickets will stick to this crust and smoke.', 'warn');
-    const Tunder = panTat(s.pan, Math.hypot(patty.pos.x, patty.pos.y));
+    const Tunder = panTatXY(s, patty.pos.x, patty.pos.y);
     const others = s.patties.filter((q) => q !== patty && q.where === 'pan').length;
     logEvent(s, `Patty ${patty.id} (${(patty.massKg0 * 1000).toFixed(0)} g, ${(patty.h0 * 1000).toFixed(0)} mm, ${(patty.fatFrac * 100).toFixed(0)} % fat, ${patty.T0.toFixed(0)} °C) hits the ${s.grill ? 'grate' : 'pan'} at ${Tunder.toFixed(0)} °C under it` + (others ? ` — ${others + 1} ${s.grill ? 'on the grate' : 'in the pan'} now, and every cold patty drags the metal down.` : '.'), 'action');
     if (s.grill && (!s.grill.lit || s.grill.Tfire < 350)) logEvent(s, 'The coals are not ready. Meat over a cool fire steams and sticks; wait for the bed to glow.', 'warn');
     else if (!s.grill && Tunder < 120) logEvent(s, 'The pan is not hot enough there. The meat will steam in its own juice and go grey.', 'warn');
   }
 
+  /**
+   * Breaking the weld under a face that has not released yet. Raw protein bonds to hot metal and
+   * lets go again only once the crust has set and dried; before that, whatever you do to the patty
+   * — lift it, slide it, drag it across the pan — takes the bottom layer off in strips, and the
+   * strips stay on the metal as fond and burnt bits. `mul` is the tool: 1 for a spatula under the
+   * whole face at once (a flip, a lift), less for a thin edge worked under it. Every action that
+   * moves a stuck patty comes through here, so a drag costs exactly what an early flip costs.
+   */
+  function tearStuck(s, p, mul) {
+    const fd = p.faceDown, relThr = s.pan.release * (s.pan.oil > 0.002 ? 0.7 : 1.0);
+    if (!fd.stuck || fd.brown >= relThr || s.pan.release <= 0) return 0;
+    const torn = clamp(0.25 * (1 - fd.brown / relThr), 0.03, 0.25) * (mul == null ? 1 : mul);
+    const m0 = nodeMass(p, 0);
+    for (const k of ['w', 'fs', 'fl', 'fr', 'p']) for (let j = 0; j < p.Nr; j++) { p.lostStuck += p[k][j] * torn; p[k][j] *= (1 - torn); }
+    s.pan.fond += m0 * torn * 0.3; s.pan.meatBits += m0 * torn;
+    fd.torn += torn;
+    return torn;
+  }
+
+  // ---- the spatula: sliding things around the pan, and working the blade under a stuck one
+  const MOVE_GAP = 0.002;    // 2 mm of daylight a cook leaves between two patties when shuffling them
+  const SCRAPE_TEAR = 0.4;   // a thin edge worked under a half-set crust takes ~40 % of what lifting the whole face does
+  const SCRAPE_TIME = 1.0;   // and it takes about a second, with the face up on the blade and off the metal
+  const SCRAPE_LIFT = 0.35;  // how much of the face still touches while the blade is under it
+
+  /**
+   * Where something of radius `rad` can actually go when the cook aims it at `want`. Two rules: the
+   * floor is the limit (nothing hangs over the wall or off the grate), and two things cannot occupy
+   * the same metal — the target is pushed off whatever it lands on, then back inside the floor, a
+   * few times over, and if there is still no room it is refused rather than stacked.
+   */
+  function slideTo(s, moving, rad, want) {
+    const R = s.pan.floorR, lim = Math.max(0, R - rad);
+    let x = want.x, y = want.y;
+    const d0 = hyp(x, y); if (d0 > lim) { const k = d0 > 1e-9 ? lim / d0 : 0; x *= k; y *= k; }
+    const others = [];
+    for (const q of s.patties) if (q !== moving && q.where === 'pan') others.push({ x: q.pos.x, y: q.pos.y, r: q.D / 2 });
+    for (const it of s.items) if (it !== moving && it.where === 'pan') others.push({ x: it.pos.x, y: it.pos.y, r: it.Dcov / 2 });
+    for (let pass = 0; pass < 6; pass++) {
+      let worst = 0;
+      for (const q of others) {
+        const dx = x - q.x, dy = y - q.y, d = hyp(dx, dy), need = q.r + rad + MOVE_GAP;
+        if (d >= need) continue;
+        const push = need - d; if (push > worst) worst = push;
+        const ux = d > 1e-6 ? dx / d : 1, uy = d > 1e-6 ? dy / d : 0;
+        x += ux * push; y += uy * push;
+      }
+      const d = hyp(x, y); if (d > lim) { const k = lim / d; x *= k; y *= k; }
+      if (worst < 1e-5) break;
+    }
+    const clear = (px, py) => { for (const q of others) if (hyp(px - q.x, py - q.y) < q.r + rad - 0.001) return false; return true; }; // a millimetre of touching is a touch, not a stack
+    if (clear(x, y)) return { pos: { x, y }, ok: true };
+    // pushed out and clamped back and still on top of something — usually because the way out is
+    // along the wall, not away from it. Take the nearest spot that does fit, the way a cook shuffles
+    // things round the edge of a crowded pan.
+    let best = null, bestD = Infinity;
+    for (let ri = 0; ri <= 4; ri++) {
+      const rr = lim * (1 - ri * 0.25);
+      for (let a = 0; a < 24; a++) {
+        const ang = (a / 24) * Math.PI * 2, px = rr * Math.cos(ang), py = rr * Math.sin(ang);
+        if (!clear(px, py)) continue;
+        const dd = hyp(px - want.x, py - want.y); if (dd < bestD) { bestD = dd; best = { x: px, y: py }; }
+      }
+      if (best) break; // the outermost ring of candidates that has room is where it goes
+    }
+    return best ? { pos: best, ok: true } : { pos: { x, y }, ok: false };
+  }
+
+  /**
+   * Slide a patty across the pan. Position is everything the pan does to it — which rings it draws
+   * from, which part of the burner's hot spot it sits over, which side of a banked fire it is on —
+   * and all of that follows the new position on the next step, because the boundary conditions are
+   * rebuilt from `p.pos` every time. What moving costs is the weld: a face that has not released
+   * yet tears exactly as it would if you had flipped it early.
+   */
+  function movePatty(s, patty, pos) {
+    const p = patty || s.patty; if (!p || p.where !== 'pan' || !pos) return { ok: false, reason: 'not on the heat' };
+    const to = slideTo(s, p, p.D / 2, pos);
+    if (!to.ok) { logEvent(s, `No room there: patty ${p.id} would end up on top of something else. Move what is in the way first.`, 'warn'); return { ok: false, reason: 'no room', pos: p.pos }; }
+    const moved = hyp(to.pos.x - p.pos.x, to.pos.y - p.pos.y);
+    if (moved < 0.002) return { ok: true, torn: 0, moved: 0, pos: p.pos }; // 2 mm is not a move
+    const before = panTatXY(s, p.pos.x, p.pos.y);
+    const torn = tearStuck(s, p, 1);
+    p.pos = { x: to.pos.x, y: to.pos.y };
+    p.moved = (p.moved || 0) + 1;
+    const after = panTatXY(s, p.pos.x, p.pos.y);
+    const where = s.grill ? 'grate' : 'pan';
+    let zone = '';
+    if (s.grill && s.grill.bank > 0.05) { const f = coalAt(s.grill, clamp(p.pos.x / s.pan.floorR, -1, 1)); zone = f > 0.6 ? ' — over the coals now, full radiant heat.' : f < 0.25 ? ' — off the coals now: radiant heat all but gone, so it will coast to temperature instead of searing.' : ' — half on, half off the coals.'; }
+    logEvent(s, `Slid patty ${p.id} ${(moved * 100).toFixed(1)} cm across the ${where}: ${before.toFixed(0)} °C under it before, ${after.toFixed(0)} °C where it is now.${zone}`
+      + (torn > 0 ? ` It had not released: ${(torn * 100).toFixed(0)} % of the bottom face tore off and stayed on the metal. Work a spatula under it first, or wait for the crust to set.` : ''), torn > 0 ? 'warn' : 'action');
+    return { ok: true, torn, moved, pos: p.pos };
+  }
+
+  /** The same for a topping: it drags its footprint — and the rings it draws heat from — with it. */
+  function moveItem(s, item, pos) {
+    const it = item || s.item; if (!it || it.where !== 'pan' || !pos) return { ok: false, reason: 'not on the heat' };
+    const to = slideTo(s, it, it.Dcov / 2, pos);
+    if (!to.ok) { logEvent(s, `No room there: the ${it.label.toLowerCase()} would be lying on top of something.`, 'warn'); return { ok: false, reason: 'no room', pos: it.pos }; }
+    const moved = hyp(to.pos.x - it.pos.x, to.pos.y - it.pos.y);
+    if (moved < 0.002) return { ok: true, moved: 0, pos: it.pos };
+    const before = it.Tat;
+    it.pos = { x: to.pos.x, y: to.pos.y };
+    it.rings = footprintRings(s.pan, it.pos, it.D / 2); // the metal it draws from is the metal under it now
+    it.Tat = ringsT(s.pan, it.rings) + (s.grill && s.pan.zoned ? zoneAt(s.pan, it.pos.x) : 0);
+    logEvent(s, `Moved the ${it.label.toLowerCase()} ${(moved * 100).toFixed(1)} cm: ${before.toFixed(0)} °C under it before, ${it.Tat.toFixed(0)} °C now.`, 'action');
+    return { ok: true, moved, pos: it.pos };
+  }
+
+  /**
+   * Work the spatula under a patty. A thin steel edge slid under a crust that is half set breaks the
+   * weld a strip at a time instead of ripping the whole face off at once, so it costs about 40 % of
+   * what lifting it would (SCRAPE_TEAR) — that is the difference between a cook who knows the tool
+   * and one who does not. It costs a second, and for that second most of the face is up on the blade
+   * rather than on the metal, so it is a second of searing thrown away. On a patty that has already
+   * released there is nothing to break: it just slides.
+   */
+  function scrape(s, patty) {
+    const p = patty || s.patty; if (!p || p.where !== 'pan') return { ok: false };
+    const fd = p.faceDown, wasStuck = fd.stuck;
+    const torn = tearStuck(s, p, SCRAPE_TEAR);
+    fd.stuck = false; // the blade is under it: whatever was welded is off the metal now
+    p.scrapeT = SCRAPE_TIME;
+    if (torn > 0) logEvent(s, `Worked the spatula under patty ${p.id}. It was welded on: ${(torn * 100).toFixed(0)} % of the face came away — a fraction of what lifting it would have cost — and it is free now.`, 'warn');
+    else logEvent(s, `Worked the spatula under patty ${p.id}: it moves freely.${wasStuck ? ' The crust had set and let go on its own; the blade only confirmed it.' : ''}`, 'action');
+    return { ok: true, torn, free: true };
+  }
+
   function flipPatty(s, patty) {
     const p = patty || s.patty; if (!p || p.where !== 'pan') return { ok: false };
     const fd = p.faceDown;
-    const relThr = s.pan.release * (s.pan.oil > 0.002 ? 0.7 : 1.0);
-    let torn = 0;
-    if (fd.stuck && fd.brown < relThr && s.pan.release > 0) {
-      torn = clamp(0.25 * (1 - fd.brown / relThr), 0.03, 0.25);
-      const m0 = nodeMass(p, 0);
-      for (const k of ['w', 'fs', 'fl', 'fr', 'p']) for (let j = 0; j < p.Nr; j++) { p.lostStuck += p[k][j] * torn; p[k][j] *= (1 - torn); }
-      s.pan.fond += m0 * torn * 0.3; s.pan.meatBits += m0 * torn;
-      fd.torn += torn;
-      logEvent(s, `Patty ${p.id} stuck. ${(torn * 100).toFixed(0)} % of the bottom face tore off and stayed welded to the pan. Meat releases on its own once the crust sets.`, 'warn');
-    }
+    const torn = tearStuck(s, p, 1);
+    if (torn > 0) logEvent(s, `Patty ${p.id} stuck. ${(torn * 100).toFixed(0)} % of the bottom face tore off and stayed welded to the pan. Meat releases on its own once the crust sets.`, 'warn');
     // Orientation reversal: reverse every column.
     for (const k of ['T', 'w', 'w0c', 'fs', 'fl', 'fr', 'fat0c', 'p', 'dM', 'dC', 'dA', 'dG']) {
       const a = p[k];
@@ -391,14 +585,7 @@
 
   function removePatty(s, patty) {
     const p = patty || s.patty; if (!p || p.where !== 'pan') return;
-    const fd = p.faceDown;
-    const relThr = s.pan.release * (s.pan.oil > 0.002 ? 0.7 : 1.0);
-    if (fd.stuck && fd.brown < relThr && s.pan.release > 0) {
-      const torn = clamp(0.25 * (1 - fd.brown / relThr), 0.03, 0.25);
-      for (const k of ['w', 'fs', 'fl', 'fr', 'p']) for (let j = 0; j < p.Nr; j++) { p.lostStuck += p[k][j] * torn; p[k][j] *= (1 - torn); }
-      fd.torn += torn;
-      logEvent(s, `Scraped patty ${p.id} off the pan; the bottom crust stayed behind.`, 'warn');
-    }
+    if (tearStuck(s, p, 1) > 0) logEvent(s, `Prised patty ${p.id} off the pan; the bottom crust stayed behind.`, 'warn');
     s.pan.oil += p.fatTop; p.fatTop = 0;
     p.where = 'rest'; p.restT = 0; if (s.patty === p) s.where = 'rest';
     for (let j = 0; j < p.Nr; j++) p.poolB[j] = 0; p.poolBottom = 0; p.dripAtRest = p.lostWaterDrip;
@@ -565,6 +752,8 @@
       else if (bb.Tat) { for (let j = 0; j < Nr; j++) TpanR[j] = bb.Tat((j + 0.5) * dr); }
       else { for (let j = 0; j < Nr; j++) TpanR[j] = bb.T; }
       const press = p.pressT > 0 ? 1.4 : 1, liftR = 0.65 * R;
+      // a spatula worked under the face holds most of it off the metal for the second that takes
+      const blade = p.scrapeT > 0 ? SCRAPE_LIFT : 1;
       const hcWet = C.hContactBase * bb.hcMul * (1 + 0.5 * oilFilm); // metal-to-meat conductance before the crust dries
       const barFrac = grill ? bb.barFrac : 0, openFrac = 1 - barFrac;
       const radBar = grill ? 0.9 * C.sigma * bb.view : 0, Tfire4 = grill ? p4(bb.Tfire + 273.15) : 0;
@@ -572,7 +761,7 @@
         const Tj = T[j], rc = (j + 0.5) * dr;
         // doming lifts the centre off the metal; pressing flattens it back on
         const lift = p.dome * clamp(1 - rc / liftR, 0, 1);
-        const contact = clamp(1 - lift, 0.05, 1) * press;
+        const contact = clamp(1 - lift, 0.05, 1) * press * blade;
         const boiling = poolB[j] > 1e-7 || (Tj > 98 && w[j] > 0.2 * w0c[j]);
         const dry0 = 1 - clamp(w[j] / w0c[j], 0, 1);
         const crust = 1 - 0.35 * smooth(0.5, 1, dry0) - 0.15 * clamp(fd.brownR[j] / 4, 0, 1) - 0.3 * clamp(fd.charR[j], 0, 1);
@@ -947,6 +1136,46 @@
     if (g.flare > 0.6 && (!g._flareLogT || s.t - g._flareLogT > 20)) { g._flareLogT = s.t; logEvent(s, `FLARE-UP: fat hit the coals and lit. Flames up through the grate, licking the meat${s.lid ? ' under the lid' : ''}. Move it or close the vents.`, 'warn'); }
     if (g.coal < 0.2 && !g._lowLogged) { g._lowLogged = true; logEvent(s, 'The coals are burning down to ash. The bed is cooling; whatever is not cooked yet had better be close.', 'warn'); }
   }
+  /**
+   * The bars' two-zone temperature, and what the bed looks like averaged over the whole grate.
+   *
+   * The grate is solved as rings — that is where its heat capacity, its radial profile and
+   * everything the meat draws out of it live — and rings cannot represent a fire that is hotter on
+   * one side. So the missing axis is carried as a *departure* field with zero mean over the bed:
+   * the rings still see the bed's average, the departure adds the asymmetry, and nothing is counted
+   * twice. Each strip is a thin bar in balance with the fire under it, radiation in and out, hot gas
+   * up through it and room air (or the dome) above; 4 mm of steel at the grate's 1.6 kg over 0.21 m²
+   * of bed is ~13 kJ/(m²K), so a strip settles in a couple of minutes — which is how long a real
+   * kettle takes to set two zones up. Conduction along the bars (50 W/mK through 4 mm of steel over
+   * a 6 cm strip, ~60 W/(m²K)) pulls neighbours together on a ~100 s time constant, so the zones
+   * blur at the boundary but survive.
+   */
+  function stepBed(s, dt) {
+    const g = s.grill, pan = s.pan, Tamb = s.env.Tamb, N = BANK.N;
+    const Tgas0 = Tamb + 0.5 * (g.Tfire - Tamb), src0 = p4(g.Tfire + 273.15);
+    const zT = pan.zoneT, dT = pan.zoneDT, w = pan.zoneW;
+    const Tup = s.lid ? g.Tdome : Tamb, Tup4 = p4(Tup + 273.15), hUp = s.lid ? 12 : 20;
+    const emis = pan.emiss * C.sigma, radOut = emis * 0.5;
+    const dx = (2 * pan.floorR) / N, kLat = (pan.k * pan.thick) / (dx * dx); // W/(m²K) of bar between neighbouring strips
+    const Cbar = (pan.mass * pan.cp) / (Math.PI * pan.floorR * pan.floorR * pan.barFrac); // J/(m²K) of bar
+    let mV = 0, mVT = 0, mG = 0, mT = 0, lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < N; i++) {
+      const u = -1 + (2 * i + 1) / N, f = coalAt(g, u);
+      const view = COAL.viewGrate * (f + BANK.view * (1 - f));
+      const src4 = p4(Tamb + (g.Tfire - Tamb) * (f + BANK.src * (1 - f)) + 273.15);
+      const Tgas = Tamb + (Tgas0 - Tamb) * (f + BANK.gas * (1 - f));
+      const T = zT[i], Tk4 = p4(T + 273.15);
+      const q = emis * view * (src4 - Tk4) + 25 * (Tgas - T) - hUp * (T - Tup) - radOut * (Tk4 - Tup4);
+      const lat = kLat * ((i > 0 ? zT[i - 1] : T) + (i < N - 1 ? zT[i + 1] : T) - 2 * T); // insulated at the rim
+      dT[i] = T + ((q + lat) * dt) / Cbar; // the new strip temperature, turned into a departure below
+      mV += w[i] * view; mVT += w[i] * view * src4; mG += w[i] * Tgas;
+    }
+    for (let i = 0; i < N; i++) { const T = dT[i]; zT[i] = T; mT += w[i] * T; if (T < lo) lo = T; if (T > hi) hi = T; }
+    for (let i = 0; i < N; i++) dT[i] = zT[i] - mT;
+    pan.zoned = hi - lo > 0.5; // half a degree across the bed is not a two-zone fire
+    g.mView = mV; g.mViewTs4 = mVT; g.mTgas = mG;
+  }
+
   // ---------------------------------------------------------------- pan items (the toppings)
   /**
    * Everything that shares the pan (or the grate) with the patties: bun halves toasting cut side
@@ -1143,6 +1372,43 @@
       }
     }
     return out;
+  }
+  /**
+   * Which pan rings each of a *patty's* own rings sits on, as weights over the pan's rings.
+   *
+   * A patty ring is a circle of radius rc around the patty's centre, so on a patty sitting d from
+   * the middle of the pan the metal under that one ring runs all the way from |d−rc| to d+rc: half
+   * of it can be over the burner's hot ring and half over the cold rim. Reading the pan at the
+   * ring's mean radius misses that entirely, which is why this samples the circle and averages —
+   * and why the heat the meat pulls out goes back into the rings it actually came from. At the
+   * middle of the pan every sample lands on the same pan radius, so that case is one lookup and is
+   * exactly the number it always was.
+   *
+   * Rebuilt when the patty moves or shrinks past a fifth of a millimetre (a tenth of a pan ring:
+   * closer than the sampling itself resolves), not every step.
+   */
+  const PW_NA = 12; // samples around each of the patty's rings
+  function pattyRingWeights(pan, p) {
+    const Np = pan.Np, Nr = p.Nr, d = hyp(p.pos.x, p.pos.y), centred = d < 1e-6;
+    if (p.panW && p.panWN === Np && (centred ? p.panWd === 0 && p.panWD === p.D : Math.abs(p.panWd - d) < 2e-4 && Math.abs(p.panWD - p.D) < 2e-4)) return p.panW;
+    const W = p.panW && p.panW.length === Nr * Np ? p.panW.fill(0) : new Float64Array(Nr * Np);
+    const lo = p.panWlo || (p.panWlo = new Int32Array(Nr)), hi = p.panWhi || (p.panWhi = new Int32Array(Nr));
+    const dr = p.D / 2 / Nr;
+    let row = 0;
+    const add = (r, w) => {
+      const x = clamp(r / pan.dr - 0.5, 0, Np - 1), j0 = Math.floor(x), t = x - j0;
+      if (j0 >= Np - 1) W[row + Np - 1] += w; else { W[row + j0] += w * (1 - t); W[row + j0 + 1] += w * t; }
+    };
+    for (let j = 0; j < Nr; j++) {
+      const rc = (j + 0.5) * dr; row = j * Np;
+      if (centred) add(rc, 1);
+      else for (let a = 0; a < PW_NA; a++) { const ang = (a / PW_NA) * Math.PI * 2; add(hyp(d + rc * Math.cos(ang), rc * Math.sin(ang)), 1 / PW_NA); }
+      let l = 0; while (l < Np - 1 && W[row + l] === 0) l++;
+      let h = Np - 1; while (h > l && W[row + h] === 0) h--;
+      lo[j] = l; hi[j] = h;
+    }
+    p.panW = W; p.panWd = centred ? 0 : d; p.panWD = p.D; p.panWN = Np;
+    return W;
   }
   function ringsT(pan, rings) {
     let T = 0;
@@ -1645,13 +1911,19 @@
     const cov = ringCoverage(s, sc.cov);
     if (grill) {
       // the grate: thin bars heated by the coal bed's radiation and the hot gas coming up through
-      // it, losing heat upward to the sky (or the dome); the bars are only a fraction of the area
-      const Tf4 = p4(grill.Tfire + 273.15), Tgas = Tamb + 0.5 * (grill.Tfire - Tamb);
+      // it, losing heat upward to the sky (or the dome); the bars are only a fraction of the area.
+      // The rings see the bed averaged over the whole grate — with the coals spread that is simply
+      // the bed; banked, it is the mean of a hot half and a bare one, and stepBed carries the
+      // difference between the two sides.
+      stepBed(s, dt);
+      const even = !grill.bank;
+      const Tf4 = p4(grill.Tfire + 273.15), Tgas = even ? Tamb + 0.5 * (grill.Tfire - Tamb) : grill.mTgas;
       const Tup = s.lid ? grill.Tdome : Tamb, Tup4 = p4(Tup + 273.15);
-      const hUp = s.lid ? 12 : 20, radIn = pan.emiss * C.sigma * COAL.viewGrate, radOut = pan.emiss * C.sigma * 0.5;
+      const hUp = s.lid ? 12 : 20, emisSig = pan.emiss * C.sigma, radIn = emisSig * COAL.viewGrate, radOut = emisSig * 0.5;
+      const radInT = emisSig * grill.mViewTs4, radInK = emisSig * grill.mView;
       for (let j = 0; j < Np; j++) {
         const A = pan.ringA[j] * pan.barFrac, Tk = Tr[j] + 273.15;
-        qRing[j] += A * (radIn * (Tf4 - p4(Tk)) + 25 * (Tgas - Tr[j]));
+        qRing[j] += A * ((even ? radIn * (Tf4 - p4(Tk)) : radInT - radInK * p4(Tk)) + 25 * (Tgas - Tr[j]));
         qRing[j] -= A * (1 - cov[j]) * (hUp * (Tr[j] - Tup) + radOut * (p4(Tk) - Tup4));
       }
       st.pDelivered = grill.burnW;
@@ -1725,14 +1997,19 @@
         // Where each of the patty's rings sits on the pan. These are exactly the numbers panTat()
         // works out (ring index j0 and the weight t between ring centres); the heat drawn back out
         // of the metal at the bottom of this loop reuses them instead of redoing the geometry.
-        const prd = p.D / 2 / p.Nr, TatR = psc.TatR, ringJ0 = psc.ringJ0, ringF = psc.ringF;
+        const TatR = psc.TatR, pw = pattyRingWeights(pan, p), pwLo = p.panWlo, pwHi = p.panWhi;
         for (let j = 0; j < p.Nr; j++) {
-          const rc = (j + 0.5) * prd, rho = Math.sqrt(d * d + rc * rc);
-          const x = clamp(rho / pan.dr - 0.5, 0, Np - 1), j0 = Math.floor(x), t = x - j0;
-          ringJ0[j] = j0; ringF[j] = t;
-          TatR[j] = j0 >= Np - 1 ? Tr[Np - 1] : lerp(Tr[j0], Tr[j0 + 1], t);
+          const row = j * Np, l = pwLo[j], h = pwHi[j];
+          let T = 0; for (let k = l; k <= h; k++) T += pw[row + k] * Tr[k];
+          TatR[j] = T;
         }
-        const Tunder = panTat(pan, Math.sqrt(d * d + (p.D / 4) * (p.D / 4))), Tedge = panTat(pan, Math.sqrt(d * d + (p.D / 2) * (p.D / 2)));
+        // On a banked grate the rings are only half the story. Each of the patty's rings is a full
+        // circle around the patty's own centre, so its mean position along the bank axis is exactly
+        // the patty's x: one offset for the whole patty, and the rings keep the radial part.
+        const zOff = pan.zoned ? zoneAt(pan, p.pos.x) : 0;
+        if (zOff) for (let j = 0; j < p.Nr; j++) TatR[j] = Math.max(Tamb, TatR[j] + zOff);
+        const Tu0 = panTat(pan, Math.sqrt(d * d + (p.D / 4) * (p.D / 4))), Te0 = panTat(pan, Math.sqrt(d * d + (p.D / 2) * (p.D / 2)));
+        const Tunder = zOff ? Math.max(Tamb, Tu0 + zOff) : Tu0, Tedge = zOff ? Math.max(Tamb, Te0 + zOff) : Te0;
         const submerged = pan.oilDepth > p.h * (1 + 0.28 * p.dome) + 0.0005;
         if (submerged && !s._ms.deepfry) { s._ms.deepfry = true; logEvent(s, `The patty is under ${(pan.oilDepth * 1000).toFixed(0)} mm of fat: this is deep frying now. Both faces will brown.`, 'info'); }
         const carbonF = clamp(pan.carbon / 0.004, 0, 1);
@@ -1741,10 +2018,13 @@
         let bc;
         if (grill) {
           // over the coals: bar contact on a fraction of the face, radiation and hot gas on the
-          // rest, radiant heat on the edge, and a flare-up licking the underside adds soot
-          const fl = clamp(grill.flare, 0, 1.5);
-          const TfireEff = grill.Tfire + 350 * Math.min(1, fl);
-          const Tgas = Tamb + 0.5 * (grill.Tfire - Tamb) + 200 * Math.min(1, fl);
+          // rest, radiant heat on the edge, and a flare-up licking the underside adds soot. All of
+          // it is read at *this patty's* place on the bed: over a banked-off side the fire is ash
+          // and the gas has crossed the kettle, and a flare burns where the fat lands, not here.
+          const bed = bedAt(s, p.pos.x);
+          const fl = clamp(grill.flare, 0, 1.5) * (bed.f + BANK.flare * (1 - bed.f));
+          const TfireEff = bed.Tfire + 350 * Math.min(1, fl);
+          const Tgas = bed.Tgas + 200 * Math.min(1, fl);
           bc = psc.bcGrill || (psc.bcGrill = {
             bottom: { type: 'grill', TatR, T: 0, Tedge: 0, oil: 0, hcMul: 1, release: 0, barFrac: 0, Tbar: 0, Tfire: 0, view: COAL.view, Tair: 0, Tsurf: 0 },
             top: { h: 0, T: 0, RH: 0, oil: false, rad: false, radT: 0, radView: 0 },
@@ -1753,9 +2033,10 @@
           const bb = bc.bottom, bt = bc.top, bs = bc.side;
           bb.T = Tunder; bb.Tedge = Tedge; bb.release = pan.release + 0.2 * carbonF; bb.barFrac = pan.barFrac;
           bb.Tbar = Tunder; bb.Tfire = TfireEff; bb.Tair = Tgas; bb.Tsurf = 150 + 0.16 * (TfireEff - 150);
+          bb.view = COAL.view * bed.view;
           if (s.lid) { bt.h = 14; bt.T = grill.Tdome; bt.RH = 0.3; bt.rad = true; bt.radT = grill.Tdome; bt.radView = 0.85; }
-          else { bt.h = C.hAirTop; bt.T = Tamb + 0.2 * (grill.Tfire - Tamb); bt.RH = 0.25; bt.rad = false; }
-          bs.T = Tgas * 0.6 + Tamb * 0.4; bs.radT = TfireEff;
+          else { bt.h = C.hAirTop; bt.T = Tamb + 0.2 * (bed.Tfire - Tamb); bt.RH = 0.25; bt.rad = false; }
+          bs.T = Tgas * 0.6 + Tamb * 0.4; bs.radT = TfireEff; bs.radView = COAL.viewSide * bed.view;
           p.grilled = true;
           if (fl > 0.05) {
             // flames on the underside and the edge: pyrolysis without Maillard, i.e. soot
@@ -1779,11 +2060,12 @@
         }
         const pr = stepPattyStable(s, p, dt, bc);
         p.cookTime += dt; p.timeDown += dt;
-        // heat drawn from the rings under each patty ring
+        if (p.scrapeT > 0) p.scrapeT = Math.max(0, p.scrapeT - dt); // the second of spatula work runs down in simulated time, like everything else
+        // heat drawn from the rings under each patty ring, in the same proportions it was read from
         const share = grill ? 0.35 : 1; // on a grill most of the heat is radiant, not drawn from the bars
         for (let j = 0; j < p.Nr; j++) {
-          const j0 = ringJ0[j], t = ringF[j], q = pr.qBotR[j] * share;
-          if (j0 >= Np - 1) qRing[Np - 1] -= q; else { qRing[j0] -= q * (1 - t); qRing[j0 + 1] -= q * t; }
+          const row = j * Np, l = pwLo[j], h = pwHi[j], q = pr.qBotR[j] * share;
+          for (let k = l; k <= h; k++) qRing[k] -= q * pw[row + k];
         }
         if (grill) {
           // juice and fat fall through the grate onto the coals: steam, sizzle, and a flare when
@@ -1820,16 +2102,19 @@
     for (let ii = 0; ii < s.items.length; ii++) {
       const it = s.items[ii];
       if (it.where === 'pan') {
-        it.Tat = ringsT(pan, it.rings);
+        const zOffI = grill && pan.zoned ? zoneAt(pan, it.pos.x) : 0;
+        it.Tat = zOffI ? Math.max(Tamb, ringsT(pan, it.rings) + zOffI) : ringsT(pan, it.rings);
         let bc;
         if (grill) {
-          const fl = clamp(grill.flare, 0, 1.5);
-          const TfireEff = grill.Tfire + 350 * Math.min(1, fl), Tgas = Tamb + 0.5 * (grill.Tfire - Tamb) + 200 * Math.min(1, fl);
+          const bed = bedAt(s, it.pos.x);
+          const fl = clamp(grill.flare, 0, 1.5) * (bed.f + BANK.flare * (1 - bed.f));
+          const TfireEff = bed.Tfire + 350 * Math.min(1, fl), Tgas = bed.Tgas + 200 * Math.min(1, fl);
           bc = it._bcGrill || (it._bcGrill = { bottom: { type: 'grill', T: 0, oil: 0, barFrac: 0, Tbar: 0, Tfire: 0, view: COAL.view, Tair: 0, Tsurf: 0 }, top: { h: 0, T: 0, RH: 0, rad: false, radT: 0, radView: 0 } });
           const bb = bc.bottom, bt = bc.top;
           bb.T = it.Tat; bb.Tbar = it.Tat; bb.barFrac = pan.barFrac; bb.Tfire = TfireEff; bb.Tair = Tgas; bb.Tsurf = 150 + 0.16 * (TfireEff - 150);
+          bb.view = COAL.view * bed.view;
           if (s.lid) { bt.h = 14; bt.T = grill.Tdome; bt.RH = 0.3; bt.rad = true; bt.radT = grill.Tdome; bt.radView = 0.85; }
-          else { bt.h = C.hAirTop; bt.T = Tamb + 0.2 * (grill.Tfire - Tamb); bt.RH = 0.25; bt.rad = false; }
+          else { bt.h = C.hAirTop; bt.T = Tamb + 0.2 * (bed.Tfire - Tamb); bt.RH = 0.25; bt.rad = false; }
         } else {
           bc = it._bcPan || (it._bcPan = { bottom: { type: 'pan', T: 0, oil: 0 }, top: { h: 0, T: 0, RH: 0, rad: false, radT: 0, radView: 0 } });
           const bb = bc.bottom, bt = bc.top;
@@ -1880,6 +2165,8 @@
       }
       let mean = 0; for (let j = 0; j < Np; j++) mean += Tr[j] * pan.ringA[j]; pan.T = mean / floorA;
       pan.Tcenter = Tr[0]; pan.Tedge = Tr[Np - 1];
+      // what an IR gun reads on each side of a banked grate: two thirds of the way out, both ways
+      if (grill) { grill.Thot = panTatXY(s, 0.66 * pan.floorR, 0); grill.Tcool = panTatXY(s, -0.66 * pan.floorR, 0); }
     }
     if (pan.T > pan.maxT && pan.id === 'nonstick' && !s._ptfeWarned) { s._ptfeWarned = true; logEvent(s, 'Nonstick coating above 260 °C: it is degrading and off-gassing. Not a good idea.', 'warn'); }
 
@@ -2153,9 +2440,9 @@
   }
 
   return {
-    C, BLENDS, PANS, FATS, STOVES, GRATE, DONENESS, ITEMS,
-    makePatty, createState, step, stepPatty, pattySpots, panTat, selectPatty,
-    setKnob, addFat, placePatty, flipPatty, pressPatty, removePatty, addCheese, toggleLid, basteButter, washPan, wipeStove, panDirt, serve,
+    C, BLENDS, PANS, FATS, STOVES, GRATE, COAL, BANK, DONENESS, ITEMS,
+    makePatty, createState, step, stepPatty, pattySpots, panTat, panTatXY, selectPatty,
+    setKnob, setBank, addFat, placePatty, movePatty, moveItem, scrape, slideTo, coalAt, bedAt, zoneAt, flipPatty, pressPatty, removePatty, addCheese, toggleLid, basteButter, washPan, wipeStove, panDirt, serve,
     makeItem, addItem, selectItem, flipItem, removeItem, stepItem, assignTopping, nearestBurger, toppingsOf, itemState, itemMass, itemT, freeSpot, footprintRings, ringCoverage,
     evaluate, evaluateTicket, buildOf, donenessOf, centerT, cellT, layerMean, gridMean, pattyMass, nodeMass, waterHolding, fmtTime, clamp, lerp, rhoVapSat, logEvent,
   };
