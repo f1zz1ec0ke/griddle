@@ -12,7 +12,7 @@
 <!-- top HUD -->
 <header id="hud">
   <div class="brand">GRIDDLE <small>burger thermodynamics, nothing hidden</small></div>
-  <div class="ticket" id="ticket" data-phase="form cook rest result" tabindex="0">Ticket: <b id="ticket-target">—</b></div>
+  <div class="ticket" id="ticket" data-phase="form cook rest result" tabindex="0">Ticket: <b id="ticket-target">—</b> <span class="tclock" id="ticket-clock" hidden></span></div>
   <div class="chips" id="chips" hidden></div>
   <div class="readouts" data-phase="cook rest">
     <div class="ro"><label id="h-pan-label">IR gun · pan</label><span id="h-pan">—</span></div>
@@ -39,6 +39,7 @@
     <h1 id="order-target">MEDIUM</h1>
     <p class="who"><b id="order-who">Table 7</b> <span id="order-line"></span></p>
     <p class="muted" id="order-range"></p>
+    <div class="shiftbar" id="order-shift"></div>
     <p>You will form the patty by hand, then cook it in a real pan on a real burner. Everything you see — the juice sweating out, the fat rendering, the crust, the smoke — is computed from heat and mass transfer, not animated on a timer.</p>
     <label class="check"><input type="checkbox" id="hard"> Hard mode: no thermometers. Cook by eye, ear and touch.</label>
     <button class="primary" id="btn-accept">Yes chef</button>
@@ -127,12 +128,28 @@
     <div class="scoreline"><div class="score"><span id="r-score">0</span><small>/100</small></div><div><h1 id="r-verdict"></h1><p class="muted" id="r-grade"></p></div></div>
     <div class="chips" id="r-chips" hidden></div>
     <p class="ticket-sum" id="r-ticket" hidden></p>
+    <div class="customer" id="r-customer" hidden></div>
+    <p class="bill" id="r-bill" hidden></p>
+    <p class="shiftrun" id="r-shift" hidden></p>
     <div id="r-parts"></div>
     <table class="stats"><tbody id="r-stats"></tbody></table>
     <ul id="r-notes"></ul>
     <div class="charts"><canvas id="r-chart" width="420" height="150"></canvas><canvas id="r-profile" width="420" height="150"></canvas></div>
     <p class="muted">Orbit the cut patty in the viewport: left-drag to look, wheel or right-drag to zoom, right-click a spot to zoom onto it.</p>
     <button class="primary" id="btn-again">Next ticket</button>
+  </div>
+</section>
+
+<!-- end of shift -->
+<section id="shiftend" class="modal" hidden>
+  <div class="card wide">
+    <div class="eyebrow">Service over</div>
+    <h1 id="se-score">0</h1>
+    <p class="who" id="se-line"></p>
+    <table class="stats"><tbody id="se-stats"></tbody></table>
+    <div id="se-tickets"></div>
+    <p class="muted" id="se-best"></p>
+    <button class="primary" id="btn-new-shift">New shift</button>
   </div>
 </section>
 
@@ -144,6 +161,8 @@
     <p><b>Physics</b> — the patty is a grid of ~0.6 mm layers by ~4 mm rings, so the rim and the middle are different places. Each cell has its own temperature, water, fat and denatured-protein state. Heat comes in through a contact conductance from the pan (twelve rings of metal with a burner hot spot), water boils off at 100 °C and pins the surface there until it dries, juice squeezed out by contracting proteins migrates to the faces, fat melts and drains, and once the surface is dry and hot the Maillard reaction browns it — then pyrolysis blackens it. Colour, shine, steam, smoke, spatter and sizzle are all driven by those numbers.</p>
     <p><b>Tickets</b> can carry up to three burgers with different orders. Form each one, then use the chips under the ticket, <b>Tab</b>, or a click on a patty to choose which one the buttons act on. They all go out together, so a burger that rests too long while the others cook goes out lukewarm. A cold patty pulls the pan down under it.</p>
     <p><b>Charcoal</b> — pick the kettle as the stove. The knob is the vents: open them, wait for the bed to glow and the grate to pass 250 °C. The bars brand marks, radiant heat browns the edges, fat that drips on the coals flares up and soots the meat, and the lid turns the kettle into an oven.</p>
+    <p><b>The shift</b> is six tickets. Each one is quoted a time from the moment you say “yes chef” — about 1.6× the recipe for what was ordered, so one medium-rare is 13:10 and a three-top is 20:00 — and the HUD shows the clock against it. The clock runs in kitchen time, so the speed buttons do not buy you service time. Going over costs up to 10 ticket points at twice the quote and the table mentions it. A ticket with a plate sent back scores nothing, and service moves on.</p>
+    <p><b>The customer</b> gets the last word. Above the bars they say what they actually think — dry, no crust, burnt, cold in the middle, under, over — and the plate is sent back (under 45, or anything raw or burnt on it), accepted, or delighted (90+). They tip on the bill: nothing on a plate that goes back, ~10 % on a mediocre one, 20 % on a good one, 25 % on a perfect one, and less if it was late or lukewarm. At the end of the six you get the night's card, and your best shift is remembered in this browser.</p>
     <p><b>Doneness</b> is the <i>peak</i> centre temperature, including carry-over while resting. Rare 49–52, medium-rare 54–57, medium 60–63, medium-well 65–68, well done 71+ °C.</p>
     <p><b>Tips from real life</b> — preheat properly; don't press a thick patty; a thumb dimple stops it doming; flipping often cooks faster and more evenly; the juice pooling on top is a flip cue; meat releases from the pan on its own once the crust sets; rest before cutting.</p>
     <button id="btn-help-close" onclick="document.getElementById('help').hidden=true">Close</button>

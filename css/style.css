@@ -119,5 +119,34 @@ table.stats td:first-child { color: var(--muted); width: 42%; }
 .chip.on { border-color: var(--accent); background: #3a2e1c; }
 .chip.on small { color: var(--ink); }
 #r-chips { margin: 8px 0; }
+
+/* the shift: ticket clock, the customer's verdict, the bill and the end-of-shift card */
+.tclock { font-variant-numeric: tabular-nums; color: var(--muted); }
+.tclock b { color: var(--ink); }
+.tclock.late b { color: var(--warn); }
+.tclock.vlate b { color: var(--bad); }
+.shiftbar { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12.5px; background: #1e1914; border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin: 10px 0; }
+.shiftbar span { color: var(--muted); }
+.shiftbar b { color: var(--ink); }
+.shiftbar .pips { letter-spacing: 2px; color: #5d5245; }
+.shiftbar .pips i { font-style: normal; color: var(--accent); }
+.customer { border-left: 3px solid var(--accent); padding: 2px 0 2px 12px; margin: 10px 0; }
+.customer .quote { font-size: 16px; line-height: 1.4; margin: 0 0 6px; }
+.customer .outcome { display: inline-block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--line); }
+.customer .outcome.delighted { color: var(--good); border-color: #3f6b3d; }
+.customer .outcome.accepted { color: var(--warn); border-color: #6b5726; }
+.customer .outcome.sent { color: var(--bad); border-color: #7a3a2a; background: #33201c; }
+.customer ul { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; color: #cfc4b2; }
+.customer ul li.good { color: var(--good); }
+p.bill, p.shiftrun { font-size: 12.5px; margin: 6px 0; font-variant-numeric: tabular-nums; }
+p.bill b, p.shiftrun b { color: var(--ink); }
+p.bill { color: var(--muted); }
+p.shiftrun { color: var(--muted); border-top: 1px dotted #2a241d; padding-top: 6px; }
+#se-tickets { font-size: 12.5px; margin: 8px 0; }
+#se-tickets .t { display: grid; grid-template-columns: 30px 1fr 42px; gap: 8px; padding: 4px 0; border-bottom: 1px dotted #2a241d; align-items: baseline; }
+#se-tickets .t em { font-style: normal; color: var(--muted); }
+#se-tickets .t b { text-align: right; font-variant-numeric: tabular-nums; }
+#se-tickets .t.sent b { color: var(--bad); }
+#se-tickets .t.best b { color: var(--good); }
 .ticket-sum { font-size: 13px; background: #1e1914; border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
 .ticket-sum ul { margin: 6px 0 0; padding-left: 18px; }

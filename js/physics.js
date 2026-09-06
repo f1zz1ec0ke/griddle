@@ -1249,10 +1249,257 @@
     return { total, mean: Math.round(mean), coldPenalty: Math.round(coldPenalty), spread, results, notes };
   }
 
+  // ---------------------------------------------------------------- the customer's verdict
+  /*
+   * The rubric above (doneness 50 / crust 20 / juiciness 15 / evenness 10 / structure 5) is what
+   * the kitchen thinks. This section is what the person eating it says out loud. It invents no new
+   * physics: every line is read off the numbers `evaluate` already returns, and turned into the
+   * sentence a real customer would use — "it's dry", "there's no crust", "it's cold in the middle".
+   */
+
+  // A mid-range sit-down burger, US prices: $14 for the burger, $1.50 a slice for cheese. Those are
+  // the only two things this kitchen sells, so a plate's bill is the burger plus what went on it.
+  const MENU = { burger: 14, cheese: 1.5 };
+  // Time on the pan for the README recipe, measured by running it (the same cook as the "README
+  // recipe scores 100" test): rare 286 s, medium-rare 343 s, medium 303 s, medium-well 364 s, well
+  // done 458 s. Medium is quicker than medium-rare because the recipe drops to a 14 mm patty from
+  // medium up. Rounded to 5 s.
+  const COOK_S = { rare: 285, 'medium-rare': 345, medium: 305, 'medium-well': 365, 'well-done': 460 };
+  const REST_S = 150;         // the rest the recipe asks for before it is cut: 2–2.5 minutes
+  const SERVICE_MAX = 10;     // ticket points a plate that goes out late can cost
+  const SERVICE_SLACK = 1.6;  // the quoted time is 1.6× the recipe: preheating, forming and fumbling
+  // What a patty of each doneness should still be holding when it lands, as a fraction of the water
+  // it started with. Mirrors the expectation `evaluate` scores juiciness against, so "dry" here and
+  // a low juiciness bar there are the same fact said twice.
+  const RET_EXPECT = { rare: 0.72, 'medium-rare': 0.69, medium: 0.63, 'medium-well': 0.56, 'well-done': 0.50 };
+
+  /**
+   * How long the room will wait for this ticket, in kitchen seconds from the moment it is accepted.
+   * The burgers share one pan, so they overlap: the longest one sets the pace and each extra burger
+   * adds about 40 % of its own cook time — it is formed and laid in by hand on its own, and a
+   * crowded pan sags 30–50 °C and takes a minute to come back. The rest is shared (they all rest
+   * together). The whole thing is multiplied by 1.6 to pay for lighting the stove, preheating and
+   * forming, which is why one medium-rare is quoted at about thirteen minutes and not six.
+   */
+  function ticketTargetTime(items) {
+    const cooks = (items || []).map((id) => COOK_S[id] || COOK_S.medium).sort((a, b) => b - a);
+    if (!cooks.length) return 0;
+    let cook = cooks[0];
+    for (let i = 1; i < cooks.length; i++) cook += 0.4 * cooks[i];
+    return Math.round((SERVICE_SLACK * (cook + REST_S)) / 10) * 10;
+  }
+  /**
+   * The service penalty, in ticket points: nothing while the ticket is inside the time it was
+   * quoted, then linear to the full 10 points at twice that. A table told fifteen minutes is
+   * irritated at twenty-two (−5) and is talking about you at thirty (−10).
+   */
+  function latePenalty(elapsed, target) {
+    if (!(target > 0)) return 0;
+    return SERVICE_MAX * clamp((elapsed - target) / target, 0, 1);
+  }
+  /** The bill for a set of plates: one burger each, plus the extras that went on them. */
+  function billFor(plates) {
+    const lines = []; let total = 0;
+    for (const pl of plates || []) {
+      const cheese = (pl && pl.cheeseSlices) || 0;
+      const price = MENU.burger + cheese * MENU.cheese;
+      const what = (pl && pl.target && pl.target.label ? pl.target.label : 'Beef') + ' burger' + (cheese ? ` + ${cheese} cheese` : '');
+      lines.push({ what, price: Math.round(price * 100) / 100 }); total += price;
+    }
+    return { lines, total: Math.round(total * 100) / 100 };
+  }
+  /**
+   * What they leave on top of the bill. Nothing at all on a plate that went back; from there it
+   * climbs through the grudging ~10 % of a mediocre burger and the 20 % of a good one to the 25 %
+   * people leave when it was genuinely worth it. `score` is the plate's score *after* the service
+   * penalty, so a cold, late burger tips like a bad one however well it was cooked.
+   */
+  function tipFraction(score, outcome) {
+    if (outcome === 'sent back' || (outcome == null && score < 45)) return 0;
+    return 0.25 * Math.pow(clamp((score - 40) / 60, 0, 1), 1.25);
+  }
+
+  const WORD_ONES = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'];
+  const WORD_TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty'];
+  /** "we waited twenty minutes" — people say waits in words, not in digits. */
+  function spellMinutes(sec) {
+    const m = Math.max(0, Math.round((sec || 0) / 60));
+    if (m < 20) return WORD_ONES[m];
+    if (m < 60) return WORD_TENS[Math.floor(m / 10)] + (m % 10 ? '-' + WORD_ONES[m % 10] : '');
+    return String(m);
+  }
+  /**
+   * A deterministic pick out of a list of phrasings: the same patty with the same score always says
+   * the same thing (so the results screen does not shuffle under you), but the next burger, or the
+   * same burger a point better, says it differently. Integer hash, no Math.random anywhere.
+   */
+  function phrasePick(list, seed, slot) {
+    let x = (Math.imul(seed | 0, 2654435761) ^ Math.imul((slot | 0) + 1, 40503)) >>> 0;
+    x ^= x >>> 15; x = Math.imul(x, 2246822519) >>> 0; x ^= x >>> 13;
+    return list[(x >>> 0) % list.length];
+  }
+
+  /**
+   * Turn one scored patty into the customer's own words.
+   *
+   * `result` is what `evaluate` returns (optionally with `.patty` attached, as `evaluateTicket`
+   * does — anything missing from the result is read off the patty). `ticketResult` is the
+   * `evaluateTicket` output for the ticket it belongs to; if it carries `.service`
+   * ({ elapsed, target, penalty } — see `latePenalty`) the wait becomes part of the verdict and of
+   * the tip. If the checkout has a toppings/build framework, `result.build` (or `patty.build`) is
+   * read too: each entry may be `{ name, state }` with a state of raw / burnt / cold / soggy /
+   * melted / toasted, or carry plain `raw` / `burnt` flags.
+   *
+   * Returns the quote, the outcome (sent back / accepted / delighted), every complaint and every
+   * bit of praise behind it, and the bill and tip for this plate.
+   */
+  function verdict(result, ticketResult) {
+    if (!result) return null;
+    const pt = result.patty || null;
+    const from = (k, d) => (result[k] != null ? result[k] : pt && pt[k] != null ? pt[k] : d);
+    const target = result.target || DONENESS[2];
+    const peak = result.peak != null ? result.peak : 0;
+    const got = result.got || donenessOf(peak);
+    const score = clamp(Math.round(result.total || 0), 0, 100);
+    const id = result.id != null ? result.id : pt && pt.id != null ? pt.id : 1;
+    const seed = id * 101 + score;                       // the pick varies with the patty and its score
+    const faces = result.faces || {}; const fd = faces.down || {}, fu = faces.up || {};
+    const bad = [], good = [];
+    const gripe = (kind, sev, texts, slot) => bad.push({ kind, sev, text: phrasePick(texts, seed, slot) });
+    const nice = (kind, texts, slot) => good.push({ kind, text: phrasePick(texts, seed, slot) });
+    const tl = target.label.toLowerCase(), gl = got.label.toLowerCase();
+
+    // — doneness: how far off, in their language rather than in degrees
+    const dist = result.dist != null ? result.dist : peak < target.lo ? target.lo - peak : peak > target.hi ? peak - target.hi : 0;
+    const under = dist > 0 && peak < target.lo;
+    const doneState = dist === 0 ? 'right' : under ? 'under' : 'over';
+    if (dist === 0) nice('doneness', [`It's ${tl} right through.`, `Cooked exactly how I asked.`, `That is properly ${tl}.`], 1);
+    else if (dist < 3) gripe('doneness', 0.25, under
+      ? [`A shade rarer than I asked, but I'll live.`, `Nearly — it's a touch under.`, `I asked for ${tl}; it's just short of it.`]
+      : [`A shade past what I asked for.`, `A little more done than I wanted.`, `It's just over ${tl}. Only just.`], 1);
+    else if (dist < 8) gripe('doneness', 0.55, under
+      ? [`I ordered ${tl} and this is ${gl}.`, `That's ${gl}. I asked for ${tl}.`, `It's under — the middle's still ${gl}.`]
+      : [`I ordered ${tl} and this is ${gl}.`, `That's ${gl}, not ${tl}.`, `It's overdone — that's ${gl} in there.`], 1);
+    else gripe('doneness', 0.95, under
+      ? [`This is raw. Cold and red in the middle.`, `I can't eat that, it's practically raw.`, `That isn't ${tl}, that's uncooked.`]
+      : [`It's grey all the way through.`, `This is a hockey puck.`, `You've cooked every bit of ${tl} out of it.`], 1);
+
+    // — juiciness: what it kept, against what that doneness should keep
+    const wRet = from('waterRetained', 0.6);
+    const expect = (RET_EXPECT[target.id] || 0.6) - (from('grilled', false) ? 0.10 : 0); // the grate takes its cut
+    const short = expect - wRet;   // fractions of the water it started with, below par
+    const juiceState = short <= 0.01 ? 'juicy' : short < 0.05 ? 'tight' : short < 0.10 ? 'dry' : 'parched';
+    if (juiceState === 'juicy') nice('juicy', [`It's juicy — it ran down my wrist.`, `Look at the juice in that.`, `Properly juicy.`], 2);
+    else if (juiceState === 'tight') gripe('dry', 0.35, [`It's a bit tight. Could be juicier.`, `Drier than I'd like.`, `It wants a bit more juice in it.`], 2);
+    else if (juiceState === 'dry') gripe('dry', 0.7, [`It's dry.`, `It's dry — I'm reaching for the water.`, `There's no juice in it at all.`], 2);
+    else gripe('dry', 0.95, [`It's like sawdust.`, `This is chalk. Where did all the juice go?`, `Bone dry. I can't chew it.`], 2);
+    if (from('waterDrip', 0) > 0.010 && short > 0.02) gripe('dry', 0.4, [`You squeezed it, didn't you. All the juice is on the stove.`, `Whatever was in it went into the pan.`], 3);
+
+    // — crust: browning index and char, with the grill's bars counted the way the rubric counts them
+    const barFrac = from('grilled', false) ? GRATE.barFrac : 0;
+    const eff = (f) => (f.brown || 0) * (1 - barFrac) + (f.marks || 0) * barFrac;
+    const bMean = 0.5 * (eff(fd) + eff(fu)), bMin = Math.min(eff(fd), eff(fu)), bMax = Math.max(eff(fd), eff(fu));
+    const char = Math.max(fd.char || 0, fu.char || 0);
+    // char > ~0.35 is pyrolysed black, not brown; a browning index under 1 has no Maillard colour at
+    // all, 2–4.5 is the crust a cook is aiming for, and past 5.5 it is bitter even without char.
+    const crustState = char > 0.35 || bMean > 5.5 ? 'burnt' : bMean < 1 ? 'none' : bMean < 2 ? 'pale' : bMean <= 4.5 ? 'proper' : 'dark';
+    if (crustState === 'burnt') gripe('crust', 0.9, [`The outside's burnt. It tastes of ash.`, `That's burnt — it's bitter.`, `You've cremated it. All I taste is carbon.`], 4);
+    else if (crustState === 'none') gripe('crust', 0.75, [`There's no crust on it at all. It's grey.`, `It's boiled, not seared. No crust anywhere.`, `Where's the crust? It looks steamed.`], 4);
+    else if (crustState === 'pale') gripe('crust', 0.4, [`Barely any crust on it.`, `It's pale. Needed longer, or a hotter pan.`, `Hardly any colour on the outside.`], 4);
+    else if (crustState === 'dark') gripe('crust', 0.45, [`The crust is very dark. Almost too much.`, `That's about as far as you can take a crust.`], 4);
+    else nice('crust', [`Lovely crust on it.`, `That's a proper crust — it crackles.`, `Good dark crust, all the way across.`], 4);
+    if (crustState !== 'burnt' && bMax > 2 && bMin < 1) gripe('crust', 0.35, [`It's only browned on one side.`, `One side's seared and the other's grey.`], 5);
+
+    // — temperature at service: how far the middle fell from its peak while it waited on the plate.
+    // Judged as a fall, not an absolute — a rare burger is *meant* to be 50 °C in the middle. A drop
+    // of more than ~8 °C is noticeably cooler on the tongue; 20 °C down and it is a cold burger.
+    const serveT = result.serveT != null ? result.serveT : pt && pt.serveT != null ? pt.serveT : null;
+    const drop = serveT == null ? 0 : Math.max(0, peak - serveT);
+    const tempState = drop > 16 ? 'cold' : drop > 8 ? 'lukewarm' : 'hot';
+    const coldPen = SERVICE_MAX * clamp((drop - 8) / 12, 0, 1); // the same penalty evaluateTicket charges the ticket for a lukewarm plate
+    if (tempState === 'cold') gripe('cold', 0.85, [`It's cold in the middle.`, `This is stone cold. How long was it sitting there?`, `Cold. It's been on the pass for ages.`], 6);
+    else if (tempState === 'lukewarm') gripe('cold', 0.5, [`It's not hot. Warm at best.`, `It's gone lukewarm.`, `It could have come out hotter.`], 6);
+    else if (drop < 4 && score >= 60) nice('hot', [`It's hot, at least — properly hot.`, `Came out hot. That counts for a lot.`], 6);
+
+    // — structure: what a cook did to it before it reached the plate
+    const faults = [];
+    const torn = (fd.torn || 0) + (fu.torn || 0);
+    if (torn > 0.05 || from('stuck', 0) > 0.001) { faults.push('torn'); gripe('structure', 0.4, [`Half the crust stayed in the pan by the look of it.`, `It's torn up. Bits of it are missing.`], 7); }
+    if (from('pressed', false) && short > 0.03) { faults.push('pressed'); gripe('structure', 0.45, [`You pressed it flat. That's my dinner on the stove.`, `It's been squashed — it's flat and tight.`], 8); }
+    if (from('dome', 0) > 0.5) { faults.push('domed'); gripe('structure', 0.3, [`It's a meatball, not a burger. It rolls off the bun.`, `It's domed up in the middle. Nothing stays on it.`], 9); }
+    if (from('work', 0) > 0.8 || from('salt', '') === 'mixed') { faults.push('springy'); gripe('structure', 0.4, [`It's springy. Like a sausage patty.`, `It's bouncy — that's not a burger texture.`], 10); }
+    if ((result.parts && result.parts.structure != null ? result.parts.structure : 5) <= 1 && !faults.length) faults.push('loose');
+    const structState = faults.length ? 'flawed' : 'intact';
+
+    // — the grill: bars, charcoal smoke, and soot off a flare-up
+    const marks = Math.max(fd.marks || 0, fu.marks || 0);
+    const soot = from('flareChar', 0);
+    if (soot > 0.15) gripe('smoke', 0.6, [`It tastes of soot. Something flared up under it.`, `Acrid. Like it caught fire for a second.`], 11);
+    else if (from('grilled', false)) nice('grill', marks > 1 ? [`Proper bars branded into it, and you can taste the charcoal.`, `Charcoal, and the marks to prove it.`] : [`You can taste the charcoal on it.`], 11);
+
+    // — the build, if this checkout has toppings on it: anything raw or burnt sends the plate back
+    const build = result.build || (pt && pt.build) || null;
+    const buildItems = []; let badBuild = false;
+    for (const it of build || []) {
+      const name = (it && (it.name || it.id)) || 'topping';
+      const st = String((it && it.state) || '').toLowerCase();
+      const raw = st === 'raw' || (it && it.raw === true), burnt = st === 'burnt' || st === 'charred' || (it && it.burnt === true);
+      buildItems.push({ name, state: st || (raw ? 'raw' : burnt ? 'burnt' : 'ok') });
+      if (raw) { badBuild = true; gripe('build', 0.9, [`The ${name} is raw.`, `That ${name} hasn't been cooked at all.`], 12); }
+      else if (burnt) { badBuild = true; gripe('build', 0.9, [`The ${name} is burnt.`, `That ${name} is black.`], 12); }
+      else if (st === 'cold') gripe('build', 0.4, [`The ${name} is stone cold on top of it.`, `Cold ${name}. On a hot burger.`], 12);
+      else if (st === 'soggy') gripe('build', 0.35, [`The ${name} has gone to mush.`, `The ${name} is soggy.`], 12);
+      else if (st === 'melted' || st === 'toasted') nice('build', [`The ${name} is exactly right.`, `Good ${name} on it too.`], 12);
+    }
+
+    // — the wait, if the game is timing this ticket
+    const svc = (ticketResult && ticketResult.service) || null;
+    const late = svc ? { elapsed: svc.elapsed, target: svc.target, penalty: svc.penalty } : null;
+    if (svc && svc.penalty > 0.5) gripe('service', 0.3 + 0.6 * clamp(svc.penalty / SERVICE_MAX, 0, 1),
+      [`We waited ${spellMinutes(svc.elapsed)} minutes for this.`, `${spellMinutes(svc.elapsed)[0].toUpperCase() + spellMinutes(svc.elapsed).slice(1)} minutes we sat here.`, `It took ${spellMinutes(svc.elapsed)} minutes to come out.`], 13);
+
+    // — outcome, bill and tip. The plate goes back on its own score (the rubric), but the tip is
+    // paid on the score after the wait and the cooling, so a late or lukewarm plate is tipped like
+    // a worse one however well it was cooked.
+    const outcome = score < 45 || badBuild ? 'sent back' : score >= 90 ? 'delighted' : 'accepted';
+    const served = clamp(score - (svc ? svc.penalty : 0) - coldPen, 0, 100);
+    const bill = billFor([{ cheeseSlices: result.cheeseSlices || 0, target }]);
+    const tip = tipFraction(served, outcome);
+    const tipAmount = Math.round(bill.total * tip * 100) / 100;
+
+    bad.sort((a, b) => b.sev - a.sev);
+    const OPEN = {
+      'sent back': [`I'm sorry, I can't eat this.`, `No. This has to go back.`, `Take it back, please.`],
+      accepted: [`It's alright.`, `It's fine, I suppose.`, `Yeah, it's okay.`],
+      // kept, but they are not happy about it: a mild opener under a real complaint reads sarcastic
+      grudging: [`I'll eat it, but honestly?`, `Right, well.`, `I won't send it back. But.`],
+      delighted: [`Now that's a burger.`, `That's the best one I've had in ages.`, `Oh, that's good.`],
+    };
+    let said;
+    if (outcome === 'delighted' || !bad.length) said = good.slice(0, 2).map((g) => g.text);
+    else said = [bad[0].text].concat(bad[1] && bad[1].sev >= 0.35 ? [bad[1].text] : []);
+    const tone = outcome === 'accepted' && bad.length && bad[0].sev >= 0.7 ? 'grudging' : outcome;
+    const quote = '“' + [phrasePick(OPEN[tone], seed, 0)].concat(said).join(' ') + '”';
+
+    return {
+      id, score, served: Math.round(served * 10) / 10, outcome, quote,
+      complaints: bad, praise: good,
+      doneness: { state: doneState, off: Math.round(dist * 10) / 10, got: got.label, want: target.label },
+      juiciness: { state: juiceState, retained: wRet, expected: expect, short: Math.round(short * 1000) / 1000 },
+      crust: { state: crustState, brown: Math.round(bMean * 100) / 100, char: Math.round(char * 1000) / 1000, marks: Math.round(marks * 100) / 100 },
+      temperature: { state: tempState, drop: Math.round(drop * 10) / 10, serveT, penalty: Math.round(coldPen * 10) / 10 },
+      structure: { state: structState, faults },
+      grill: { grilled: !!from('grilled', false), marks: Math.round(marks * 100) / 100, soot: Math.round(soot * 100) / 100 },
+      build: { ok: !badBuild, items: buildItems },
+      bill: bill.total, billLines: bill.lines, tip, tipAmount, late,
+    };
+  }
+
   return {
     C, BLENDS, PANS, FATS, STOVES, GRATE, DONENESS,
     makePatty, createState, step, stepPatty, pattySpots, panTat, selectPatty,
     setKnob, addFat, placePatty, flipPatty, pressPatty, removePatty, addCheese, toggleLid, basteButter, washPan, wipeStove, panDirt, serve,
     evaluate, evaluateTicket, donenessOf, centerT, cellT, layerMean, gridMean, pattyMass, nodeMass, waterHolding, fmtTime, clamp, lerp, rhoVapSat, logEvent,
+    verdict, ticketTargetTime, latePenalty, billFor, tipFraction, spellMinutes, MENU, COOK_S, SERVICE_MAX,
   };
 });

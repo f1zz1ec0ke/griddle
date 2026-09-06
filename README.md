@@ -36,6 +36,7 @@ npm run calibrate    # prints time-series for a dozen cooking scenarios
 | `Space` | lay the patty in, then flip; `F` flip, `P` press |
 | `Tab`, click a patty, or the chips under the ticket | select which patty the buttons act on |
 | Stove: charcoal kettle | the knob becomes the vents, the pan goes away, and the lid is the kettle's |
+| HUD ticket clock | time on this ticket against the time the table was quoted — amber over, red at double |
 
 The **Inspector** button opens a live chart (pan, crust surface, bottom layer, centre, top) and a
 table of everything the model knows. **Hard mode** hides the thermometers.
@@ -123,6 +124,29 @@ others were still cooking: a rested patty cools in the air, and a centre that ha
 than ~8 °C from its peak is noticeably cooler on the tongue. Start the one that needs longest
 first.
 
+**The customer** does not read the rubric. When the plates go out, whoever ordered them says what
+they think in their own words — "it's dry", "there's no crust on it at all", "it's cold in the
+middle", "that isn't medium, that's uncooked" — built out of the same numbers the score is: how far
+the peak centre landed from the band, how much of its water the patty still has against what that
+doneness should hold, the browning index and char on each face, how far the middle fell from its
+peak while the plate waited, whether the crust tore or the patty domed, and what the charcoal and
+any flare-up left on it. Each plate is **sent back** (under 45, or anything raw or burnt on the
+build), **accepted**, or the customer is **delighted** (90 or more), and they tip on the bill —
+$14 a burger, $1.50 a slice of cheese — nothing on a plate that goes back, about 10 % on a
+mediocre one, 20 % on a good one and 25 % on a perfect one. A late or lukewarm plate is tipped like
+a worse one. The phrasing is picked deterministically from the patty and its score, so the same
+burger always says the same thing and the next one does not.
+
+**A shift is six tickets.** Each one carries a target time from the moment you say "yes chef":
+roughly 1.6× the recipe — the longest burger on the ticket, plus 40 % of each of the others (they
+share the pan, but a crowded pan sags and every patty is formed by hand), plus the rest — so one
+medium-rare is quoted at 13:10 and a three-top at 20:00. The HUD ticket shows the clock against it
+("7:40 / 13:10"); the clock runs in kitchen time, so speeding the simulation up does not buy you
+service time. Going over costs up to 10 ticket points at twice the quote, and the table says so.
+A ticket with a plate sent back scores nothing for the shift, and service moves on. At the end you
+get the night's card — covers, average, best and worst ticket with what those tables said, tips,
+time on the line — and the best shift is kept in the browser.
+
 ## Cooking a 100
 
 The score is doneness 50, crust 20, juiciness 15, evenness 10, structure 5. Doneness is the peak
@@ -140,7 +164,9 @@ The recipe that does it, found by `node test/player.js` and confirmed through th
 - Rest 2–2.5 minutes, then serve. Never press it.
 
 Smashing, a screaming-hot pan, a single flip on a thick patty, or cutting it straight off the
-heat will all cost you somewhere, and the results screen says where.
+heat will all cost you somewhere, and the results screen says where — first in the customer's
+words, then in the bars. A 100 is delighted and tips the full 25 %; get all six tickets out inside
+their quoted times and the shift card has nothing to complain about.
 
 On the charcoal kettle the window is narrower, but it is there: light it on 8, wait for the
 bed to glow and the grate to pass 250 °C, then run the vents on 7 (bed around 630 °C). An 18 mm
