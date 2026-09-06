@@ -1,32 +1,58 @@
 /*
  * audio.js — procedural kitchen audio with the Web Audio API. No samples.
- *  sizzle  : white noise → bandpass (centre/Q follow boil intensity) → gain
- *  crackle : random short bursts of noise through a highpass (fat spatter)
- *  hum     : low sawtooth + noise for the gas burner, level follows the knob
- *  hiss    : one-shot burst when the patty lands
+ *
+ * The sizzle is a diagnostic, not decoration: it has two voices and they say different things.
+ *   boil    : water flashing out of the face that is against the metal. Millimetre bubbles
+ *             collapsing by the hundred — low (1–2 kHz), loud, and violently amplitude-modulated.
+ *             It is the sound of a wet underside, and nothing browns while you can hear it.
+ *   fry     : what is left once that face has boiled dry — fat at 180 °C on hot metal. Much
+ *             higher (5–7 kHz), much quieter, steady, with sparse pops where a droplet of water
+ *             trapped in the fat flashes. The moment the first turns into the second is the
+ *             moment the crust starts, and a cook hears it long before they see it.
+ *   roar    : a kettle drawing air through its vents. A pan does not have this at all.
+ *   whoosh  : fat landing on the coals and lighting.
+ *   crackle : short noise bursts (spatter, and pops off a dry crust) through a highpass whose
+ *             corner rises as the pan dries out, because dry pops are brighter than wet ones.
+ *   hum     : low sawtooth + noise for the gas burner, level follows the knob.
+ *   muffle  : a lid on the pan (or the kettle) is a low-pass filter and about 5 dB down. Everything
+ *             goes through it, which is why a lid makes the pan sound as if it is a room away.
+ * A patty lifted on the blade stops sizzling: physics scales both voices by the contact fraction
+ * (diag.contact), so the sound drops with the meat and comes back when it lands.
  */
 (function (root) {
   'use strict';
+  const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
   class KitchenAudio {
-    constructor() { this.ctx = null; this.enabled = false; this.level = 0; this.crackAcc = 0; }
+    constructor() { this.ctx = null; this.enabled = false; this.level = 0; this.crackAcc = 0; this.flareWas = 0; this.lastWhoosh = -9; }
     start() {
       if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); this.enabled = true; return; }
       const AC = root.AudioContext || root.webkitAudioContext; if (!AC) return;
       const ctx = (this.ctx = new AC());
-      const master = (this.master = ctx.createGain()); master.gain.value = 0.9; master.connect(ctx.destination);
+      // everything goes through the lid before it reaches the room
+      const muffle = (this.muffle = ctx.createBiquadFilter()); muffle.type = 'lowpass'; muffle.frequency.value = 20000; muffle.Q.value = 0.7;
+      const muffleGain = (this.muffleGain = ctx.createGain()); muffleGain.gain.value = 1;
+      muffle.connect(muffleGain); muffleGain.connect(ctx.destination);
+      const master = (this.master = ctx.createGain()); master.gain.value = 0.9; master.connect(muffle);
       // noise source
       const len = ctx.sampleRate * 2; const buf = ctx.createBuffer(1, len, ctx.sampleRate); const d = buf.getChannelData(0);
       for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
       this.noiseBuf = buf;
       const mk = () => { const s = ctx.createBufferSource(); s.buffer = buf; s.loop = true; s.start(); return s; };
-      // sizzle chain
-      this.sizzleBP = ctx.createBiquadFilter(); this.sizzleBP.type = 'bandpass'; this.sizzleBP.frequency.value = 4200; this.sizzleBP.Q.value = 0.7;
-      this.sizzleHP = ctx.createBiquadFilter(); this.sizzleHP.type = 'highpass'; this.sizzleHP.frequency.value = 1200;
-      this.sizzleGain = ctx.createGain(); this.sizzleGain.gain.value = 0;
-      // amplitude flutter (the irregular "spitting")
+      // ---- boiling: low band, hard flutter
+      this.boilBP = ctx.createBiquadFilter(); this.boilBP.type = 'bandpass'; this.boilBP.frequency.value = 1500; this.boilBP.Q.value = 0.5;
+      this.boilGain = ctx.createGain(); this.boilGain.gain.value = 0;
       this.flutter = ctx.createGain(); this.flutter.gain.value = 1;
-      const lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 9; const lfoG = ctx.createGain(); lfoG.gain.value = 0.35; lfo.connect(lfoG); lfoG.connect(this.flutter.gain); lfo.start();
-      mk().connect(this.sizzleBP); this.sizzleBP.connect(this.sizzleHP); this.sizzleHP.connect(this.flutter); this.flutter.connect(this.sizzleGain); this.sizzleGain.connect(master);
+      // the irregular spitting: two detuned LFOs so it never sounds like a tremolo pedal
+      this.flutterDepth = ctx.createGain(); this.flutterDepth.gain.value = 0.4;
+      const lfo1 = ctx.createOscillator(); lfo1.type = 'sine'; lfo1.frequency.value = 9;
+      const lfo2 = ctx.createOscillator(); lfo2.type = 'triangle'; lfo2.frequency.value = 3.3;
+      const mix = ctx.createGain(); mix.gain.value = 0.5; lfo1.connect(mix); lfo2.connect(mix);
+      mix.connect(this.flutterDepth); this.flutterDepth.connect(this.flutter.gain); lfo1.start(); lfo2.start();
+      mk().connect(this.boilBP); this.boilBP.connect(this.flutter); this.flutter.connect(this.boilGain); this.boilGain.connect(master);
+      // ---- frying: high, quiet, steady
+      this.fryHP = ctx.createBiquadFilter(); this.fryHP.type = 'highpass'; this.fryHP.frequency.value = 5000; this.fryHP.Q.value = 0.8;
+      this.fryGain = ctx.createGain(); this.fryGain.gain.value = 0;
+      mk().connect(this.fryHP); this.fryHP.connect(this.fryGain); this.fryGain.connect(master);
       // gentle oil bubbling (lower band)
       this.bubbleBP = ctx.createBiquadFilter(); this.bubbleBP.type = 'bandpass'; this.bubbleBP.frequency.value = 900; this.bubbleBP.Q.value = 1.5;
       this.bubbleGain = ctx.createGain(); this.bubbleGain.gain.value = 0;
@@ -37,26 +63,48 @@
       const osc = ctx.createOscillator(); osc.type = 'sawtooth'; osc.frequency.value = 55; osc.connect(humLP); osc.start();
       const humNoise = mk(); const hnLP = ctx.createBiquadFilter(); hnLP.type = 'lowpass'; hnLP.frequency.value = 500; humNoise.connect(hnLP); hnLP.connect(this.humGain);
       humLP.connect(this.humGain); this.humGain.connect(master);
+      // the fire's draught: broad low noise, level and corner following the vents
+      this.roarLP = ctx.createBiquadFilter(); this.roarLP.type = 'lowpass'; this.roarLP.frequency.value = 160; this.roarLP.Q.value = 1.2;
+      this.roarGain = ctx.createGain(); this.roarGain.gain.value = 0;
+      mk().connect(this.roarLP); this.roarLP.connect(this.roarGain); this.roarGain.connect(master);
       // crackle chain
       this.crackHP = ctx.createBiquadFilter(); this.crackHP.type = 'highpass'; this.crackHP.frequency.value = 2500; this.crackHP.connect(master);
       this.enabled = true;
     }
     stop() { this.enabled = false; if (this.ctx) this.ctx.suspend(); }
     toggle() { if (this.enabled) this.stop(); else this.start(); return this.enabled; }
-    /** diag: {sizzle, spatter, oilBubble}, knob 0..1, dt */
+    /** diag from the physics: {boilNoise, hiss, roar, flare, contact, lid, spatter, oilBubble}; knob 0..1; dt */
     update(diag, knob, dt) {
       if (!this.enabled || !this.ctx) return;
       const t = this.ctx.currentTime;
-      const s = Math.min(1.5, diag.sizzle || 0);
-      const target = Math.pow(s, 0.8) * 0.5;
-      this.sizzleGain.gain.setTargetAtTime(target, t, 0.08);
-      this.sizzleBP.frequency.setTargetAtTime(3000 + 3500 * Math.min(1, s), t, 0.1);
-      this.sizzleBP.Q.setValueAtTime(0.5 + 0.6 * Math.min(1, s), t);
+      const boil = clamp(diag.boilNoise || 0, 0, 1.5), fry = clamp(diag.hiss || 0, 0, 1.2);
+      this.level = boil + fry;
+      // wet: loud, low and rough. The band drops as the boiling gets fiercer — bigger bubbles.
+      this.boilGain.gain.setTargetAtTime(Math.pow(boil, 0.8) * 0.42, t, 0.08);
+      this.boilBP.frequency.setTargetAtTime(2000 - 700 * Math.min(1, boil), t, 0.12);
+      this.boilBP.Q.setValueAtTime(0.4 + 0.5 * Math.min(1, boil), t);
+      this.flutterDepth.gain.setTargetAtTime(0.2 + 0.55 * Math.min(1, boil), t, 0.15);
+      // dry: a fifth of the level, an octave and a half up, and steady
+      this.fryGain.gain.setTargetAtTime(Math.pow(fry, 0.9) * 0.11, t, 0.15);
+      this.fryHP.frequency.setTargetAtTime(4400 + 2600 * Math.min(1, fry), t, 0.2);
       this.bubbleGain.gain.setTargetAtTime(Math.min(1, diag.oilBubble || 0) * 0.06, t, 0.2);
-      this.humGain.gain.setTargetAtTime(knob * 0.05, t, 0.2);
-      // crackles: Poisson process at the spatter rate
-      this.crackAcc += Math.min(40, diag.spatter || 0) * dt;
-      while (this.crackAcc >= 1) { this.crackAcc -= 1; this.crack(0.2 + Math.random() * 0.8); }
+      this.humGain.gain.setTargetAtTime(knob * 0.05 * (diag.roar ? 0 : 1), t, 0.2); // a kettle has no gas burner under it
+      const roar = clamp(diag.roar || 0, 0, 1.4);
+      this.roarGain.gain.setTargetAtTime(roar * 0.09, t, 0.4);
+      this.roarLP.frequency.setTargetAtTime(110 + 130 * roar, t, 0.4);
+      // the lid: high end gone and the whole thing further away
+      const lid = diag.lid ? 1 : 0;
+      this.muffle.frequency.setTargetAtTime(lid ? 800 : 20000, t, 0.3);
+      this.muffleGain.gain.setTargetAtTime(lid ? 0.55 : 1, t, 0.3);
+      // pops: spatter, the wet crackle itself, and sparse bright pops off a dry crust
+      const dryShare = fry / (fry + boil + 1e-6);
+      this.crackHP.frequency.setTargetAtTime(1800 + 3400 * dryShare, t, 0.2);
+      this.crackAcc += Math.min(45, Math.min(40, diag.spatter || 0) + 34 * boil + 3 * fry) * dt;
+      while (this.crackAcc >= 1) { this.crackAcc -= 1; this.crack((0.2 + Math.random() * 0.8) * (1 - 0.45 * dryShare)); }
+      // a flare-up: fat lighting on the coals is a whoosh, not a crackle
+      const flare = diag.flare || 0;
+      if (flare > this.flareWas + 0.3 && t - this.lastWhoosh > 1.2) { this.lastWhoosh = t; this.whoosh(clamp(flare / 1.5, 0.3, 1)); }
+      this.flareWas = Math.max(flare, this.flareWas - dt * 0.8);
     }
     crack(amp) {
       if (!this.ctx) return;
@@ -64,6 +112,16 @@
       const src = ctx.createBufferSource(); src.buffer = this.noiseBuf;
       const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(amp * 0.5, t + 0.002); g.gain.exponentialRampToValueAtTime(0.001, t + 0.02 + Math.random() * 0.05);
       src.connect(g); g.connect(this.crackHP); src.start(t, Math.random() * 1.5); src.stop(t + 0.1);
+    }
+    /** Fat catching on the coals: a body of low noise sweeping up through a band as the flame climbs. */
+    whoosh(strength) {
+      if (!this.ctx || !this.enabled) return;
+      const ctx = this.ctx, t = ctx.currentTime;
+      const src = ctx.createBufferSource(); src.buffer = this.noiseBuf;
+      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 0.9;
+      bp.frequency.setValueAtTime(260, t); bp.frequency.exponentialRampToValueAtTime(1600, t + 0.45); bp.frequency.exponentialRampToValueAtTime(400, t + 1.4);
+      const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.5 * strength, t + 0.12); g.gain.exponentialRampToValueAtTime(0.01, t + 1.5);
+      src.connect(bp); bp.connect(g); g.connect(this.master); src.start(t, Math.random()); src.stop(t + 1.6);
     }
     /** big initial hiss when cold meat hits hot metal */
     hiss(strength) {

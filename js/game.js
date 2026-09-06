@@ -184,6 +184,7 @@
       $('btn-lid').textContent = 'Lid on';
       this.chart = []; this.logN = -1;
       $('log').innerHTML = '';
+      this.senseNote = ''; $('h-sense').hidden = true; $('h-sense-v').textContent = '—';
       const labels = this.ticket.items.map((id) => this.label(id)).join(' + ');
       const n = this.patties.length;
       const surf = grill ? 'grate' : 'pan';
@@ -279,6 +280,28 @@
         P.logEvent(s.state, `${s.selItem.label} goes on burger ${p.id}.`, 'action');
         s.refreshButtons(); s.updateChips();
       });
+      // ---- the cook's own senses. In hard mode they are all there is; in normal mode a real cook
+      // uses them anyway, and they cost exactly the same either way.
+      $('btn-presstest').onclick = () => {
+        const p = s.patty; if (!p || (p.where !== 'pan' && p.where !== 'rest')) return;
+        const r = P.pressTest(s.state, p);
+        if (!r) return;
+        s.note(`Press test — ${r.reading}`);
+        s.audio.click(); s.vp.forceTex = true; s.refreshButtons();
+      };
+      $('btn-peek').onclick = () => {
+        const p = s.patty; if (!p || (p.where !== 'pan' && p.where !== 'rest')) return;
+        const r = P.peek(s.state, p);
+        if (!r) return;
+        s.note(`Cut open — ${r.colour}; ${r.band}.`);
+        s.vp.peekCutaway(p, 4.5); // the knife is in it for a moment; then it closes and leaves the line
+        s.vp.forceTex = true; s.refreshButtons(); s.updateChips();
+      };
+      $('btn-hand').onclick = () => {
+        const p = s.patty && s.patty.where === 'pan' ? s.patty : null; // over the meat if there is meat, otherwise over the middle
+        const r = P.handTestAt(s.state, p ? p.pos : null);
+        s.note(`Hand over the ${s.state.grill ? 'grate' : 'pan'} — ${r.seconds >= 59 ? 'you could leave it there' : `${r.seconds < 10 ? r.seconds.toFixed(1) : Math.round(r.seconds)} s before you pull it away`}: ${r.word}.`);
+      };
       $('btn-press').onclick = () => { P.pressPatty(s.state, false, s.patty); s.audio.hiss(0.5); s.vp.forceTex = true; };
       $('btn-smash').onclick = () => { P.pressPatty(s.state, true, s.patty); s.audio.hiss(0.9); s.vp.forceTex = true; s.refreshButtons(); };
       $('btn-lid').onclick = () => { P.toggleLid(s.state); $('btn-lid').textContent = s.state.lid ? 'Lid off' : 'Lid on'; };
@@ -296,7 +319,12 @@
       for (const b of document.querySelectorAll('[data-speed]')) b.onclick = () => s.setSpeed(Number(b.dataset.speed));
       for (const b of document.querySelectorAll('[data-view]')) b.onclick = () => s.vp.controls.preset(b.dataset.view);
       $('btn-audio').onclick = () => { const on = s.audio.toggle(); $('btn-audio').textContent = on ? '🔊 Sound on' : '🔇 Sound off'; };
-      $('hard').addEventListener('change', (e) => { s.hard = e.target.checked; document.body.classList.toggle('hard', s.hard); });
+      $('hard').addEventListener('change', (e) => {
+        s.hard = e.target.checked; document.body.classList.toggle('hard', s.hard);
+        // no thermometers means no thermometers: the probe comes out too
+        if (s.hard && s.probe.inserted) { s.probe.inserted = false; s.probe.reading = null; $('btn-probe').textContent = 'Insert probe'; }
+        s.refreshButtons();
+      });
       $('btn-inspector').onclick = () => { $('inspector').hidden = !$('inspector').hidden; };
       $('btn-help').onclick = () => { $('help').hidden = !$('help').hidden; };
       $('help').addEventListener('click', (e) => { if (e.target === $('help')) $('help').hidden = true; });
@@ -311,6 +339,12 @@
           if (next < n) s.select(next); else s.selectItem(s.items[next - n]);
           return;
         }
+        // the senses work in the rest phase too: a resting patty can be pressed and cut into
+        if (s.phase === 'cook' || s.phase === 'rest') {
+          if (e.key === 't' || e.key === 'T') { $('btn-presstest').click(); return; }
+          if (e.key === 'k' || e.key === 'K') { $('btn-peek').click(); return; }
+          if (e.key === 'h' || e.key === 'H') { $('btn-hand').click(); return; }
+        }
         if (s.phase !== 'cook') return;
         if (e.key === 'f' || e.key === 'F') $('btn-flip').click();
         if (e.key === ' ') { e.preventDefault(); if (s.patty && s.patty.where === 'board') $('btn-place').click(); else $('btn-flip').click(); }
@@ -319,6 +353,8 @@
         if (e.key === 'c' || e.key === 'C') $('btn-cutaway').click();
       });
     }
+    /** The last thing the cook's eyes, ears, fingers or hand reported, on the HUD as well as the log. */
+    note(text) { this.senseNote = text; $('h-sense-v').textContent = text; $('h-sense').hidden = false; }
     /** Test/debug hook: advance the physics by `seconds` without rendering. */
     fastForward(seconds) { let n = Math.round(seconds / DT); while (n-- > 0) P.step(this.state, DT); this.vp.forceTex = true; }
     setSpeed(v) { this.speed = v; for (const b of document.querySelectorAll('[data-speed]')) b.classList.toggle('on', Number(b.dataset.speed) === v); }
@@ -406,7 +442,11 @@
         const html = this.patties.map((q, i) => `<button data-burger="${i}" class="${it.burger === q.id ? 'on' : ''}">${i + 1} ${SHORT[q.target]}</button>`).join(' ');
         if (html !== this.assignHTML) { $('assign-btns').innerHTML = html; this.assignHTML = html; }
       }
-      $('btn-probe').disabled = !(inPan || (p && where === 'rest'));
+      // the senses act on the selected patty, on the metal or resting; the hand only needs a stove
+      const canSense = (on || this.phase === 'rest') && !!p && (where === 'pan' || where === 'rest') && !it;
+      $('btn-presstest').disabled = !canSense; $('btn-peek').disabled = !canSense;
+      $('btn-hand').disabled = !(on || this.phase === 'rest');
+      $('btn-probe').disabled = !(inPan || (p && where === 'rest')) || this.hard; // hard mode: no thermometers at all
       $('btn-wash').disabled = !on || this.inPan().length > 0 || this.items.some((q) => q.where === 'pan'); $('btn-wipe').disabled = !on;
       $('e-stove').disabled = $('e-pan').disabled = this.anyPlaced() || this.items.length > 0;
       if (this.state.grill) { $('btn-fat').disabled = true; }
@@ -488,6 +528,10 @@
           add('Centre / top', fmt(P.centerT(p), 1) + ' / ' + fmt(P.cellT(p, p.Nz - 1, 0), 1) + ' °C');
           add('Centre / edge at mid-height', fmt(P.centerT(p), 1) + ' / ' + fmt(P.cellT(p, Math.floor(p.Nz / 2), p.Nr - 1), 1) + ' °C');
           add('Peak centre so far', fmt(p.peakCenter, 1) + ' °C → ' + P.donenessOf(p.peakCenter).label);
+          { const f = P.firmness(p); add('Firmness under a finger', fmt(f.index, 2) + ' (' + fmt(f.E / 1000, 1) + ' kPa) · ' + P.firmnessWord(f.index).word); }
+          { const h = P.handTest(st, p.where === 'pan' ? p.pos : null); add('Hand over the metal', fmt(h.seconds, 1) + ' s · ' + h.word + ' · ' + fmt(h.flux / 1000, 1) + ' kW/m² (' + fmt(h.radiant / 1000, 1) + ' radiant)'); }
+          add('Sizzle: boil / fry / roar', fmt(d.boilNoise, 2) + ' / ' + fmt(d.hiss, 2) + ' / ' + fmt(d.roar, 2) + ' · contact ' + fmt(d.contact, 2));
+          if (p.slits || p.pressTests) add('Cuts / press tests', `${p.slits} · ${p.pressTests} (${fmt((p.lostWaterCut + p.pressTestJuice) * 1000, 2)} g of juice between them)`);
           add('Boiling at contact', fmt(d.evapBottom * 1000, 2) + ' g/s · top evap ' + fmt(p.evapTop * 1000, 3) + ' g/s');
           add('Juice pooled top / at pan', fmt(p.poolTop * 1000, 2) + ' / ' + fmt(p.poolBottom * 1000, 2) + ' g');
           add('Fat rendered out', fmt(p.lostFat * 1000, 1) + ' g (' + fmt(d.fatDrip * 1000, 2) + ' g/s)');
@@ -595,6 +639,10 @@
         ['On the bun', `${r.cheeseSlices ? r.cheeseSlices + ' slice' + (r.cheeseSlices > 1 ? 's' : '') + ' of cheese · ' : ''}${(r.bunSoak * 1000).toFixed(1)} g of juice into the bottom bun`],
         ['Crust (browning index / char)', `A: ${r.faces.down.id === 'A' ? r.faces.down.brown.toFixed(1) : r.faces.up.brown.toFixed(1)} / ${(r.faces.down.id === 'A' ? r.faces.down.char : r.faces.up.char).toFixed(2)} · B: ${r.faces.down.id === 'B' ? r.faces.down.brown.toFixed(1) : r.faces.up.brown.toFixed(1)} / ${(r.faces.down.id === 'B' ? r.faces.down.char : r.faces.up.char).toFixed(2)}`],
         ['Grey band', `${(r.overFrac * 100).toFixed(0)} % of the meat cooked past target`],
+        ['Senses used', [
+          r.peeks ? `cut into it ${r.peeks === 1 ? 'once' : r.peeks === 2 ? 'twice' : r.peeks + ' times'} — ${(r.cutJuice * 1000).toFixed(1)} g of juice out of the cut, and a slit in the burger` : null,
+          r.pressTests ? `${r.pressTests} press test${r.pressTests > 1 ? 's' : ''} — ${(r.pressJuice * 1000).toFixed(2)} g` : null,
+        ].filter(Boolean).join('<br>') || 'None: never pressed, never cut.'],
         ['Build', r.build.items.length
           ? r.build.items.map((b) => `${b.label} — <b>${b.state}</b>`).join('<br>') + (r.build.penalty ? `<br><span class="pen">− ${r.build.penalty.toFixed(1)} on the ticket</span>` : '') + (r.build.bonus ? `<br><span class="bon">+ ${r.build.bonus.toFixed(1)} on the ticket</span>` : '')
           : 'Nothing on it but the patty (and a plain, untoasted bun)'],

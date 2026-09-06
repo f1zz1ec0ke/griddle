@@ -40,6 +40,11 @@ label.check input { width: auto; }
 .ro.small span { font-size: 12px; color: var(--muted); }
 .ro.warn { color: var(--warn); display: flex; align-items: center; }
 body.hard .ro span#h-pan, body.hard .ro span#h-probe { color: var(--muted); }
+/* hard mode: the thermometers are gone, so the cook's own senses take the space they leave */
+body.hard #ro-pan, body.hard #ro-probe, body.hard .row.probe, body.hard #btn-probe-rest { display: none; }
+body.hard #senses button { border-color: var(--accent); }
+.ro.note { min-width: 200px; max-width: 300px; }
+.ro.note span { font-size: 12px; color: var(--good); line-height: 1.25; display: block; }
 .tools { margin-left: auto; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 .tools button { padding: 5px 9px; font-size: 12.5px; }
 .speed button, .views button { border-radius: 0; }
@@ -83,6 +88,8 @@ table.stats .bon { color: var(--good); }
 .ev.warn { color: var(--warn); }
 .ev.good { color: var(--good); }
 .ev.action { color: var(--ink); }
+/* what the cook's own eyes, ears, fingers and hands report */
+.ev.note { color: var(--good); border-left: 2px solid var(--good); padding-left: 6px; }
 
 /* inspector */
 #inspector { position: fixed; left: 12px; bottom: 12px; width: 440px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; z-index: 4; font-size: 12px; }

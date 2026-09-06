@@ -15,10 +15,11 @@
   <div class="ticket" id="ticket" data-phase="form cook rest result" tabindex="0">Ticket: <b id="ticket-target">—</b></div>
   <div class="chips" id="chips" hidden></div>
   <div class="readouts" data-phase="cook rest">
-    <div class="ro"><label id="h-pan-label">IR gun · pan</label><span id="h-pan">—</span></div>
-    <div class="ro"><label>probe</label><span id="h-probe">—</span></div>
+    <div class="ro" id="ro-pan"><label id="h-pan-label">IR gun · pan</label><span id="h-pan">—</span></div>
+    <div class="ro" id="ro-probe"><label>probe</label><span id="h-probe">—</span></div>
     <div class="ro"><label>clock</label><span id="h-time">0:00</span></div>
     <div class="ro small"><span id="h-side"></span></div>
+    <div class="ro note" id="h-sense" hidden><label>cook's notes</label><span id="h-sense-v">—</span></div>
     <div class="ro warn" id="h-smoke" hidden>Smoking</div>
     <div class="ro" id="h-lid" hidden>🫕 lid on</div>
   </div>
@@ -109,6 +110,17 @@
     </div>
   </div>
 
+  <div data-phase="cook rest" class="section" id="senses">
+    <div class="row extras">
+      <label>Senses <small>what a cook uses when there is no thermometer — and each of them costs something</small></label>
+      <div class="row three">
+        <button id="btn-presstest" title="Press it with a finger (T). Firmness is the denaturation through the thickness, felt instead of measured. Costs about a tenth of the juice a spatula press does.">Press test (T)</button>
+        <button id="btn-peek" title="Cut into it and look (K). The truth, at the price of a burger with a slit in it that weeps for the rest of the cook.">Peek (K)</button>
+        <button id="btn-hand" title="Hold a hand a few centimetres over the metal and count (H). Two seconds is searing, eight is low.">Hand over it (H)</button>
+      </div>
+    </div>
+  </div>
+
   <div data-phase="cook rest" class="section" id="extras">
     <div class="row extras">
       <label>Extras <small>they share the pan, take a spot, and pull the metal down under them</small></label>
@@ -168,7 +180,10 @@
     <p><b>Extras</b> — the buttons under <i>Extras</i> put toppings in the pan beside the patties: two <b>bun</b> halves cut side down, a rasher of <b>bacon</b>, an <b>egg</b>, a heap of sliced <b>onions</b>. They are cooked, not conjured: each one takes a spot on the metal, drags the rings under it down, boils its own water off, and browns (or burns) on its own kinetics. Select one from the chips or by clicking it, and <b>Flip</b> turns it over — or stirs the onions, which is the only way to caramelise all of them instead of scorching the layer on the pan. <b>Off the heat</b> takes it to the pass. A bun face goes golden in about a minute over 200 °C metal and black in three; bacon needs eight minutes at 180 °C to render its fat and crisp; a lid or a flip is what sets an egg yolk; onions want a quarter of an hour on medium. At service each topping is built onto a burger (the chips show which), and anything raw or burnt costs the ticket up to ten points — the patty's own score never moves.</p>
     <p><b>Charcoal</b> — pick the kettle as the stove. The knob is the vents: open them, wait for the bed to glow and the grate to pass 250 °C. The bars brand marks, radiant heat browns the edges, fat that drips on the coals flares up and soots the meat, and the lid turns the kettle into an oven. <b>Bank coals</b> rakes the bed to one side: the same charcoal, twice as deep over half the grate and bare ash under the other half, so the bars run 150–250 °C cooler over there and a patty sees a fifth of the radiant heat. Sear over the coals, then drag it across to finish — that is how you get a crust on a thick patty without charring it.</p>
     <p><b>Moving things</b> — left-drag a patty (or a topping) to slide it across the pan or the grate; the ring shows where it will land, green if it fits and red if something is in the way. Dragging from anywhere else still orbits the camera. <b>Move to centre</b> and <b>Move to edge</b> do the same from the keyboard. Position is not decoration: the metal under it, the burner's hot spot and — on a banked kettle — which side of the fire it is on all follow it, and so does the heat it pulls out of the pan. Meat welds itself to hot metal until its crust sets, so moving it too early tears the face off exactly as an early flip does; <b>Scrape</b> (S) works the blade under it first, which costs a second of searing and about 40 % of the tearing.</p>
+    <p><b>The cook's senses</b> — under <i>Senses</i>, and the only instruments you have in <b>hard mode</b>, where the probe and the IR gun are gone. <b>Press test</b> (T) puts a finger on the middle of the patty: what you feel is the compression modulus, computed from the myosin, collagen and actin that have denatured through the thickness and how dry each layer is. The layers are springs in series, so the softest one — the centre — dominates, which is exactly why the test works. Raw is slack, rare is soft, medium-rare springs back, medium is firm with give, well done is hard. It costs about a tenth of the juice a spatula press does, and a second and a bit with your hand over a hot pan. <b>Peek</b> (K) cuts into it: you see the colour at the centre and how deep the grey band has come in, the viewport shows you the actual cut for a few seconds, and then you have a burger with a slit in it that weeps out of the cut for the rest of the cook and costs you the structure mark. It can never score 100 again. <b>Hand over it</b> (H) holds a palm about 8 cm over the metal and counts: radiant plus convective flux at the hand, through the Stoll burn curve. Two seconds is searing, four is very hot, six is hot, eight or more is only medium — those are grill numbers, and a pan gives you far longer because a pan is not a fire. Over a banked kettle, hold your hand over each side.</p>
+    <p><b>Listen to it.</b> The sizzle is a reading, not decoration. A wet face against the metal is a loud, rough, low crackle — water flashing at the contact — and nothing browns while you can hear it. When it drops to a quiet, much higher hiss with sparse pops, that face has boiled dry and Maillard has started: that is your cue to expect a crust, and the log writes it down for you (“the sizzle has dropped to a hiss”). A patty lifted on the blade goes quiet. A kettle roars as the vents open and whooshes when fat flares on the coals, and a lid low-passes the lot.</p>
     <p><b>Doneness</b> is the <i>peak</i> centre temperature, including carry-over while resting. Rare 49–52, medium-rare 54–57, medium 60–63, medium-well 65–68, well done 71+ °C.</p>
+    <p><b>Keys</b> — <b>space</b> lay in / flip, <b>F</b> flip, <b>P</b> press, <b>S</b> scrape, <b>C</b> cutaway, <b>T</b> press test, <b>K</b> peek, <b>H</b> hand over the pan, <b>Tab</b> select the next patty or topping, <b>1</b>–<b>4</b> view presets, <b>R</b> reset the camera.</p>
     <p><b>Tips from real life</b> — preheat properly; don't press a thick patty; a thumb dimple stops it doming; flipping often cooks faster and more evenly; the juice pooling on top is a flip cue; meat releases from the pan on its own once the crust sets; rest before cutting.</p>
     <button id="btn-help-close" onclick="document.getElementById('help').hidden=true">Close</button>
   </div>

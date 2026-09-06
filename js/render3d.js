@@ -381,6 +381,21 @@
         }
       };
       crustSpots(p.faceDown, bb); if (!rawTop) crustSpots(p.faceUp, bt);
+      // the slit a peek leaves: a knife went all the way through, so the line shows on both caps,
+      // dark where the wet inside of the patty is open to the air
+      if (p.slits) {
+        const inner = mix3(nodeColour(p, Math.floor(p.Nz / 2), 0), [40, 16, 16], 0.45);
+        for (const rg of [bb, bt]) {
+          const cx = (rg.x0 + rg.x1) / 2, cy = (rg.y0 + rg.y1) / 2;
+          c.save(); c.beginPath(); c.arc(cx, cy, capR, 0, Math.PI * 2); c.clip(); c.translate(cx, cy); c.rotate(p.slitAngle || 0);
+          for (let n = 0; n < Math.min(3, p.slits); n++) {
+            c.fillStyle = rgb(inner); c.globalAlpha = 0.95;
+            c.fillRect(-capR, -capR * 0.022 + n * capR * 0.14, 2 * capR, capR * 0.044); // a 2 mm gape across a 5 cm cap
+            c.fillStyle = 'rgba(0,0,0,0.62)'; c.fillRect(-capR, -capR * 0.011 + n * capR * 0.14, 2 * capR, capR * 0.022); // and the shadow down inside it
+          }
+          c.globalAlpha = 1; c.restore();
+        }
+      }
       if (p.poolTop > 1e-5) { c.fillStyle = `rgba(200,70,80,${clamp(p.poolTop / 0.002, 0, 0.5)})`; c.fillRect(bt.x0, bt.y0, bt.x1 - bt.x0, bt.y1 - bt.y0); }
       if (p.T[topC] < -2) { c.fillStyle = `rgba(235,240,255,${clamp(-p.T[topC] / 20, 0, 0.6)})`; c.fillRect(0, 0, W, H); }
       this.atlasTex.needsUpdate = true;
@@ -444,7 +459,7 @@
       }
       out[i++] = q(p.faceSide.brown, 0.01); out[i++] = q(p.faceSide.char, 0.004);
       out[i++] = q(p.dome, 0.01); out[i++] = q(p.D, 5e-5); out[i++] = q(p.h, 5e-5);
-      out[i++] = q(p.poolTop, 2e-6); out[i++] = q(p.fatTop, 2e-6); out[i++] = q(p.cheeses.length, 1);
+      out[i++] = q(p.poolTop, 2e-6); out[i++] = q(p.fatTop, 2e-6); out[i++] = q(p.cheeses.length, 1); out[i++] = q(p.slits || 0, 1);
       for (let n = 0; n < 6; n++) {
         const k = Math.min(Nz - 1, Math.round((n * (Nz - 1)) / 5));
         for (const j of [0, Nr - 1]) {
@@ -891,6 +906,8 @@
       this.ghost.rotation.x = -Math.PI / 2; this.ghost.visible = false; g.add(this.ghost);
       // the spatula: a thin offset blade on a handle, shown while a scrape is actually happening
       this.spatula = this._buildSpatula(); this.spatula.visible = false; g.add(this.spatula);
+      // and a finger, for the press test
+      this.finger = this._buildFinger(); this.finger.visible = false; g.add(this.finger);
       this.stainGroup = new T.Group(); g.add(this.stainGroup); this.stains = [];
       this.stainMat = new T.MeshStandardMaterial({ color: 0x6b4a1e, transparent: true, opacity: 0.6, roughness: 0.3, depthWrite: false });
       this.stainGeo = new T.CircleGeometry(1, 10);
@@ -1129,6 +1146,19 @@
       for (const [p, v] of this.views) if (!keep.has(p)) { v.dispose(); this.views.delete(p); }
       for (const p of list) if (!this.views.has(p)) this.views.set(p, new PattyView(this, p));
     }
+    /** A fingertip and the joint behind it, for the press test. It comes in from the cook's side. */
+    _buildFinger() {
+      const g = new T.Group();
+      const skin = new T.MeshStandardMaterial({ roughness: 0.9 }); setLin(skin, [176, 118, 92]); // sRGB skin, converted like every other colour in here
+      const tip = new T.Mesh(new T.SphereGeometry(0.0092, 14, 10), skin); tip.scale.set(1, 0.8, 1); tip.castShadow = true; g.add(tip);
+      const seg = new T.Mesh(new T.CylinderGeometry(0.0086, 0.0094, 0.038, 12), skin);
+      seg.rotation.z = Math.PI / 2 - 0.55; seg.position.set(0.016, 0.011, 0); seg.castShadow = true; g.add(seg); // angled up and back toward the hand
+      const knuckle = new T.Mesh(new T.SphereGeometry(0.0098, 12, 9), skin); knuckle.position.set(0.032, 0.021, 0); knuckle.castShadow = true; g.add(knuckle);
+      const nailMat = new T.MeshStandardMaterial({ roughness: 0.35 }); setLin(nailMat, [217, 182, 164]);
+      const nail = new T.Mesh(new T.SphereGeometry(0.0062, 10, 8), nailMat);
+      nail.position.set(0.003, 0.0062, 0); nail.scale.set(0.9, 0.45, 0.75); g.add(nail);
+      return g;
+    }
     /** A 10 cm offset spatula: a thin steel blade, a cranked neck and a wooden handle. */
     _buildSpatula() {
       const g = new T.Group();
@@ -1223,6 +1253,18 @@
       const phi = this.controls.goal.azimuth + Math.PI / 2;
       for (const [p, v] of this.views) { const want = on && p === this.selected; if (v.cutaway !== want || (want && on)) v.setCutaway(want, phi); }
     }
+    /**
+     * A peek: the cook has just cut the patty open, so show the cut. The knife went in at some
+     * angle nobody chose deliberately, so the slice is at a random azimuth — and it closes again
+     * after a few seconds, back to whatever the cutaway button was set to.
+     */
+    peekCutaway(patty, seconds) {
+      const v = this.viewOf(patty); if (!v) return;
+      // wall-clock, not the frame's dt: this is how long the cook is looking at it, and it should
+      // last the same few seconds whether the machine is drawing at 60 fps or at 4
+      this.peeking = { p: patty, until: (root.performance ? performance.now() : Date.now()) + seconds * 1000 };
+      v.setCutaway(true, Math.random() * Math.PI * 2);
+    }
     /** What is under the cursor: a patty, or one of the toppings sharing the pan. */
     pickPatty(clientX, clientY) {
       const rect = this.canvas.getBoundingClientRect();
@@ -1251,6 +1293,13 @@
     update(state, dt) {
       this.clock += dt; this.texBudget = 1;
       const pan = state.pan, p = state.patty;
+      if (this.peeking) {
+        if ((root.performance ? performance.now() : Date.now()) >= this.peeking.until) {
+          const v = this.viewOf(this.peeking.p);
+          if (v) v.setCutaway(this.cutaway && this.peeking.p === this.selected, this.controls.goal.azimuth + Math.PI / 2);
+          this.peeking = null;
+        }
+      }
       // stove: gas flames, electric coil glow (follows delivered power, so it lags), induction LED
       const knob = state.stove.knob / 10, stv = state.stove;
       if (this.stoveType === 'gas') {
@@ -1426,6 +1475,20 @@
           this.spatula.rotation.set(0, -az + Math.PI / 2, 0);
           this.spatula.rotation.x = 0; // set below, in the blade's own frame
           this.spatula.children[0].rotation.x = this.spatula.children[1].rotation.x = -0.06; // the blade rides tip-down under the crust
+        }
+      }
+      // the finger, while a press test is running: down onto the middle of the patty from the
+      // cook's side of the pan, and off again. Same second and a bit the physics charges for it.
+      if (this.finger) {
+        let pressing = null;
+        for (const q of list) if (q.where === 'pan' && q.pressTestT > 0) { pressing = q; break; }
+        this.finger.visible = !!pressing && stoveOn;
+        if (pressing) {
+          const u = clamp(1 - pressing.pressTestT / (P.TOUCH ? P.TOUCH.dwell : 1.2), 0, 1);
+          const dip = Math.sin(Math.PI * u), az = this.controls.azimuth;
+          const top = this.panFloorY + pressing.h * (1 + 0.28 * pressing.dome);
+          this.finger.position.set(pressing.pos.x, top + 0.038 - 0.036 * dip, pressing.pos.y);
+          this.finger.rotation.set(0, -az, 0);
         }
       }
 

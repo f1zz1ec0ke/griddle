@@ -116,6 +116,58 @@
     N: 9,                    // strips across the bank axis that the bars' own two-zone temperature is solved on
   };
 
+  /**
+   * The cook's own instruments — a finger on the meat, a knife through it, a hand over the fire.
+   *
+   * TOUCH is the finger test. What a finger feels is stiffness, and everything that stiffens meat
+   * is already in the grid. Raw ground beef is a wet paste held together by friction: its
+   * compression modulus is about 8 kPa (published values for raw mince run 5–12 kPa depending on
+   * how hard it was packed), and cold solid fat adds a little to that, which is why a fridge-cold
+   * patty feels firmer than one that has sat out. Then, in order:
+   *   • myosin (52–58 °C) gels and the paste becomes a solid — the single biggest step there is;
+   *   • collagen (60–67 °C) shrinks to a fraction of its length and squeezes the fibres. Over
+   *     hours it would dissolve to gelatin and soften the meat again, but a burger is on the pan
+   *     for five minutes, so within this model collagen only ever toughens;
+   *   • actin (66–73 °C) contracts and the meat goes hard — the well-done step;
+   *   • and drying stiffens all of it: a boiled-dry crust is leather.
+   *      E = E0 · (1 + aF·solid fat + aM·dM + aC·dC + aA·dA + aW·dryness)
+   * per cell: 8 kPa for raw meat, about 60 kPa for dry well-done crust.
+   */
+  const TOUCH = {
+    E0: 8e3, aF: 1.2, aM: 0.8, aC: 1.5, aA: 2.5, aW: 4.0,  // Pa, and the dimensionless multipliers above
+    fingerR: 0.009,   // m — the pad of a finger is about 18 mm across
+    juice: 0.55,      // a fingertip at a few kPa does locally about what a spatula does — the meat right under it gives up half its free juice — but only the meat right under it. Over the footprint (below) that is a tenth of a full press, which is what a cook would say the test costs.
+    dwell: 1.2,       // s — how long the finger is on it: long enough to feel, short enough not to burn
+    span: 8.0,        // E/E0 at which the firmness index reads 1.0: a dry, well-done patty at ~64 kPa. 0 is raw mince.
+  };
+  /**
+   * PEEK: cutting into it to look. A cut across the middle opens 2·D·h of new surface (both cheeks
+   * of the blade) against the 2πR² + πDh the patty already had — for a 10 cm × 18 mm patty that is
+   * about a sixth of its surface, and it is a sixth that is all open fibre ends at the exact plane
+   * the free juice is migrating through. The cheeks do fall back together, so call it a sixth of
+   * the juice the matrix lets go of from then on running out of the cut instead of pooling on a
+   * face and going back into the burger: a couple of percent of the water over a rest.
+   */
+  const PEEK = { drain: 0.15, structure: 0.25 }; // and a quarter of the structure mark: it is not a whole burger any more
+  /**
+   * HAND: the oldest thermometer there is. The palm is held about 8 cm over the metal (just inside
+   * the rim of a pan; at the bars of a grate) and takes radiation from whatever fills its view plus
+   * the convection of the plume rising off it. Time to "move your hand now" is the Stoll second-
+   * degree-burn correlation, t ≈ 121·q^−1.35 with q in kW/m² — the point where one more second
+   * would do damage, which is exactly when a hand comes away. Over a wide-open bed that is under
+   * two seconds; over a 200 °C pan it is nearly half a minute, because a pan is not a fire.
+   */
+  const HAND = {
+    z: 0.08,        // m above the metal
+    bedDrop: 0.08,  // m the bed sits below the bars
+    Tskin: 34,      // °C — skin surface in a warm kitchen
+    emiss: 0.95,    // skin is very nearly a black body in the infrared
+    ash: 0.82,      // the bed radiates from its ash skin, ~0.82 of its own rise over ambient in absolute terms
+    plume: 0.6,     // the plume over a pan reaches the hand at 60 % of the metal's rise over ambient (it has only entrained a third of a pan-width of room air by then)
+    h: 15, hFire: 18, // W/(m²K) onto a hand in a buoyant plume (~1 m/s) and in the faster draught of a fire
+    stoll: 121, exp: 1.35, // t (s) = stoll · (q kW/m²)^−exp
+  };
+
   // Chef temperature bands for the *peak* centre temperature (°C).
   const DONENESS = [
     { id: 'rare',        label: 'Rare',        lo: 49, hi: 52 },
@@ -193,6 +245,8 @@
       faceDown: makeFace('A', Nr), faceUp: makeFace('B', Nr), faceSide: { brown: 0, char: 0 },
       poolB: new Float64Array(Nr), poolT: new Float64Array(Nr), poolBottom: 0, poolTop: 0, fatTop: 0,
       dome: 0, pressT: 0, pressed: false, scrapeT: 0, moved: 0,
+      // what the cook's own senses have cost this patty: presses of a finger, cuts of a knife
+      slits: 0, slitAngle: 0, pressTests: 0, pressTestT: 0, pressTestJuice: 0, lostWaterCut: 0,
       lostWaterEvap: 0, lostWaterDrip: 0, lostFat: 0, lostStuck: 0,
       flips: 0, cookTime: 0, timeDown: 0,
       peakCenter: T0, cheeses: [], cheeseUnder: [],
@@ -282,7 +336,9 @@
       items: [], item: null, // toppings sharing the pan: bun halves, bacon, an egg, onions
       baste: 0,
       events: [], log: [], trace: [], traceEvery: 0.5, lastTrace: -1,
-      diag: { sizzle: 0, spatter: 0, steam: 0, smoke: 0, evapBottom: 0, evapPan: 0, oilBubble: 0, fatDrip: 0, juiceTop: 0, juiceSide: 0, panQ: 0 },
+      // sizzle is the level; boilNoise/hiss/roar/contact are its character, which is what a cook
+      // listening to the pan is actually reading (see the sizzle block at the end of step())
+      diag: { sizzle: 0, spatter: 0, steam: 0, smoke: 0, evapBottom: 0, evapPan: 0, oilBubble: 0, fatDrip: 0, juiceTop: 0, juiceSide: 0, panQ: 0, boilNoise: 0, hiss: 0, roar: 0, contact: 0, lid: false },
       rest: { t: 0 }, result: null,
     };
     return s;
@@ -613,6 +669,199 @@
     logEvent(s, 'Basting: spooning hot butter over the top for ~12 s.', 'action');
   }
 
+  // ---------------------------------------------------------------- the cook's senses
+  /** Compression modulus (Pa) of one cell, from what has denatured in it and how dry it is. */
+  function cellStiffness(p, c) {
+    const wr = p.w[c] / p.w0c[c], dry = wr >= 1 ? 0 : 1 - wr;
+    const solid = p.fs[c] / (p.w[c] + p.fs[c] + p.fl[c] + p.fr[c] + p.p[c] + 1e-12); // fat that has not melted yet is waxy and stiff
+    return TOUCH.E0 * (1 + TOUCH.aF * solid + TOUCH.aM * p.dM[c] + TOUCH.aC * p.dC[c] + TOUCH.aA * p.dA[c] + TOUCH.aW * dry);
+  }
+  /**
+   * What a finger on the middle of the patty feels.
+   *
+   * Through the thickness the layers are springs in series — a finger squashes all of them at once
+   * and each takes the same load — so it is the *compliances* that add, and one soft raw layer in
+   * the middle dominates the feel however hard the crust is. That is the whole reason the press
+   * test works at all: it reports the softest thing in the stack, which is the centre, which is the
+   * thing you actually want to know. Across the patty the columns are springs in parallel and add
+   * as stiffnesses, weighted by the strain field under the fingertip: a Boussinesq-ish Gaussian of
+   * radius (finger + half the thickness), because the load spreads out at roughly 45° as it goes
+   * down. The index that comes back is that modulus on the cook's ladder: 0 raw, 1 well done.
+   */
+  function firmness(p) {
+    const Nr = p.Nr, Nz = p.Nz, dr = p.D / 2 / Nr, spread = TOUCH.fingerR + 0.5 * p.h;
+    let E = 0, wsum = 0;
+    for (let j = 0; j < Nr; j++) {
+      const rc = (j + 0.5) * dr, u = rc / spread, wj = p.aj[j] * Math.exp(-u * u);
+      if (wj < 1e-6) continue;
+      let comp = 0;
+      for (let k = 0; k < Nz; k++) comp += 1 / cellStiffness(p, k * Nr + j);
+      E += (wj * Nz) / comp; wsum += wj;
+    }
+    E /= Math.max(wsum, 1e-12);
+    // the index is that modulus on the cook's own scale: 0 is raw mince, 1 is a well-done patty
+    return { E, index: clamp((E - TOUCH.E0) / (TOUCH.E0 * (TOUCH.span - 1)), 0, 1.3) };
+  }
+  /**
+   * The words a cook puts to that, in the order a hand learns them: raw is the soft heel of your
+   * open palm, well done is the same spot with your fist clenched, and everything else is between.
+   * The thresholds are where a 150 g patty's index actually lands when its centre peaks at the top
+   * of each band.
+   */
+  function firmnessWord(i) {
+    if (i < 0.20) return { word: 'raw', text: 'soft and slack — it takes the print of your finger and keeps it. Raw in the middle.' };
+    if (i < 0.46) return { word: 'soft', text: 'soft, with the beginnings of a spring under it. Rare, if that.' };
+    if (i < 0.63) return { word: 'springy', text: 'springy — it pushes back and comes most of the way home. Medium-rare.' };
+    if (i < 0.82) return { word: 'firm-springy', text: 'firm, but there is still some give in the middle. Medium.' };
+    if (i < 0.925) return { word: 'firm', text: 'firm, barely any give left. Medium-well.' };
+    return { word: 'hard', text: 'hard. It hardly moves under a finger. Well done, and then some.' };
+  }
+  /**
+   * Press it with a finger. Reads the firmness (which is the denaturation profile, felt rather than
+   * measured) and costs what a real press costs: a little juice, and a second and a bit of your
+   * attention with your hand over a hot pan. A fingertip at a few kPa over a couple of square
+   * centimetres does locally about what a spatula does — the meat right under it gives up half its
+   * free juice — but only over the fingertip's own footprint, which is the same weighting the
+   * firmness is read on, and which works out at a tenth of a full press. (It also takes heat out of
+   * the crust the other way — 2.5 cm² of 35 °C skin against 150 °C meat is about 6 W for a second,
+   * worth 0.02 °C to a 150 g patty. Real, and far too small to bother modelling.)
+   */
+  function pressTest(s, patty) {
+    const p = patty || s.patty; if (!p || p.where === 'board' || p.where === 'cut') return null;
+    const f = firmness(p), read = firmnessWord(f.index);
+    const Nr = p.Nr, dr = p.D / 2 / Nr, spread = TOUCH.fingerR + 0.5 * p.h;
+    let out = 0;
+    for (let j = 0; j < Nr; j++) {
+      const rc = (j + 0.5) * dr, u = rc / spread, under = Math.exp(-u * u); // only the meat under the finger is squeezed
+      if (under < 1e-3) continue;
+      for (let k = 0; k < p.Nz; k++) {
+        const c = k * Nr + j;
+        const free = Math.max(0, p.w[c] - waterHolding(p, c) * p.w0c[c]);
+        let m = free + (p.dM[c] > 0.3 ? p.w[c] * 0.10 * p.dM[c] * (0.5 + 0.5 * p.dA[c] + 0.5 * p.dC[c]) : 0);
+        m = Math.min(p.w[c], m * TOUCH.juice * under);
+        p.w[c] -= m; out += m;
+      }
+    }
+    p.lostWaterDrip += out; p.pressTestJuice += out; p.pressTests++;
+    p.pressTestT = TOUCH.dwell;
+    p.dome *= 0.85; // you are pushing down on it: the dome flattens a little and springs most of the way back
+    if (p.where === 'pan') { if (s.grill) s.grill.juiceOnCoals = (s.grill.juiceOnCoals || 0) + out; else s.pan.water += out; }
+    logEvent(s, `Press test on patty ${p.id}: ${read.text}` + (out > 2e-5 ? ` (${(out * 1000).toFixed(2)} g of juice out of it — the price of knowing.)` : ''), 'note');
+    return { index: f.index, E: f.E, word: read.word, reading: read.text, juice: out, seconds: TOUCH.dwell };
+  }
+  /**
+   * What the cut face looks like, off the same numbers the renderer paints it from: myoglobin (dG)
+   * is the pink-to-grey line and myosin (dM) is how opaque and set the meat looks. Read down the
+   * axis, which is where a cook looks — the rim is always further along.
+   */
+  function sliceRead(p) {
+    const Nr = p.Nr, Nz = p.Nz, dz = p.h / Nz;
+    const kc = Math.floor((Nz - 1) / 2), cc = kc * Nr;
+    const g = p.dG[cc], m = p.dM[cc], T = p.T[cc];
+    let colour;
+    if (g < 0.12) colour = m < 0.3 ? 'deep red and translucent, cold in the middle' : 'deep red, and still slack';
+    else if (g < 0.35) colour = 'bright red, wet and glossy';
+    else if (g < 0.6) colour = 'pink right through the middle';
+    else if (g < 0.8) colour = 'rosy — pink going to grey';
+    else if (g < 0.93) colour = 'a thin blush of pink at the very centre';
+    else colour = 'grey-brown from face to face; no pink left anywhere';
+    // the grey band: layers from each face whose myoglobin is more than 70 % gone, i.e. the meat
+    // that has visibly turned. 0.7 is where the pink stops reading as pink on the cut face.
+    let gb = 0; while (gb < Nz && p.dG[gb * Nr] > 0.7) gb++;
+    let gt = 0; while (gt < Nz && p.dG[(Nz - 1 - gt) * Nr] > 0.7) gt++;
+    return { centreG: g, centreM: m, centreT: T, colour, greyBottomMm: gb * dz * 1000, greyTopMm: gt * dz * 1000, layerMm: dz * 1000 };
+  }
+  /**
+   * Cut into it and look. The most honest instrument in the kitchen and the most expensive one:
+   * from here on it is a patty with a slit in it, the cut face bleeds through the rest (see PEEK),
+   * and it goes out on the bun cut. Returns what the cook sees.
+   */
+  function peek(s, patty) {
+    const p = patty || s.patty; if (!p || p.where === 'board' || p.where === 'cut') return null;
+    const v = sliceRead(p);
+    p.slits++;
+    if (p.slits === 1) p.slitAngle = Math.random() * Math.PI * 2;
+    const band = v.greyBottomMm + v.greyTopMm < 0.5 * v.layerMm
+      ? 'no grey band at all yet'
+      : `a grey band ${v.greyBottomMm.toFixed(1)} mm deep on the face that is down and ${v.greyTopMm.toFixed(1)} mm on the other`;
+    logEvent(s, `Cut into patty ${p.id} to look: ${v.colour}, ${band}.` + (p.slits > 1 ? ` That is ${p.slits} cuts in it now.` : ' It will weep out of that cut for the rest of the cook, and it goes out with a slit in it.'), 'note');
+    return { ...v, slits: p.slits, band };
+  }
+  /**
+   * How many seconds you can hold a hand a few centimetres over the metal. Radiation from whatever
+   * fills the hand's view (the pan floor; over a kettle, the bars plus the ash-skinned bed seen
+   * through the gaps between them) plus convection from the plume, and then the Stoll curve for how
+   * long skin takes that. `pos` is where the hand is held — over a banked fire that is the whole
+   * point of the test.
+   */
+  function handTest(s, pos) {
+    const pan = s.pan, Tamb = s.env.Tamb, x = pos ? pos.x : 0, y = pos ? pos.y : 0;
+    const Tsk4 = p4(HAND.Tskin + 273.15), k = HAND.emiss * C.sigma;
+    // view factor from a point to a coaxial disc of radius R at height z: R²/(R²+z²)
+    const vf = (R, z) => (R * R) / (R * R + z * z);
+    let rad = 0, conv = 0, source;
+    if (s.grill) {
+      const bed = bedAt(s, x), Rbed = pan.floorR * 0.88; // the bed is a little smaller than the grate it sits under
+      const Fbars = vf(pan.floorR, HAND.z) * pan.barFrac;
+      const Fbed = vf(Rbed, HAND.z + HAND.bedDrop) * (1 - pan.barFrac) * bed.view;
+      // the coals radiate from their grey ash skin, not from their glowing interior
+      const Tash = Tamb + HAND.ash * (bed.Tfire - Tamb);
+      const Tbar = panTatXY(s, x, y);
+      rad = k * (Fbed * (p4(Tash + 273.15) - Tsk4) + Fbars * (p4(Tbar + 273.15) - Tsk4));
+      conv = HAND.hFire * Math.max(0, bed.Tgas - HAND.Tskin);
+      source = { Tbar, Tfire: bed.Tfire };
+    } else {
+      // at 8 cm most of the view is the metal within a hand's width of the spot; the rest of the
+      // floor fills in the edges
+      const Tlocal = panTatXY(s, x, y), Tsurf = 0.65 * Tlocal + 0.35 * pan.T;
+      rad = k * pan.emiss * vf(pan.floorR, HAND.z) * (p4(Tsurf + 273.15) - Tsk4);
+      conv = HAND.h * Math.max(0, Tamb + HAND.plume * (Tsurf - Tamb) - HAND.Tskin);
+      source = { Tbar: Tlocal, Tfire: 0 };
+    }
+    const q = Math.max(1, rad + conv); // W/m²
+    const seconds = clamp(HAND.stoll * Math.pow(q / 1000, -HAND.exp), 0.4, 60);
+    const word = seconds < 2.5 ? 'searing' : seconds < 4.5 ? 'very hot' : seconds < 6.5 ? 'hot' : seconds < 9 ? 'medium' : seconds < 16 ? 'moderate' : 'low';
+    return { seconds, word, flux: q, radiant: rad, convective: conv, ...source };
+  }
+  /** Hold a hand over it and count, out loud, in the log. */
+  function handTestAt(s, pos) {
+    const h = handTest(s, pos);
+    const where = s.grill ? 'the grate' : 'the pan';
+    const note = h.seconds < 2.5 ? 'you cannot keep it there at all. Anything laid on that is being branded, not cooked.'
+      : h.seconds < 4.5 ? 'a crust in a minute a side, and char in three if you forget it.'
+      : h.seconds < 6.5 ? 'about right under a patty.'
+      : h.seconds < 9 ? 'it will cook and it will brown, but slowly.'
+      : h.seconds < 16 ? 'enough to cook something through; not enough to sear it.'
+      : 'meat laid on that would sweat and go grey before anything browned.';
+    const count = h.seconds >= 59 ? 'You could leave it there' : `${h.seconds < 10 ? h.seconds.toFixed(0) : Math.round(h.seconds)} second${Math.round(h.seconds) === 1 ? '' : 's'} before you have to pull it away`;
+    logEvent(s, `Held a hand over ${where}. ${count}: ${h.word} — ${note}`
+      + (s.grill ? ` (${(h.radiant / 1000).toFixed(1)} kW/m² of that is radiant off the bed.)` : ''), 'note');
+    return h;
+  }
+  /**
+   * The sizzle, in words, for a cook who is listening. Boiling water under the meat is a coarse,
+   * loud, low crackle — millimetre bubbles collapsing by the hundred; once the underside has boiled
+   * dry that stops dead and what is left is fat at 180 °C on hot metal, a quiet, much higher hiss
+   * with the odd pop. Same pan, completely different sound, and it is the single most reliable cue
+   * that the crust has started. Logged on transitions only, with a floor on how often it can speak.
+   */
+  const SOUND_GAP = 25; // s — the ear notices the change at once, but nobody narrates it every ten seconds
+  function soundCue(s) {
+    const d = s.diag, sc = s._snd || (s._snd = { mode: '', t: -99 });
+    const on = s.patties.some((p) => p.where === 'pan');
+    // hysteresis, or a patty that is half dry would flip the description back and forth
+    const mode = !on ? 'off'
+      : d.boilNoise > (sc.mode === 'crackle' ? 0.12 : 0.28) ? 'crackle'
+      : d.hiss > (sc.mode === 'hiss' ? 0.06 : 0.16) ? 'hiss' : 'quiet';
+    if (mode === sc.mode || s.t - sc.t < SOUND_GAP) return;
+    const was = sc.mode; sc.mode = mode; sc.t = s.t;
+    if (mode === 'off' || !was) return;
+    if (mode === 'crackle') logEvent(s, 'The sizzle is loud and rough — water boiling out of the face against the metal. Nothing browns until that stops.', 'note');
+    else if (mode === 'hiss') logEvent(s, 'The sizzle has dropped to a hiss — the underside is dry. It is frying in fat now instead of boiling in juice, and that is where the crust comes from.', 'note');
+    else if (s.pan.Tcenter < 140) logEvent(s, 'Almost no sound off it at all. The metal is not hot enough to boil anything out of the meat, which means it is stewing, not searing.', 'note');
+    else logEvent(s, 'It has gone quiet under there — nothing boiling, nothing frying.', 'note');
+  }
+
   // ---------------------------------------------------------------- physics
   function waterHolding(p, c) {
     // p.whc0 carries the salt and working terms, which are fixed when the patty is formed
@@ -938,13 +1187,20 @@
         if (R - (j + 0.5) * dr < dMin) { dir[c] = 2; flux[c] = free * frr; } else if (down) { dir[c] = 0; flux[c] = free * fz; } else { dir[c] = 1; flux[c] = free * fz; }
       }
     }
+    // a knife cut is a drain: PEEK.drain of everything the matrix lets go of from now on runs out
+    // of the open fibre ends at the cut plane instead of pooling on a face and going back in
+    const cutF = p.slits ? Math.min(0.5, PEEK.drain * p.slits) : 0; // a second cut opens a second drain
+    let cutOut = 0;
     for (let k = 0; k < Nz; k++) for (let j = 0; j < Nr; j++) {
-      const c = k * Nr + j, f = flux[c]; if (f <= 0) continue;
-      w[c] -= f;
+      const c = k * Nr + j, f0 = flux[c]; if (f0 <= 0) continue;
+      w[c] -= f0;
+      let f = f0;
+      if (cutF) { const g = f0 * cutF; cutOut += g; f -= g; }
       if (dir[c] === 2) { if (j === Nr - 1) toSide += f; else w[c + 1] += f; }
       else if (dir[c] === 0) { if (k === 0) poolB[j] += f; else w[c - Nr] += f; }
       else { if (k === Nz - 1) poolT[j] += f; else w[c + Nr] += f; }
     }
+    if (cutOut > 0) { toSide += cutOut; p.lostWaterCut += cutOut; }
     // top pool: beads run off the edge (faster when domed)
     let poolTop = 0, poolBottom = 0;
     const runF = (0.04 + 0.2 * p.dome) * dt;
@@ -1064,6 +1320,7 @@
       p.dome += (domeTarget - p.dome) * Math.min(1, dt / 6);
     }
     if (p.pressT > 0) p.pressT -= dt;
+    if (p.pressTestT > 0) p.pressTestT = Math.max(0, p.pressTestT - dt); // the finger comes off again; the renderer draws it while it is on
 
     p.peakCenter = Math.max(p.peakCenter, centerT(p));
     const res = sc.res;
@@ -1988,6 +2245,7 @@
 
     // ---- patties
     let boilBottomAll = 0, fatDripAll = 0, juiceSideAll = 0, evapTopAll = 0, steamAll = 0, panQ = 0, hcSel = 0, TsSel = 0, smokeChar = 0, fatSideAll = 0;
+    let contactAll = 0, dryDownAll = 0, nOnPan = 0; // how much of the meat is against the metal (a patty up on the blade stops sizzling) and how dry the face against it is
     let anyResting = false;
     for (let pi = 0; pi < s.patties.length; pi++) {
       const p = s.patties[pi];
@@ -2079,6 +2337,9 @@
           pan.oil += (pr.fatDrip + pr.fatSide) * dt;
         }
         boilBottomAll += pr.boilBottom; fatDripAll += pr.fatDrip; fatSideAll += pr.fatSide; juiceSideAll += pr.juiceSide; evapTopAll += pr.evapTop; steamAll += p.steamRate; panQ += pr.qBot;
+        contactAll += (p.scrapeT > 0 ? SCRAPE_LIFT : 1) * (1 - 0.5 * clamp(p.dome, 0, 1));
+        dryDownAll += 1 - clamp(layerMean(p, p.w, 0) / layerMean(p, p.w0c, 0), 0, 1);
+        nOnPan++;
         if (p === s.patty) { hcSel = pr.hc; TsSel = pr.Ts; }
         let cheeseSmoke = 0;
         if (p.cheeses.length || p.cheeseUnder.length) {
@@ -2175,10 +2436,24 @@
     // the diagnostics block is read by the renderer and the HUD every frame; it is filled in
     // place rather than rebuilt, so nothing downstream can hold a stale object
     const dg = s.diag;
+    // The sizzle, split into the two voices it actually has, so the ear can tell them apart the way
+    // a cook does. `boilNoise` is water flashing under the meat: coarse, low, loud, and it stops
+    // dead when the underside dries. `hiss` is what is left — fat frying on hot metal, quiet and
+    // much higher, with pops where a droplet of water in it flashes. `contact` drops when a patty
+    // comes up on the blade, and the sound goes with it. `roar` is the fire drawing air through a
+    // kettle, which a pan does not have at all.
+    dg.contact = nOnPan ? contactAll / nOnPan : 0;
+    const dryDown = nOnPan ? dryDownAll / nOnPan : 0;
+    // 0.25 g/s of steam coming off the contact — a fresh patty on a 200 °C pan — is a full-throated
+    // crackle; the hiss is the fat, and only counts once the face on the metal has boiled dry,
+    // which is exactly the moment the sound changes
+    dg.boilNoise = clamp(boilTotal * 4000, 0, 1.5) * (0.35 + 0.65 * dg.contact);
+    dg.hiss = clamp((oilBubble * 0.7 + (fatDripAll + fatSideAll) * 2.2e4) * dryDown + itemSizzle * 0.3, 0, 1.2) * (0.35 + 0.65 * dg.contact);
+    dg.roar = grill && grill.lit ? clamp(0.12 + 0.88 * (st.knob / 10), 0, 1) * clamp(grill.Tfire / 500, 0, 1.4) * (s.lid ? 0.5 : 1) : 0;
     dg.sizzle = clamp(boilTotal * 300 + oilBubble * 0.15 + evapTopAll * 20 + itemSizzle * 0.5 + (grill ? grill.sizzle : 0), 0, 1.5);
     dg.spatter = spatter; dg.steam = steamAll + evapPan + itemBoil;
     dg.smoke = pan.smokeOil + pan.smokeChar + pan.smokeFond + pan.smokeItems + (pan.flare > 0 ? 1.5 : 0) + (grill ? grill.smoke : 0);
-    dg.flare = grill ? grill.flare : pan.flare; dg.oilDepth = pan.oilDepth; dg.overflow = pan.overflow;
+    dg.flare = grill ? grill.flare : pan.flare; dg.oilDepth = pan.oilDepth; dg.overflow = pan.overflow; dg.lid = s.lid;
     dg.fire = grill ? grill.Tfire : 0;
     dg.evapBottom = boilBottomAll; dg.evapPan = evapPan; dg.oilBubble = oilBubble;
     dg.fatDrip = fatDripAll + fatSideAll; dg.juiceTop = sel ? sel.poolTop : 0; dg.juiceSide = juiceSideAll;
@@ -2192,6 +2467,7 @@
       s.trace.push({ t: s.t, pan: pan.T, panC: pan.Tcenter, panE: pan.Tedge, center: p ? centerT(p) : null, bottom: p ? layerMean(p, p.T, 0) : null, top: p ? layerMean(p, p.T, p.Nz - 1) : null, surf: p ? p.surfT : null, mass: p ? pattyMass(p) : null, where: s.where });
       if (s.trace.length > 20000) s.trace.shift();
     }
+    soundCue(s);
     checkMilestones(s);
   }
 
@@ -2363,6 +2639,9 @@
     if (p.salt === 'mixed') structure -= 0.3;
     if (p.dome > 0.5) structure -= 0.3;
     if (p.lostStuck > 0) structure -= 0.3;
+    // a burger that has been cut into is not a whole burger: it goes out with a slit in it and it
+    // has been weeping out of that slit ever since
+    if (p.slits) structure -= PEEK.structure * Math.min(3, p.slits);
     const structScore = 5 * clamp(structure, 0, 1);
     // the total is the sum of the parts as they are shown, so 50 + 20 + 15 + 10 + 5 always reads 100
     const parts = { doneness: Math.round(doneScore), crust: Math.round(crustScore), juiciness: Math.round(juiceScore), evenness: Math.round(evenScore), structure: Math.round(structScore) };
@@ -2393,6 +2672,9 @@
     if (p.dome > 0.5) notes.push('The patty domed into a meatball: the centre lifted off the pan and browned unevenly. A thumb dimple prevents that.');
     if (p.salt === 'mixed') notes.push('Salt was mixed through the meat early: dissolved myosin cross-linked into a springy, sausage-like bite.');
     if (p.work > 0.8) notes.push('The meat was overworked: dense and tight instead of loose and tender.');
+    // what the cook's own senses cost this patty — the point of them is that they are not free
+    if (p.slits) notes.push(`You cut into it ${p.slits === 1 ? 'once' : p.slits === 2 ? 'twice' : `${p.slits} times`} to look: ${(p.lostWaterCut * 1000).toFixed(1)} g of juice ran out of the cut instead of back into the meat, and it goes out on the bun with a slit through it.`);
+    if (p.pressTests) notes.push(`You pressed it with a finger ${p.pressTests === 1 ? 'once' : p.pressTests === 2 ? 'twice' : `${p.pressTests} times`} to feel how far it had gone — ${(p.pressTestJuice * 1000).toFixed(2)} g of juice. That is what a press test costs, and it is a tenth of what leaning on it with a spatula would have.`);
     const build = buildOf(s, p);
     for (const b of build.items) notes.push(b.note);
     const profile = [], dG = []; for (let k = 0; k < p.Nz; k++) { profile.push(p.T[k * p.Nr]); dG.push(p.dG[k * p.Nr]); }
@@ -2401,6 +2683,7 @@
       parts, build,
       massStart: p.massKg0, massEnd: massNow, waterRetained: wRet, waterEvap: p.lostWaterEvap, waterDrip: p.lostWaterDrip, fatLost: p.lostFat, stuck: p.lostStuck,
       overFrac, notes, cookTime: p.cookTime, restTime: p.restT || 0, flips: p.flips, bunSoak: p.bunSoak || 0, cheeseSlices: p.cheeses.length,
+      peeks: p.slits, cutJuice: p.lostWaterCut, pressTests: p.pressTests, pressJuice: p.pressTestJuice, firmness: firmness(p).index,
       faces: { down: { ...p.faceDown }, up: { ...p.faceUp } },
       profile, dG,
     };
@@ -2440,10 +2723,11 @@
   }
 
   return {
-    C, BLENDS, PANS, FATS, STOVES, GRATE, COAL, BANK, DONENESS, ITEMS,
+    C, BLENDS, PANS, FATS, STOVES, GRATE, COAL, BANK, DONENESS, ITEMS, TOUCH, PEEK, HAND,
     makePatty, createState, step, stepPatty, pattySpots, panTat, panTatXY, selectPatty,
     setKnob, setBank, addFat, placePatty, movePatty, moveItem, scrape, slideTo, coalAt, bedAt, zoneAt, flipPatty, pressPatty, removePatty, addCheese, toggleLid, basteButter, washPan, wipeStove, panDirt, serve,
     makeItem, addItem, selectItem, flipItem, removeItem, stepItem, assignTopping, nearestBurger, toppingsOf, itemState, itemMass, itemT, freeSpot, footprintRings, ringCoverage,
+    firmness, firmnessWord, cellStiffness, pressTest, peek, sliceRead, handTest, handTestAt,
     evaluate, evaluateTicket, buildOf, donenessOf, centerT, cellT, layerMean, gridMean, pattyMass, nodeMass, waterHolding, fmtTime, clamp, lerp, rhoVapSat, logEvent,
   };
 });

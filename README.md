@@ -38,6 +38,9 @@ npm run perf         # how many milliseconds of CPU a simulated second costs
 | `1` `2` `3` `4` | kitchen, overhead, side and close-up presets; `R` resets |
 | `C` | cutaway: slice the patty in half and watch the inside cook |
 | `Space` | lay the patty in, then flip; `F` flip, `P` press |
+| `T` | press test: put a finger on it and feel how far it has gone |
+| `K` | peek: cut into it and look at the colour and the grey band |
+| `H` | hold a hand over the pan or the grate and count the seconds |
 | `Tab`, click a patty or topping, or the chips under the ticket | select what the buttons act on |
 | **Extras** row | put bun halves, bacon, an egg or sliced onions in the pan beside the patties |
 | `F` with a topping selected | turn the bun / rasher / egg — or stir the onions |
@@ -45,7 +48,10 @@ npm run perf         # how many milliseconds of CPU a simulated second costs
 | **Bank coals** (kettle only) | rake the bed to one side: a searing zone over the coals and a gentle one off them |
 
 The **Inspector** button opens a live chart (pan, crust surface, bottom layer, centre, top) and a
-table of everything the model knows. **Hard mode** hides the thermometers.
+table of everything the model knows. **Hard mode** takes the probe and the IR gun away entirely and
+leaves you with what a cook actually has: the **Senses** row — press test, peek, hand over the pan —
+your eyes, and your ears. The buttons are there in normal mode too, because a real cook uses them
+even when the numbers are on the wall, and they cost exactly the same either way.
 
 ## What is actually simulated
 
@@ -113,6 +119,52 @@ burner and it flares. **The pan persists between tickets** with its heat, fat, f
 cheese, torn crust and a carbon layer that builds when residue sits on a hot pan; dirt costs
 contact and crust until you wash it (which also cools a hot pan under the tap). Gas, electric and
 induction each have their own burner model and pan height, and the glass lid fogs with steam.
+
+**The cook's own instruments** are derived from the same grid as everything else, and each costs
+what it costs in a real kitchen.
+
+A **press test** is stiffness. Raw mince is a wet paste at about 8 kPa; myosin gelling at 52–58 °C
+turns it into a solid, collagen shrinking at 60–67 °C squeezes the fibres (over hours it would
+dissolve into gelatin and soften them again, but a burger is on the pan for five minutes, so here it
+only ever toughens), actin at 66–73 °C makes it hard, and drying stiffens everything — a boiled-dry
+crust is leather at 60–80 kPa, eight or nine times raw mince. Through the thickness those layers are springs in series, so it is the
+*compliances* that add and the softest layer dominates what the finger feels: a raw centre still
+feels soft under a set crust, which is the entire reason the test works. Across the patty the columns
+add as stiffnesses, weighted by a Gaussian the width of the fingertip plus half the thickness,
+because the load spreads at about 45° as it goes down. The index runs 0 (raw) to 1 (well done), and
+the words are the ones a hand learns: slack, soft, springy, firm with give, firm, hard. It is not
+free — a fingertip at a few kPa over a couple of square centimetres squeezes about half the free
+juice out of the meat directly under it, which over the footprint is a tenth of what leaning on the
+whole face with a spatula costs — and it is a second and a bit with your hand over a hot pan.
+
+A **peek** is a knife through it. You see the colour at the centre (read off the myoglobin and myosin
+extents down the axis, the same numbers the renderer paints the cut face from) and how many
+millimetres of grey band have come in from each face. The viewport shows you the real cutaway for a
+few seconds at whatever angle the knife went in, and then the slit stays as a line on both faces.
+The cut opens 2·D·h of new surface against the 2πR² + πDh the patty had — about a sixth of it, all
+open fibre ends at the plane the free juice is migrating through — so from then on a sixth of
+everything the matrix lets go of runs out of the cut instead of pooling on a face and going back into
+the burger. That is a couple of percent of the water over a rest, and a quarter of the structure
+mark. A patty that has been cut into cannot score 100.
+
+The **hand test** is the oldest thermometer there is: a palm about 8 cm over the metal, counting.
+The flux at the hand is radiation from whatever fills its view — the pan floor, or over a kettle the
+bars plus the ash-skinned bed seen through the gaps between them, with the view factors done as
+R²/(R²+z²) — plus convection from the plume. How long skin takes that is the Stoll second-degree-burn
+correlation, t ≈ 121·q^−1.35 with q in kW/m², which is the moment one more second would do damage
+and so the moment a hand comes away. Wide-open vents put 25 kW/m² on it and you get 1.6 seconds; over a
+banked bed it is about 2 seconds over the coals and 12 off them; a 200 °C pan gives you 21 seconds,
+because a pan is not a fire and the classic 2/4/6/8-second chart is a grill technique. On a pan the
+number still moves where it matters — 21 s at 200 °C, 10 at 300, 5 at 400.
+
+**Listen to it.** The sizzle has two voices and they mean different things. Water flashing out of the
+face against the metal is a low, loud, rough crackle at 1–2 kHz, hard amplitude-modulated by
+bubbles collapsing; the moment that face has boiled dry it stops, and what is left is fat at 180 °C
+on hot metal — quiet, 5–7 kHz, steady, with sparse bright pops. That transition is the crust
+starting, and it is audible a long time before it is visible. The kettle adds a low roar that follows
+the vents and a whoosh when fat lights on the coals; a lid low-passes everything at 800 Hz and drops
+it 5 dB; and a patty lifted on the blade takes its sizzle with it. The same features are written into
+the log in words, so hard mode has the cue even with the sound off.
 
 **Doneness** is judged on the *peak* centre temperature, including carry-over while resting.
 Scoring: doneness 50, crust 20, juiciness 15, evenness (grey band) 10, structure 5. The grey
@@ -225,6 +277,14 @@ The recipe that does it, found by `node test/player.js` and confirmed through th
 
 Smashing, a screaming-hot pan, a single flip on a thick patty, or cutting it straight off the
 heat will all cost you somewhere, and the results screen says where.
+
+In **hard mode** the same recipe is reachable without a single number. Preheat until a hand over the
+pan gives you six to eight seconds (that is 200–250 °C), lay it in, and wait for the loud crackle to
+drop to a hiss before you flip — that is the underside telling you it has dried and browned. Press
+it: soft with a spring is rare, springy is medium-rare, firm with a little give is medium. Pull it
+one step *under* the order, because carry-over is still coming, and rest it. Peeking will tell you
+the truth and cost you a point of structure and a couple of percent of the juice, so peek on the one
+you are least sure about, not on all three. The results screen counts the cuts and the presses.
 
 Toppings are scored separately and can only cost you the ticket, never the patty. If you put them
 in: the buns want about a minute face-down on 200 °C metal (watch the browning index in the

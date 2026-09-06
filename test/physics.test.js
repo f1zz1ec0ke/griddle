@@ -845,3 +845,157 @@ test('two-zone technique: sear over the coals, finish off them — medium-rare w
   assert.ok(two.t > stay.t + 30, `and take longer to get there: ${two.t.toFixed(0)} vs ${stay.t.toFixed(0)} s`);
   assert.ok(two.r.total > stay.r.total + 5, `which is the whole point: ${two.r.total} vs ${stay.r.total}`);
 });
+
+// ---------------------------------------------------------------- the cook's senses
+/** Cook a standard patty to a pull temperature the way the README says to, and rest it. */
+function toPull(pull, over) {
+  const s = P.createState({}); preheat(s, 200); P.addFat(s, 'canola', 8);
+  const p = std({ thicknessMm: 18, ...over }); P.placePatty(s, p);
+  let since = 0, g = 0;
+  while (pull > 0 && P.centerT(p) < pull && g++ < 60000) {
+    hold(s, 200); P.step(s, DT); since += DT;
+    if (since >= 45 && !p.faceDown.stuck) { P.flipPatty(s); since = 0; }
+  }
+  return { s, p };
+}
+
+test('the press test: firmness rises monotonically with the peak centre temperature, raw → rare → medium → well', () => {
+  const out = [];
+  for (const pull of [0, 41, 47, 56, 61, 68]) {
+    const { s, p } = toPull(pull);
+    P.removePatty(s, p); cookFor(s, 150);
+    const r = P.pressTest(s, p);
+    out.push({ pull, peak: p.peakCenter, idx: r.index, kPa: r.E / 1000, word: r.word });
+  }
+  for (const o of out) console.log(`   pull ${o.pull}: peak ${o.peak.toFixed(1)} °C → ${o.kPa.toFixed(1)} kPa, index ${o.idx.toFixed(3)} (${o.word})`);
+  for (let i = 1; i < out.length; i++) {
+    assert.ok(out[i].peak > out[i - 1].peak, `the cooks must be in order: ${out[i].peak} after ${out[i - 1].peak}`);
+    assert.ok(out[i].idx > out[i - 1].idx + 0.01, `firmness must rise with the peak centre: ${out[i - 1].idx.toFixed(3)} → ${out[i].idx.toFixed(3)}`);
+  }
+  // and the words a cook would use land on the doneness they mean
+  assert.equal(out[0].word, 'raw');
+  assert.equal(out[2].word, 'springy');   // pulled at 47 → medium-rare
+  assert.equal(out[5].word, 'hard');      // pulled at 68 → well done
+  assert.ok(out[0].kPa > 8 && out[0].kPa < 14, `raw mince is 8–14 kPa: ${out[0].kPa}`);
+  assert.ok(out[5].kPa > 45 && out[5].kPa < 80, `a well-done patty is a few tens of kPa: ${out[5].kPa}`);
+});
+
+test('a press test costs about a tenth of the juice a spatula press does', () => {
+  const cost = (how) => {
+    const { s, p } = toPull(47);
+    const before = P.pattyMass(p);
+    if (how === 'finger') P.pressTest(s, p); else P.pressPatty(s, false, p);
+    return before - P.pattyMass(p);
+  };
+  const finger = cost('finger'), spatula = cost('spatula');
+  console.log(`   finger ${(finger * 1000).toFixed(2)} g vs spatula ${(spatula * 1000).toFixed(2)} g (${((finger / spatula) * 100).toFixed(0)} %)`);
+  assert.ok(finger > 0, 'a press test is not free');
+  assert.ok(finger < spatula, 'and it must cost less than leaning on it with a spatula');
+  assert.ok(finger / spatula < 0.2, `about a tenth of it, not most of it: ${(finger / spatula).toFixed(3)}`);
+  // it also flattens the dome a little, the way pushing on something does
+  const { s, p } = toPull(47, { dimple: false });
+  const dome = p.dome; P.pressTest(s, p);
+  assert.ok(p.dome < dome, 'pushing down on it flattens the dome a little');
+});
+
+test('a peek records a slit, reads the colour and the grey band, and weeps during the rest', () => {
+  const { s, p } = toPull(47);
+  const v = P.peek(s, p);
+  console.log(`   ${v.colour} · grey band ${v.greyBottomMm.toFixed(1)} / ${v.greyTopMm.toFixed(1)} mm`);
+  assert.equal(p.slits, 1);
+  assert.ok(v.greyBottomMm > 0.5 && v.greyBottomMm < p.h * 1000 * 0.5, `a grey band that is neither nothing nor the whole patty: ${v.greyBottomMm} mm of ${p.h * 1000} mm`);
+  assert.ok(/red|pink/.test(v.colour), `a medium-rare centre is not grey: ${v.colour}`);
+  assert.ok(s.events.some((e) => e.kind === 'note' && /Cut into patty/.test(e.text)), 'and it says so in the log');
+  const cut0 = p.lostWaterCut;
+  P.removePatty(s, p); cookFor(s, 150);
+  const lost = p.lostWaterCut - cut0;
+  let w0 = 0; for (const v2 of p.w0c) w0 += v2;
+  console.log(`   ${(p.lostWaterCut * 1000).toFixed(2)} g out of the cut (${((p.lostWaterCut / w0) * 100).toFixed(1)} % of the water), ${(lost * 1000).toFixed(2)} g of it during the rest`);
+  assert.ok(lost > 0, 'it keeps weeping out of the cut while it rests');
+  assert.ok(p.lostWaterCut / w0 > 0.005 && p.lostWaterCut / w0 < 0.06, `a few percent of the water, not a trickle and not a flood: ${(p.lostWaterCut / w0 * 100).toFixed(1)} %`);
+  // a second cut opens a second drain
+  const { s: s2, p: p2 } = toPull(47);
+  P.peek(s2, p2); P.peek(s2, p2);
+  assert.equal(p2.slits, 2);
+  P.removePatty(s2, p2); cookFor(s2, 150);
+  assert.ok(p2.lostWaterCut > p.lostWaterCut, 'twice cut, twice drained');
+});
+
+test('a peeked patty cannot score 100: it was cut', () => {
+  const whole = recipe('medium-rare', 18, 47);
+  assert.equal(whole.total, 100, 'the README recipe still scores 100 when nobody cuts into it');
+  const s = P.createState({}); P.setKnob(s, 8); while (s.pan.T < 200) P.step(s, DT);
+  P.addFat(s, 'canola', 8);
+  const p = std({ thicknessMm: 18 }); P.placePatty(s, p);
+  let since = 0, g = 0, cut = false;
+  while (P.centerT(p) < 47 && g++ < 60000) {
+    hold(s, 200); P.step(s, DT); since += DT;
+    if (since >= 45 && !p.faceDown.stuck) { P.flipPatty(s); since = 0; }
+    if (!cut && P.centerT(p) > 42) { P.peek(s, p); cut = true; }
+  }
+  P.removePatty(s, p); cookFor(s, 150);
+  const r = P.evaluate(s, 'medium-rare', p);
+  console.log(`   cut into it once: ${r.total}/100 ${JSON.stringify(r.parts)}`);
+  assert.ok(cut && r.peeks === 1);
+  assert.ok(r.total < 100, `a burger with a slit in it is not a 100: ${r.total}`);
+  assert.ok(r.parts.structure < 5, 'and it is the structure mark that pays for it');
+  assert.ok(r.notes.some((n) => /cut into it once/.test(n)), 'the results say so');
+});
+
+test('the hand test: seconds fall as the pan heats, and a wide-open coal bed gives you two', () => {
+  const s = P.createState({});
+  const rows = [];
+  for (const T of [150, 200, 250, 300, 350]) { preheat(s, T); rows.push({ T: s.pan.T, ...P.handTest(s) }); }
+  for (const r of rows) console.log(`   pan ${r.T.toFixed(0)} °C → ${r.seconds.toFixed(1)} s (${r.word}), ${(r.flux / 1000).toFixed(1)} kW/m²`);
+  for (let i = 1; i < rows.length; i++) assert.ok(rows[i].seconds < rows[i - 1].seconds - 0.5, `a hotter pan must give you less time: ${rows[i - 1].seconds} → ${rows[i].seconds}`);
+  assert.ok(rows[0].seconds > 12, `a 150 °C pan is not a fire — you can hold a hand over it: ${rows[0].seconds.toFixed(1)} s`);
+  // wide-open coals: the classic two seconds
+  const g = litGrill(10, 700); cookFor(g, 300);
+  const h = P.handTest(g);
+  console.log(`   coal bed ${g.grill.Tfire.toFixed(0)} °C, grate ${g.pan.T.toFixed(0)} °C → ${h.seconds.toFixed(1)} s (${h.word}), ${(h.flux / 1000).toFixed(1)} kW/m², ${(h.radiant / 1000).toFixed(1)} of it radiant`);
+  assert.ok(h.seconds <= 2, `two seconds over a wide-open bed: ${h.seconds.toFixed(1)}`);
+  assert.ok(h.radiant > h.convective, 'and most of it is radiant, which is what a fire does that a pan cannot');
+  // banked: the whole point of a two-zone fire is that your hand can tell them apart
+  const b = litGrill(8, 600); P.setKnob(b, 7); cookFor(b, 240); P.setBank(b, 1); cookFor(b, 600);
+  const R = b.pan.floorR;
+  const hot = P.handTest(b, { x: 0.66 * R, y: 0 }), cool = P.handTest(b, { x: -0.66 * R, y: 0 });
+  console.log(`   banked: ${hot.seconds.toFixed(1)} s over the coals, ${cool.seconds.toFixed(1)} s off them`);
+  assert.ok(cool.seconds > hot.seconds * 3, `the two zones must be obvious to a hand: ${hot.seconds.toFixed(1)} vs ${cool.seconds.toFixed(1)} s`);
+});
+
+test('the sizzle is a diagnostic: a wet underside crackles, a dry one hisses, and the log says which', () => {
+  const s = P.createState({}); preheat(s, 200); P.addFat(s, 'canola', 8);
+  const p = std({ thicknessMm: 18 }); P.placePatty(s, p);
+  let wetBoil = 0, wetHiss = 0, dryBoil = 0, dryHiss = 0, g = 0;
+  while (p.cookTime < 200 && g++ < 60000) {
+    hold(s, 200); P.step(s, DT);
+    const wet = P.layerMean(p, p.w, 0) / P.layerMean(p, p.w0c, 0);
+    if (p.cookTime > 2 && wet > 0.5) { wetBoil = Math.max(wetBoil, s.diag.boilNoise); wetHiss = Math.max(wetHiss, s.diag.hiss); }
+    if (wet < 0.05) { dryBoil = Math.max(dryBoil, s.diag.boilNoise); dryHiss = Math.max(dryHiss, s.diag.hiss); }
+  }
+  console.log(`   wet: boil ${wetBoil.toFixed(2)} / hiss ${wetHiss.toFixed(2)} · dry: boil ${dryBoil.toFixed(2)} / hiss ${dryHiss.toFixed(2)}`);
+  assert.ok(wetBoil > 0.3, `a wet underside on a 200 °C pan is a loud crackle: ${wetBoil.toFixed(2)}`);
+  assert.ok(wetHiss < wetBoil, 'and it is louder than the frying noise while it lasts');
+  assert.ok(dryHiss > 0.3 && dryHiss > wetHiss * 2, `a dry crust hisses instead: ${dryHiss.toFixed(2)} against ${wetHiss.toFixed(2)}`);
+  assert.ok(dryBoil < wetBoil * 0.5, `and the crackle goes with the water: ${wetBoil.toFixed(2)} → ${dryBoil.toFixed(2)}`);
+  const notes = s.events.filter((e) => e.kind === 'note').map((e) => e.text);
+  assert.ok(notes.some((t) => /loud and rough/.test(t)), 'the log calls the crackle');
+  assert.ok(notes.some((t) => /dropped to a hiss/.test(t)), 'and the log calls the change to a hiss, which is the cue hard mode needs');
+  // a patty up on the blade is not touching the metal, and the sound goes with it
+  const before = s.diag.boilNoise + s.diag.hiss;
+  P.scrape(s, p); P.step(s, DT);
+  assert.ok(s.diag.contact < 0.7, `on the blade, most of the face is off the metal: ${s.diag.contact.toFixed(2)}`);
+  assert.ok(s.diag.boilNoise + s.diag.hiss < before, 'so the sizzle drops when it lifts');
+});
+
+test('the grill has a roar a pan does not, and the lid is a low-pass filter on all of it', () => {
+  const g = litGrill(9, 650);
+  assert.ok(g.diag.roar > 0.5, `vents wide open, the fire draws hard: ${g.diag.roar.toFixed(2)}`);
+  P.setKnob(g, 2); cookFor(g, 300);
+  assert.ok(g.diag.roar < 0.4, `and quietens right down when they are shut: ${g.diag.roar.toFixed(2)}`);
+  const open = g.diag.roar;
+  P.toggleLid(g); cookFor(g, 30);
+  assert.ok(g.diag.lid === true && g.diag.roar < open, 'the lid throttles the fire and muffles it');
+  const pan = P.createState({}); preheat(pan, 200);
+  assert.equal(pan.diag.roar, 0, 'a pan on a burner has no draught through it at all');
+});
