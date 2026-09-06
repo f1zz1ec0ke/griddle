@@ -12,6 +12,7 @@
   const mix3 = (a, b, t) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
   const rgb = (c) => `rgb(${c[0] | 0},${c[1] | 0},${c[2] | 0})`;
   const rand = (a, b) => a + Math.random() * (b - a);
+  let tintedId = 0; // identifies a mask canvas in the tinted-mask cache
 
   // ------------------------------------------------------------ colour model
   const COL = {
@@ -340,11 +341,15 @@
       c.globalCompositeOperation = 'source-over';
       const fatLeft = (k, j) => { const i = k * Nr + j; return clamp((p.fs[i] + p.fl[i]) / (p.fat0c[i] + 1e-12), 0, 1); };
       const fatLeftLayer = (k) => { let f = 0; for (let j = 0; j < Nr; j++) f += fatLeft(k, j) * p.aj[j]; return f; };
+      // Lay a blob mask over one region of the atlas in a fixed colour. The colours are constants
+      // (fat, melted fat, crust speckle, char, torn meat) and only the opacity follows the state,
+      // so each mask is coloured once and kept (vp.tinted) and a tint is then a single blit of the
+      // region. Nine of these run per repaint, and building a full-atlas colour layer for every
+      // one of them was the most expensive thing the renderer did.
       const tintMask = (mask, colour, alpha, rg) => {
         if (alpha <= 0.002) return;
-        const off = vp._off || (vp._off = document.createElement('canvas')); off.width = W; off.height = H; const oc = off.getContext('2d');
-        oc.clearRect(0, 0, W, H); oc.drawImage(mask, 0, 0, W, H); oc.globalCompositeOperation = 'source-in'; oc.fillStyle = rgb(colour); oc.fillRect(0, 0, W, H); oc.globalCompositeOperation = 'source-over';
-        c.save(); c.beginPath(); c.rect(rg.x0, rg.y0, rg.x1 - rg.x0, rg.y1 - rg.y0); c.clip(); c.globalAlpha = alpha; c.drawImage(off, 0, 0); c.restore();
+        const rw = rg.x1 - rg.x0, rh = rg.y1 - rg.y0;
+        c.globalAlpha = alpha; c.drawImage(vp.tinted(mask, colour, W, H), rg.x0, rg.y0, rw, rh, rg.x0, rg.y0, rw, rh); c.globalAlpha = 1;
       };
       const topC = (Nz - 1) * Nr;
       if (rawTop) tintMask(vp.marble, p.T[topC] > 40 ? COL.fatMelt : COL.fat, 0.9 * fatLeftLayer(Nz - 1) * p.fatFrac * 3, bt);
@@ -393,9 +398,8 @@
           const y1 = CH - (k / Nz) * CH, y0 = CH - ((k + 1) / Nz) * CH;
           const fl = fatLeftLayer(k); const melted = p.T[k * Nr] > 42;
           if (fl > 0.02) {
-            const off = vp._off2 || (vp._off2 = document.createElement('canvas')); off.width = CW; off.height = CH; const oc = off.getContext('2d');
-            oc.clearRect(0, 0, CW, CH); oc.drawImage(vp.marbleCut, 0, 0, CW, CH); oc.globalCompositeOperation = 'source-in'; oc.fillStyle = rgb(melted ? COL.fatMelt : COL.fat); oc.fillRect(0, 0, CW, CH); oc.globalCompositeOperation = 'source-over';
-            cc.save(); cc.beginPath(); cc.rect(0, y0, CW, y1 - y0); cc.clip(); cc.globalAlpha = 0.9 * fl * p.fatFrac * 3; cc.drawImage(off, 0, 0); cc.restore();
+            const marb = vp.tinted(vp.marbleCut, melted ? COL.fatMelt : COL.fat, CW, CH);
+            cc.globalAlpha = 0.9 * fl * p.fatFrac * 3; cc.drawImage(marb, 0, y0, CW, y1 - y0, 0, y0, CW, y1 - y0); cc.globalAlpha = 1;
           }
         }
         // crust bands, ring by ring, and the browned edge
@@ -413,6 +417,43 @@
         this.cutTex.needsUpdate = true;
       }
     }
+    /**
+     * Everything the canvas textures are painted from, quantised to the smallest step that could
+     * show up on screen: a hundredth of a browning unit (the crust ramp has eight colour stops
+     * across seven units), a fifth of a degree, half a percent of moisture, a twentieth of a
+     * millimetre. Sampled at both faces, both rings and six depths, so any change big enough to
+     * move a pixel of the caps, the side band or the cut face moves one of these numbers.
+     */
+    texSignature(out) {
+      const p = this.p, Nz = p.Nz, Nr = p.Nr, q = (v, step) => Math.round(v / step);
+      let i = 0;
+      for (const f of [p.faceDown, p.faceUp]) {
+        out[i++] = q(f.brown, 0.01); out[i++] = q(f.char, 0.004); out[i++] = q(f.torn, 0.01); out[i++] = q(f.marks || 0, 0.01);
+        out[i++] = q(f.brownR[0], 0.01); out[i++] = q(f.brownR[Nr >> 1], 0.01); out[i++] = q(f.brownR[Nr - 1], 0.01); out[i++] = q(f.charR[Nr - 1], 0.004);
+      }
+      out[i++] = q(p.faceSide.brown, 0.01); out[i++] = q(p.faceSide.char, 0.004);
+      out[i++] = q(p.dome, 0.01); out[i++] = q(p.D, 5e-5); out[i++] = q(p.h, 5e-5);
+      out[i++] = q(p.poolTop, 2e-6); out[i++] = q(p.fatTop, 2e-6); out[i++] = q(p.cheeses.length, 1);
+      for (let n = 0; n < 6; n++) {
+        const k = Math.min(Nz - 1, Math.round((n * (Nz - 1)) / 5));
+        for (const j of [0, Nr - 1]) {
+          const c = k * Nr + j;
+          out[i++] = q(p.T[c], 0.2); out[i++] = q(p.dG[c], 0.004); out[i++] = q(p.dM[c], 0.004);
+          out[i++] = q(p.w[c] / p.w0c[c], 0.004); out[i++] = q((p.fs[c] + p.fl[c]) / (p.fat0c[c] + 1e-12), 0.01);
+        }
+      }
+      return i;
+    }
+    /** True when anything the textures are painted from has moved a visible amount. */
+    texDirty() {
+      const cur = this._sigA || (this._sigA = new Float64Array(128)); // 84 numbers today, room to add more
+      const n = this._sigN = this.texSignature(cur), prev = this._sigB;
+      if (!prev) return true;
+      for (let i = 0; i < n; i++) if (cur[i] !== prev[i]) return true;
+      return false;
+    }
+    /** Remember what the atlas was last painted from (only after it really was repainted). */
+    texCommit() { const cur = this._sigA; this._sigB = this._sigB || new Float64Array(cur.length); this._sigB.set(cur); }
     /** Per-frame: position, geometry, textures, cheese, buns. */
     update(state, dt, where, position, mode) {
       const p = this.p, g = this.group;
@@ -426,7 +467,10 @@
         if (this.bunTop) this.bunTop.position.y = p.h * (1 + 0.28 * p.dome) + p.cheeses.length * 0.0015 + 0.001;
       }
       this.rebuildGeometry(false);
-      if (this.texClock > 0.1 || this.forceTex) { this.texClock = 0; this.forceTex = false; this.paintTextures(); }
+      // Repaint at most ten times a second, and only when the meat actually looks different:
+      // resting, plated or paused, nothing moves and the atlas is left alone entirely.
+      if (this.forceTex) { this.texClock = 0; this.forceTex = false; this.texDirty(); this.texCommit(); this.paintTextures(); }
+      else if (this.texClock > 0.1 && this.texDirty() && this.vp.claimTexBudget()) { this.texClock = 0; this.texCommit(); this.paintTextures(); }
       this.updateCheese();
     }
     updateCheese() {
@@ -498,7 +542,7 @@
       this.scene = new T.Scene(); this.scene.background = new T.Color(0x1a1714);
       this.scene.fog = new T.Fog(0x1a1714, 1.2, 3.5);
       this.camera = new T.PerspectiveCamera(42, 1, 0.005, 20);
-      this.clock = 0; this.texClock = 0;
+      this.clock = 0; this.texBudget = 0;
       this.mode = 'board'; // 'board' | 'stove'
       this.cutaway = false;
       this._buildLights(); this._buildKitchen(); this._buildStove(); this._buildBoard(); this._buildParticles(); this._buildProbe();
@@ -761,6 +805,23 @@
       this.beads = new Droplets(this.scene, 200, 0.0017, { color: 0xc8626a, roughness: 0.05, clearcoat: 1, transparent: true, opacity: 0.85 });
       this.drips = new Droplets(this.scene, 120, 0.0013, { color: 0xf0c060, roughness: 0.05, clearcoat: 1, transparent: true, opacity: 0.9 });
     }
+    /**
+     * A blob mask filled with one flat colour at one size, built once and kept. The masks never
+     * change and the colours are constants, so every repaint after the first is a plain blit.
+     */
+    tinted(mask, colour, w, h) {
+      const cache = this._tinted || (this._tinted = new Map());
+      const key = `${mask.__id || (mask.__id = ++tintedId)}|${colour[0]},${colour[1]},${colour[2]}|${w}x${h}`;
+      let cv = cache.get(key);
+      if (!cv) {
+        cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+        const cx = cv.getContext('2d');
+        cx.drawImage(mask, 0, 0, w, h);
+        cx.globalCompositeOperation = 'source-in'; cx.fillStyle = rgb(colour); cx.fillRect(0, 0, w, h);
+        cache.set(key, cv);
+      }
+      return cv;
+    }
     _buildTextures() {
       this.noise = makeNoise(512, 5, true);
       this.noiseFine = makeNoise(512, 6, false);
@@ -802,8 +863,14 @@
       this.scene.background.setHex(mode === 'stove' ? 0x1a1714 : 0x2a2622); this.scene.fog.color.copy(this.scene.background);
       this.controls.reset(mode);
     }
+    /**
+     * One patty's atlas may be repainted per frame. Three burgers on a ticket would otherwise all
+     * come due on the same frame and paint three megapixel canvases back to back; staggered, each
+     * still gets its ten repaints a second and no single frame carries more than one.
+     */
+    claimTexBudget() { if (this.texBudget <= 0) return false; this.texBudget--; return true; }
     update(state, dt) {
-      this.clock += dt; this.texClock += dt;
+      this.clock += dt; this.texBudget = 1;
       const pan = state.pan, p = state.patty;
       // stove: gas flames, electric coil glow (follows delivered power, so it lags), induction LED
       const knob = state.stove.knob / 10, stv = state.stove;
@@ -916,7 +983,13 @@
       }
       this.forceTex = false;
 
-      // ---- particles: sizzle, steam, smoke, spatter, beads and drips around every patty on the pan
+      this._updateParticles(state, dt, list, stoveOn);
+
+      this.controls.update(dt);
+      this.renderer.render(this.scene, this.camera);
+    }
+    /** Sizzle, steam, smoke, spatter, juice beads and fat drips around every patty on the pan. */
+    _updateParticles(state, dt, list, stoveOn) {
       const d = state.diag;
       const onPan = list.filter((q) => q.where === 'pan');
       const gy = this.panFloorY, oilDepth = this.stoveType === 'charcoal' ? 0 : (state.pan.oilDepth || 0);
@@ -960,15 +1033,14 @@
       while (this.drips.acc >= 1) { this.drips.acc -= 1; const q = pick(); const a = Math.random() * Math.PI * 2; this.drips.spawn({ q, x: q.pos.x + Math.cos(a) * (q.D / 2) * 1.01, y: gy + q.h * rand(0.3, 0.9), z: q.pos.y + Math.sin(a) * (q.D / 2) * 1.01, a, age: 0, s: rand(0.6, 1.2), sy: 1.8 }); }
       const dripFloor = this.stoveType === 'charcoal' ? this.coalY + 0.012 : gy + 0.001;
       this.drips.update(dt, (b, dt) => { const q = b.q; if (q.where !== 'pan') return false; const free = b.y < gy - 0.002; b.vy = free ? (b.vy || 0) + 9.81 * dt : 0; b.y -= (free ? b.vy : 0.008) * dt; if (!free) { b.x = q.pos.x + Math.cos(b.a) * (q.D / 2) * 1.02; b.z = q.pos.y + Math.sin(b.a) * (q.D / 2) * 1.02; } b.age += dt; return b.y > dripFloor && b.age < 6; });
-
-      this.controls.update(dt);
-      this.renderer.render(this.scene, this.camera);
     }
     _paintDirt(pan, dt) {
       this.dirtClock += dt;
       const n = (v, u) => Math.min(this.dirtSpots.length, Math.round(v / u));
-      const counts = [n(pan.fond, 0.00002), n(pan.fondBurnt, 0.000015), n(pan.cheeseBits || 0, 0.00015), n(pan.meatBits || 0, 0.0001), clamp((pan.carbon || 0) / 0.004, 0, 1)];
-      const sig = counts.map((c) => c.toFixed(2)).join('|') + (pan.T > 180 ? 'h' : 'c');
+      // the first four are blob counts, the fifth the depth of the carbon film; the signature is
+      // built without allocating (this runs every frame, the repaint below almost never does)
+      const counts = [n(pan.fond, 0.00002), n(pan.fondBurnt, 0.000015), n(pan.cheeseBits || 0, 0.00015), n(pan.meatBits || 0, 0.0001), Math.round(clamp((pan.carbon || 0) / 0.004, 0, 1) * 100) / 100];
+      const sig = counts[0] + '|' + counts[1] + '|' + counts[2] + '|' + counts[3] + '|' + counts[4] + (pan.T > 180 ? 'h' : 'c');
       const any = counts[0] + counts[1] + counts[2] + counts[3] > 0 || counts[4] > 0.01;
       this.fond.visible = any; this.fond.scale.set(this.panR, this.panR, 1);
       if (!any || sig === this.dirtSig || this.dirtClock < 0.5) return;
@@ -1091,5 +1163,5 @@
     }
   }
 
-  root.BurgerRender = { Viewport, nodeColour, faceColour, COL };
+  root.BurgerRender = { Viewport, PattyView, nodeColour, faceColour, COL };
 })(window);

@@ -5,7 +5,8 @@ well done — you form each patty by hand, and you cook them together in a real 
 burner, so that they all land on the plate hot at the same time. Nothing in the viewport is animated on a timer:
 the colour of every layer, the juice sweating out of the top, the fat pooling around the patty,
 the sizzle, the steam, the spatter, the smoke and the crust are all read off a heat- and
-mass-transfer model that runs at 40 Hz.
+mass-transfer model that runs at 20 Hz, and at up to eight times real speed when you are waiting
+for a pan to come up to temperature.
 
 ## Run it
 
@@ -21,6 +22,7 @@ Chrome blocks texture canvases on `file://`, so use a server.)
 ```
 npm test             # physics regression tests (node --test)
 npm run calibrate    # prints time-series for a dozen cooking scenarios
+npm run perf         # how many milliseconds of CPU a simulated second costs
 ```
 
 ## Controls
@@ -115,6 +117,16 @@ the dome's radiation cook and brown the top face while the coals calm down. Gril
 judged with the grill in mind (more juice is lost through the grate, the edge cooks from the
 side), and the bars' marks count as crust.
 
+**Speed and the timestep.** The model steps at 0.05 s of simulated time (20 Hz). That is a long
+way inside the stability limit of the explicit conduction — 0.6 mm layers of meat allow about
+0.6 s, twelve rings of cast iron about 1.7 s — and the patty automatically sub-cycles its
+conduction if you smash it thin enough to need it. Stepping at 0.025 s instead moves the peak
+centre temperature by less than 0.2 °C and the cook times by under two seconds, which is why the
+regression tests still run at 0.025 s: the constants were calibrated there. One simulated second
+of one patty in a pan costs about 2.7 ms of CPU at 0.025 s and 1.4 ms at the game's 0.05 s, so
+three burgers at 8× speed take under half a millisecond of physics per frame; `node test/perf.js`
+prints the numbers for a pan, a crowded pan, the charcoal grill and a full five-minute cook.
+
 **Tickets with several burgers** share the pan. Each patty is formed separately (a well-done
 wants a thinner patty than a rare), laid in at its own spot, flipped, pressed, cheesed and pulled
 on its own, and each is scored against its own order. The ticket score is the mean, less a
@@ -159,4 +171,5 @@ js/game.js         phases, UI, loop
 js/vendor/three.min.js   r128
 test/physics.test.js     regression tests
 test/calibrate.js        scenario runner used to tune the constants
+test/perf.js             benchmark: milliseconds of CPU per simulated second
 ```

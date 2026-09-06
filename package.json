@@ -6,7 +6,8 @@
   "scripts": {
     "start": "python3 -m http.server 8000",
     "test": "node --test test/physics.test.js",
-    "calibrate": "node test/calibrate.js"
+    "calibrate": "node test/calibrate.js",
+    "perf": "node test/perf.js"
   },
   "license": "MIT"
 }
