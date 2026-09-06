@@ -21,7 +21,7 @@ function run(name, cfg) {
     while (s.t < until) {
       if (hold) P.setKnob(s, P.clamp(s.stove.knob + (hold - s.pan.T) * 0.02, 0, 10));
       P.step(s, DT);
-      if (Math.round(s.t / DT) % Math.round(30 / DT) === 0) marks.push(`${P.fmtTime(p.cookTime)} pan=${s.pan.T.toFixed(0)} Ts=${p.surfT.toFixed(0)} T0=${p.T[0].toFixed(0)} c=${P.centerT(p).toFixed(1)} top=${p.T[p.N-1].toFixed(0)} brown=${p.faceDown.brown.toFixed(2)} char=${p.faceDown.char.toFixed(2)} w0=${(p.w[0]/p.w0).toFixed(2)} poolTop=${(p.poolTop*1e3).toFixed(2)}g oil=${(s.pan.oil*1e3).toFixed(1)}g siz=${s.diag.sizzle.toFixed(2)} sp=${s.diag.spatter.toFixed(1)} smoke=${s.diag.smoke.toFixed(2)} dome=${p.dome.toFixed(2)} hc=${(s.diag.hc||0).toFixed(0)}`);
+      if (Math.round(s.t / DT) % Math.round(30 / DT) === 0) marks.push(`${P.fmtTime(p.cookTime)} pan=${s.pan.T.toFixed(0)} Ts=${p.surfT.toFixed(0)} T0=${p.T[0].toFixed(0)} c=${P.centerT(p).toFixed(1)} top=${P.cellT(p, p.Nz - 1, 0).toFixed(0)} edge=${P.cellT(p, Math.floor(p.Nz / 2), p.Nr - 1).toFixed(0)} brown=${p.faceDown.brown.toFixed(2)} char=${p.faceDown.char.toFixed(2)} w0=${(p.w[0]/p.w0).toFixed(2)} poolTop=${(p.poolTop*1e3).toFixed(2)}g oil=${(s.pan.oil*1e3).toFixed(1)}g siz=${s.diag.sizzle.toFixed(2)} sp=${s.diag.spatter.toFixed(1)} smoke=${s.diag.smoke.toFixed(2)} dome=${p.dome.toFixed(2)} hc=${(s.diag.hc||0).toFixed(0)}`);
     }
     if (k < sides.length - 1) { marks.push('   flip: profile ' + p.T.map(v=>v.toFixed(0)).join(' ')); P.flipPatty(s); }
   }
@@ -34,7 +34,8 @@ function run(name, cfg) {
   console.log(`  faces: down brown=${p.faceDown.brown.toFixed(2)} char=${p.faceDown.char.toFixed(2)} torn=${p.faceDown.torn}; up brown=${p.faceUp.brown.toFixed(2)} char=${p.faceUp.char.toFixed(2)} torn=${p.faceUp.torn}`);
   console.log(`  peak centre ${r.peak.toFixed(1)} → ${r.got.label}; mass ${(r.massStart*1e3).toFixed(0)}→${(r.massEnd*1e3).toFixed(0)} g (evap ${(r.waterEvap*1e3).toFixed(1)}, drip ${(r.waterDrip*1e3).toFixed(1)}, fat ${(r.fatLost*1e3).toFixed(1)}), waterRet ${(r.waterRetained*100).toFixed(0)}%, D ${(p.D0*100).toFixed(1)}→${(p.D*100).toFixed(1)} cm, h ${(p.h0*1e3).toFixed(1)}→${(p.h*1e3).toFixed(1)} mm, grey ${(r.overFrac*100).toFixed(0)}%`);
   console.log(`  score ${r.total} ${JSON.stringify(r.parts)}`);
-  console.log('  profile: ' + p.T.map(v=>v.toFixed(0)).join(' '));
+  console.log('  centre column: ' + Array.from({length:p.Nz},(_,k)=>P.cellT(p,k,0).toFixed(0)).join(' '));
+  console.log('  bottom brown by ring: ' + Array.from(p.faceDown.brownR).map(v=>v.toFixed(1)).join(' ') + ' | pan centre/edge ' + s.pan.Tcenter.toFixed(0) + '/' + s.pan.Tedge.toFixed(0));
   return { s, p, r };
 }
 const which = process.argv[2];

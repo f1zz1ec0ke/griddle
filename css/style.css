@@ -27,7 +27,7 @@ label.check input { width: auto; }
 #hud > * { pointer-events: auto; }
 .brand { font-weight: 800; letter-spacing: 0.12em; color: var(--accent); }
 .brand small { display: block; letter-spacing: 0; font-weight: 400; color: var(--muted); font-size: 11px; }
-.ticket { font-size: 13px; color: var(--muted); }
+.ticket { font-size: 13px; color: var(--muted); white-space: nowrap; }
 .ticket b { color: var(--ink); }
 .ticket { position: relative; cursor: help; }
 .ticket[data-hint]::after { content: attr(data-hint); position: absolute; left: 0; top: calc(100% + 6px); white-space: nowrap; background: #1e1914; color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; font-size: 12px; box-shadow: 0 6px 18px rgba(0,0,0,0.5); opacity: 0; pointer-events: none; transform: translateY(-3px); transition: opacity 0.12s, transform 0.12s; }
@@ -109,3 +109,15 @@ table.stats td:first-child { color: var(--muted); width: 42%; }
   #inspector { width: min(440px, 92vw); bottom: auto; top: 70px; }
   .readouts { display: none; }
 }
+
+/* patty chips: one per burger on the ticket */
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+#chips { pointer-events: auto; }
+.chip { padding: 4px 9px; font-size: 12px; display: flex; gap: 6px; align-items: baseline; background: rgba(0,0,0,0.45); }
+.chip b { color: var(--accent); }
+.chip small { color: var(--muted); font-size: 11px; }
+.chip.on { border-color: var(--accent); background: #3a2e1c; }
+.chip.on small { color: var(--ink); }
+#r-chips { margin: 8px 0; }
+.ticket-sum { font-size: 13px; background: #1e1914; border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+.ticket-sum ul { margin: 6px 0 0; padding-left: 18px; }

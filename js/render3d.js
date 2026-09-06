@@ -21,24 +21,28 @@
     brown: [[168, 122, 88], [190, 140, 92], [160, 100, 52], [122, 66, 30], [86, 42, 20], [56, 28, 14], [32, 18, 12], [22, 14, 10]],
     char: [14, 12, 11],
   };
-  function nodeColour(p, i) {
-    const Tn = p.T[i];
-    let c;
-    if (Tn < 0) c = mix3(COL.frozen, COL.raw, clamp((Tn + 8) / 8, 0, 1));
-    else c = mix3(COL.raw, COL.rawWarm, clamp(Tn / 40, 0, 1));
-    const g = p.dG[i], m = p.dM[i];
-    c = mix3(c, COL.pink, clamp(m * 0.6 + g * 0.5, 0, 1));
-    c = mix3(c, COL.cooked, clamp(g, 0, 1));
-    const dryness = 1 - clamp(p.w[i] / p.w0, 0, 1);
-    c = mix3(c, COL.dry, clamp((dryness - 0.35) / 0.6, 0, 1));
-    return c;
+  /** Colour of one cell of the meat grid (layer k, ring j). */
+  function nodeColour(p, k, j) {
+    const c = k * p.Nr + (j || 0);
+    const Tn = p.T[c];
+    let col;
+    if (Tn < 0) col = mix3(COL.frozen, COL.raw, clamp((Tn + 8) / 8, 0, 1));
+    else col = mix3(COL.raw, COL.rawWarm, clamp(Tn / 40, 0, 1));
+    const g = p.dG[c], m = p.dM[c];
+    col = mix3(col, COL.pink, clamp(m * 0.6 + g * 0.5, 0, 1));
+    col = mix3(col, COL.cooked, clamp(g, 0, 1));
+    const dryness = 1 - clamp(p.w[c] / p.w0c[c], 0, 1);
+    col = mix3(col, COL.dry, clamp((dryness - 0.35) / 0.6, 0, 1));
+    return col;
   }
-  function faceColour(face, baseCol) {
-    const b = clamp(face.brown, 0, 7);
+  /** Crust colour for a face (whole face, or ring j of it). */
+  function faceColour(face, baseCol, j) {
+    const brown = j == null ? face.brown : face.brownR[j], char = j == null ? face.char : face.charR[j];
+    const b = clamp(brown, 0, 7);
     const i = Math.floor(b), t = b - i;
     let c = mix3(COL.brown[i], COL.brown[Math.min(7, i + 1)], t);
     c = mix3(baseCol, c, clamp(b / 0.8, 0, 1));
-    c = mix3(c, COL.char, clamp(face.char / 1.1, 0, 1));
+    c = mix3(c, COL.char, clamp(char / 1.1, 0, 1));
     return c;
   }
 
@@ -218,6 +222,271 @@
     }
   }
 
+  // ------------------------------------------------------------ one patty on screen
+  /**
+   * Everything drawn for one patty: the lathe mesh with its canvas textures, the cut face when it
+   * is sliced, the cheese stack, cheese under it, and the bun once served. Textures are painted
+   * from the 2-D grid: caps as concentric rings, the side band from the outer ring, the cut face
+   * cell by cell.
+   */
+  class PattyView {
+    constructor(vp, p) {
+      this.vp = vp; this.p = p;
+      this.group = new T.Group(); vp.scene.add(this.group);
+      this.atlas = document.createElement('canvas'); this.atlas.width = 1024; this.atlas.height = 1024;
+      this.atlasTex = new T.CanvasTexture(this.atlas); this.atlasTex.anisotropy = 8;
+      this.roughCv = document.createElement('canvas'); this.roughCv.width = 256; this.roughCv.height = 256;
+      this.roughTex = new T.CanvasTexture(this.roughCv);
+      this.cut = document.createElement('canvas'); this.cut.width = 512; this.cut.height = 256;
+      this.cutTex = new T.CanvasTexture(this.cut);
+      this.mat = new T.MeshPhysicalMaterial({ map: this.atlasTex, roughnessMap: this.roughTex, roughness: 0.75, metalness: 0, clearcoat: 0.25, clearcoatRoughness: 0.5 });
+      this.cutMat = new T.MeshStandardMaterial({ map: this.cutTex, roughness: 0.6, side: T.DoubleSide });
+      this.mesh = new T.Mesh(new T.BufferGeometry(), this.mat); this.mesh.castShadow = true; this.mesh.receiveShadow = true; this.mesh.userData.patty = p; this.group.add(this.mesh);
+      this.cutMesh = new T.Mesh(new T.BufferGeometry(), this.cutMat); this.cutMesh.visible = false; this.cutMesh.castShadow = true; this.cutMesh.userData.patty = p; this.group.add(this.cutMesh);
+      this.cheeseMeshes = []; this.underMeshes = []; this.bunGroup = null; this.bunTop = null; this.served = false;
+      this.cutaway = false; this.cutPhi = 0; this.lastGeo = null; this.forceTex = true; this.texClock = 0;
+      this.rebuildGeometry(true); this.paintTextures();
+    }
+    dispose() { this.vp.scene.remove(this.group); }
+    setCutaway(on, phi) { this.cutaway = on; if (on) this.cutPhi = phi; this.rebuildGeometry(true); this.forceTex = true; }
+    rebuildGeometry(force) {
+      const p = this.p, R = p.D / 2, h = p.h, dome = p.dome;
+      const raw = 1 - clamp(P.gridMean(p, p.dM) * 1.2, 0, 1);
+      const key = [R.toFixed(4), h.toFixed(4), dome.toFixed(2), raw.toFixed(2), this.cutaway, this.served].join('|');
+      if (!force && key === this.lastGeo) return; this.lastGeo = key;
+      const prof = pattyProfile(R, h, dome, p.dimple, raw);
+      const phi = this.cutaway ? Math.PI : Math.PI * 2;
+      this.mesh.geometry.dispose(); this.mesh.geometry = buildLathe(prof, 96, phi, this.cutaway ? this.cutPhi : 0);
+      if (this.served) this.buildBuns();
+      if (this.cutaway) {
+        this.cutMesh.geometry.dispose(); this.cutMesh.geometry = new T.ShapeGeometry(crossSectionShape(prof), 4);
+        this.cutMesh.rotation.y = -(this.cutPhi || 0);
+        this.cutMesh.visible = true;
+        this.cutTex.repeat.set(1 / (2 * R * 1.06), 1 / (h * 1.02)); this.cutTex.offset.set(0.5, 0); this.cutTex.wrapS = this.cutTex.wrapT = T.ClampToEdgeWrapping;
+      } else this.cutMesh.visible = false;
+    }
+    buildBuns() {
+      const p = this.p, g = this.group, vp = this.vp;
+      if (this.bunGroup) g.remove(this.bunGroup);
+      const bg = new T.Group(); this.bunGroup = bg; g.add(bg);
+      const Rb = Math.max(0.05, (p.D / 2) * 0.96);
+      const crust = new T.MeshStandardMaterial({ color: 0xc98a45, roughness: 0.75 });
+      const crumbTex = (soak) => {
+        const cv = document.createElement('canvas'); cv.width = 256; cv.height = 128; const c = cv.getContext('2d');
+        c.fillStyle = '#f3e4c4'; c.fillRect(0, 0, 256, 128);
+        c.globalCompositeOperation = 'multiply'; c.globalAlpha = 0.35; c.drawImage(vp.noiseFine, 0, 0, 256, 128); c.globalAlpha = 1; c.globalCompositeOperation = 'source-over';
+        for (let i = 0; i < 260; i++) { c.fillStyle = `rgba(200,170,120,${0.3 + Math.random() * 0.4})`; c.beginPath(); c.ellipse(Math.random() * 256, Math.random() * 128, 1 + Math.random() * 3, 1 + Math.random() * 2, Math.random() * 3, 0, Math.PI * 2); c.fill(); }
+        if (soak > 0) { const gr = c.createLinearGradient(0, 0, 0, 128); gr.addColorStop(0, `rgba(120,50,40,${clamp(soak / 0.006, 0, 0.75)})`); gr.addColorStop(0.7, 'rgba(120,50,40,0)'); c.fillStyle = gr; c.fillRect(0, 0, 256, 128); }
+        const t = new T.CanvasTexture(cv); t.wrapS = t.wrapT = T.ClampToEdgeWrapping; return t;
+      };
+      const phi = this.cutaway ? Math.PI : Math.PI * 2, phiStart = this.cutaway ? this.cutPhi : 0;
+      const half = (prof, y0, soak) => {
+        const hgrp = new T.Group(); hgrp.position.y = y0;
+        const m = new T.Mesh(buildLathe(prof, 72, phi, phiStart), crust); m.castShadow = true; m.receiveShadow = true; hgrp.add(m);
+        if (this.cutaway) {
+          const hh = Math.max(...prof.map((q) => q.y)), rr = Math.max(...prof.map((q) => q.r));
+          const tex = crumbTex(soak); tex.repeat.set(1 / (2 * rr), 1 / hh); tex.offset.set(0.5, 0);
+          const face = new T.Mesh(new T.ShapeGeometry(crossSectionShape(prof), 3), new T.MeshStandardMaterial({ map: tex, roughness: 0.9, side: T.DoubleSide }));
+          face.rotation.y = -phiStart; hgrp.add(face);
+        }
+        bg.add(hgrp); return hgrp;
+      };
+      const bottom = [{ r: 0, y: 0, v: 0 }, { r: Rb * 0.92, y: 0, v: 0.2 }, { r: Rb, y: 0.007, v: 0.4 }, { r: Rb * 0.98, y: 0.017, v: 0.6 }, { r: Rb * 0.85, y: 0.022, v: 0.8 }, { r: 0, y: 0.022, v: 1 }];
+      const top = [{ r: 0, y: 0, v: 0 }, { r: Rb * 0.97, y: 0, v: 0.15 }, { r: Rb, y: 0.006, v: 0.3 }, { r: Rb * 0.93, y: 0.013, v: 0.5 }, { r: Rb * 0.72, y: 0.02, v: 0.7 }, { r: Rb * 0.4, y: 0.024, v: 0.85 }, { r: 0, y: 0.025, v: 1 }];
+      this.bunBottomH = 0.022;
+      half(bottom, -this.bunBottomH, p.bunSoak || 0);
+      this.bunTop = half(top, 0, 0);
+      const seedGeo = new T.SphereGeometry(1, 6, 5); const seedMat = new T.MeshStandardMaterial({ color: 0xf6ead2, roughness: 0.6 });
+      let sd = 7 + (p.id || 0); const rnd = () => { sd = (sd * 1103515245 + 12345) & 0x7fffffff; return sd / 0x7fffffff; };
+      for (let i = 0; i < 70; i++) {
+        const a = rnd() * Math.PI * 2, rr = Math.sqrt(rnd()) * Rb * 0.9;
+        if (this.cutaway) { const rel = ((a - phiStart) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2); if (rel > Math.PI) continue; }
+        let y = 0; for (let k = 1; k < top.length; k++) if (rr <= top[k - 1].r && rr >= top[k].r) { const t = (top[k - 1].r - rr) / (top[k - 1].r - top[k].r + 1e-9); y = lerp(top[k - 1].y, top[k].y, t); }
+        const sm = new T.Mesh(seedGeo, seedMat); sm.position.set(Math.cos(a) * rr, y + 0.0005, Math.sin(a) * rr); sm.scale.set(0.0016, 0.0009, 0.0011); sm.rotation.y = rnd() * 3; this.bunTop.add(sm);
+      }
+    }
+    paintTextures() {
+      const p = this.p, vp = this.vp, Nz = p.Nz, Nr = p.Nr, A = this.atlas, c = A.getContext('2d'), W = A.width, H = A.height;
+      const bt = { y0: 0, y1: H / 2, x0: 0, x1: W / 2 }, bb = { y0: 0, y1: H / 2, x0: W / 2, x1: W }, bs = { y0: H * (1 - BANDS.side[1]), y1: H * (1 - BANDS.side[0]), x0: 0, x1: W };
+      c.clearRect(0, 0, W, H);
+      const rawTop = p.faceUp.brown < 0.3;
+      // caps: concentric rings, each ring its own cooked/crust colour (uv radius 0.235·W maps to R·1.06)
+      const capR = 0.235 * W;
+      const paintCap = (rg, face, k, isUp) => {
+        const cx = (rg.x0 + rg.x1) / 2, cy = (rg.y0 + rg.y1) / 2;
+        const g = c.createRadialGradient(cx, cy, 0, cx, cy, capR);
+        for (let j = 0; j < Nr; j++) {
+          const base = nodeColour(p, k, j);
+          const col = isUp && rawTop ? base : faceColour(face, base, j);
+          g.addColorStop(clamp((j + 0.5) / (Nr * 1.06), 0, 1), rgb(col));
+        }
+        const edge = isUp && rawTop ? nodeColour(p, k, Nr - 1) : faceColour(face, nodeColour(p, k, Nr - 1), Nr - 1);
+        g.addColorStop(1, rgb(edge));
+        c.fillStyle = g; c.fillRect(rg.x0, rg.y0, rg.x1 - rg.x0, rg.y1 - rg.y0);
+      };
+      paintCap(bt, p.faceUp, Nz - 1, true); paintCap(bb, p.faceDown, 0, false);
+      const topEdge = rawTop ? nodeColour(p, Nz - 1, Nr - 1) : faceColour(p.faceUp, nodeColour(p, Nz - 1, Nr - 1), Nr - 1);
+      const botEdge = faceColour(p.faceDown, nodeColour(p, 0, Nr - 1), Nr - 1);
+      // side band: the outer ring of each layer, bottom→top
+      for (let k = 0; k < Nz; k++) {
+        const y1 = bs.y1 - (k / Nz) * (bs.y1 - bs.y0), y0 = bs.y1 - ((k + 1) / Nz) * (bs.y1 - bs.y0);
+        let col = mix3(nodeColour(p, k, Nr - 1), nodeColour(p, k, Math.max(0, Nr - 2)), 0.3);
+        if (p.faceSide && p.faceSide.brown > 0.3) col = faceColour(p.faceSide, col);
+        if (k === 0) col = mix3(col, botEdge, 0.7); if (k === Nz - 1) col = mix3(col, topEdge, 0.7);
+        c.fillStyle = rgb(col); c.fillRect(0, y0 - 0.5, W, y1 - y0 + 1);
+      }
+      c.globalCompositeOperation = 'multiply'; c.globalAlpha = 0.7; c.drawImage(vp.noise, 0, 0, W, H); c.globalAlpha = 1;
+      c.globalCompositeOperation = 'multiply'; c.globalAlpha = 0.35; c.drawImage(vp.noiseFine, 0, 0, W, H); c.globalAlpha = 1;
+      c.globalCompositeOperation = 'source-over';
+      const fatLeft = (k, j) => { const i = k * Nr + j; return clamp((p.fs[i] + p.fl[i]) / (p.fat0c[i] + 1e-12), 0, 1); };
+      const fatLeftLayer = (k) => { let f = 0; for (let j = 0; j < Nr; j++) f += fatLeft(k, j) * p.aj[j]; return f; };
+      const tintMask = (mask, colour, alpha, rg) => {
+        if (alpha <= 0.002) return;
+        const off = vp._off || (vp._off = document.createElement('canvas')); off.width = W; off.height = H; const oc = off.getContext('2d');
+        oc.clearRect(0, 0, W, H); oc.drawImage(mask, 0, 0, W, H); oc.globalCompositeOperation = 'source-in'; oc.fillStyle = rgb(colour); oc.fillRect(0, 0, W, H); oc.globalCompositeOperation = 'source-over';
+        c.save(); c.beginPath(); c.rect(rg.x0, rg.y0, rg.x1 - rg.x0, rg.y1 - rg.y0); c.clip(); c.globalAlpha = alpha; c.drawImage(off, 0, 0); c.restore();
+      };
+      const topC = (Nz - 1) * Nr;
+      if (rawTop) tintMask(vp.marble, p.T[topC] > 40 ? COL.fatMelt : COL.fat, 0.9 * fatLeftLayer(Nz - 1) * p.fatFrac * 3, bt);
+      tintMask(vp.marble, COL.fatMelt, 0.6 * fatLeft(Math.floor(Nz / 2), Nr - 1) * p.fatFrac * 3, bs);
+      const crustSpots = (face, rg) => {
+        tintMask(vp.spots, [40, 20, 10], clamp(face.brown / 4, 0, 0.6), rg);
+        tintMask(vp.blotch, COL.char, clamp(face.char / 0.6, 0, 0.75), rg);
+        tintMask(vp.spots, COL.char, clamp(face.char / 0.4, 0, 0.9), rg);
+        if (face.torn > 0) tintMask(vp.marbleCut, [150, 60, 60], clamp(face.torn * 3, 0, 0.8), rg);
+        // grill marks: dark bars where the grate pressed into the face
+        if (face.marks > 0.2) {
+          const cx = (rg.x0 + rg.x1) / 2, cy = (rg.y0 + rg.y1) / 2;
+          const mc = faceColour({ brown: face.marks, char: face.marksChar || 0 }, [90, 55, 30]);
+          c.save(); c.beginPath(); c.arc(cx, cy, capR, 0, Math.PI * 2); c.clip(); c.translate(cx, cy); c.rotate(face.marksAngle || 0.6);
+          c.fillStyle = rgb(mc); c.globalAlpha = clamp(face.marks / 2, 0, 0.9);
+          for (let x = -capR; x < capR; x += capR * 0.28) c.fillRect(x - capR * 0.035, -capR, capR * 0.07, 2 * capR);
+          c.restore();
+        }
+      };
+      crustSpots(p.faceDown, bb); if (!rawTop) crustSpots(p.faceUp, bt);
+      if (p.poolTop > 1e-5) { c.fillStyle = `rgba(200,70,80,${clamp(p.poolTop / 0.002, 0, 0.5)})`; c.fillRect(bt.x0, bt.y0, bt.x1 - bt.x0, bt.y1 - bt.y0); }
+      if (p.T[topC] < -2) { c.fillStyle = `rgba(235,240,255,${clamp(-p.T[topC] / 20, 0, 0.6)})`; c.fillRect(0, 0, W, H); }
+      this.atlasTex.needsUpdate = true;
+      // roughness: wet is shiny, dry crust is matte
+      const rc = this.roughCv.getContext('2d'), RW = this.roughCv.width, RH = this.roughCv.height;
+      const wet = (k) => { let v = 0; for (let j = 0; j < Nr; j++) v += clamp(p.w[k * Nr + j] / p.w0c[k * Nr + j], 0, 1) * p.aj[j]; return v; };
+      const rough = (v) => `rgb(${(v * 255) | 0},${(v * 255) | 0},${(v * 255) | 0})`;
+      rc.fillStyle = rough(lerp(0.9, 0.35, clamp(wet(Nz - 1) * (rawTop ? 1 : 0.4) + clamp(p.poolTop / 0.002, 0, 0.6) + clamp(p.fatTop / 0.001, 0, 0.4), 0, 1))); rc.fillRect(0, 0, RW / 2, RH / 2);
+      rc.fillStyle = rough(lerp(0.95, 0.5, wet(0) * 0.3)); rc.fillRect(RW / 2, 0, RW / 2, RH / 2);
+      rc.fillStyle = rough(lerp(0.9, 0.3, wet(Math.floor(Nz / 2)))); rc.fillRect(0, RH / 2, RW, RH / 2);
+      this.roughTex.needsUpdate = true;
+      // cross-section: every cell of the grid, mirrored about the axis
+      if (this.cutaway) {
+        const cc = this.cut.getContext('2d'), CW = this.cut.width, CH = this.cut.height;
+        const colW = CW / 2 / (Nr * 1.06), rowH = CH / Nz;
+        cc.fillStyle = '#000'; cc.fillRect(0, 0, CW, CH);
+        for (let k = 0; k < Nz; k++) for (let j = 0; j < Nr; j++) {
+          const y0 = CH - (k + 1) * rowH;
+          cc.fillStyle = rgb(nodeColour(p, k, j));
+          cc.fillRect(CW / 2 + j * colW - 0.5, y0 - 0.5, colW + 1, rowH + 1);
+          cc.fillRect(CW / 2 - (j + 1) * colW - 0.5, y0 - 0.5, colW + 1, rowH + 1);
+        }
+        cc.globalCompositeOperation = 'multiply'; cc.globalAlpha = 0.45; cc.drawImage(vp.noiseFine, 0, 0, CW, CH); cc.globalAlpha = 1; cc.globalCompositeOperation = 'source-over';
+        // marbling per layer, fading as it renders
+        for (let k = 0; k < Nz; k++) {
+          const y1 = CH - (k / Nz) * CH, y0 = CH - ((k + 1) / Nz) * CH;
+          const fl = fatLeftLayer(k); const melted = p.T[k * Nr] > 42;
+          if (fl > 0.02) {
+            const off = vp._off2 || (vp._off2 = document.createElement('canvas')); off.width = CW; off.height = CH; const oc = off.getContext('2d');
+            oc.clearRect(0, 0, CW, CH); oc.drawImage(vp.marbleCut, 0, 0, CW, CH); oc.globalCompositeOperation = 'source-in'; oc.fillStyle = rgb(melted ? COL.fatMelt : COL.fat); oc.fillRect(0, 0, CW, CH); oc.globalCompositeOperation = 'source-over';
+            cc.save(); cc.beginPath(); cc.rect(0, y0, CW, y1 - y0); cc.clip(); cc.globalAlpha = 0.9 * fl * p.fatFrac * 3; cc.drawImage(off, 0, 0); cc.restore();
+          }
+        }
+        // crust bands, ring by ring, and the browned edge
+        const crustH = (b) => clamp(b / 7, 0, 1) * 0.06 * CH + 2;
+        for (let j = 0; j < Nr; j++) {
+          const hb = crustH(p.faceDown.brownR[j]); cc.fillStyle = rgb(faceColour(p.faceDown, nodeColour(p, 0, j), j));
+          cc.fillRect(CW / 2 + j * colW - 0.5, CH - hb, colW + 1, hb); cc.fillRect(CW / 2 - (j + 1) * colW - 0.5, CH - hb, colW + 1, hb);
+          if (p.faceUp.brown > 0.3) { const ht = crustH(p.faceUp.brownR[j]); cc.fillStyle = rgb(faceColour(p.faceUp, nodeColour(p, Nz - 1, j), j)); cc.fillRect(CW / 2 + j * colW - 0.5, 0, colW + 1, ht); cc.fillRect(CW / 2 - (j + 1) * colW - 0.5, 0, colW + 1, ht); }
+        }
+        // free juice glistening between fibres
+        for (let k = 0; k < Nz; k++) for (let j = 0; j < Nr; j++) {
+          const i = k * Nr + j; const free = Math.max(0, p.w[i] - P.waterHolding(p, i) * p.w0c[i]) / p.w0c[i];
+          if (free > 0.005) { const y0 = CH - (k + 1) * rowH; cc.fillStyle = `rgba(230,90,100,${clamp(free * 6, 0, 0.5)})`; cc.fillRect(CW / 2 + j * colW, y0, colW, rowH); cc.fillRect(CW / 2 - (j + 1) * colW, y0, colW, rowH); }
+        }
+        this.cutTex.needsUpdate = true;
+      }
+    }
+    /** Per-frame: position, geometry, textures, cheese, buns. */
+    update(state, dt, where, position, mode) {
+      const p = this.p, g = this.group;
+      this.texClock += dt;
+      if (where === 'pan') g.position.set(position.x, this.vp.panFloorY + 0.0012 * p.cheeseUnder.length, position.z);
+      else if (where === 'board') g.position.set(position.x, 0, position.z);
+      else {
+        const served = where === 'cut';
+        if (served !== this.served) { this.served = served; if (served) this.buildBuns(); else if (this.bunGroup) { g.remove(this.bunGroup); this.bunGroup = null; } }
+        g.position.set(position.x, position.y + (served ? this.bunBottomH : 0), position.z);
+        if (this.bunTop) this.bunTop.position.y = p.h * (1 + 0.28 * p.dome) + p.cheeses.length * 0.0015 + 0.001;
+      }
+      this.rebuildGeometry(false);
+      if (this.texClock > 0.1 || this.forceTex) { this.texClock = 0; this.forceTex = false; this.paintTextures(); }
+      this.updateCheese();
+    }
+    updateCheese() {
+      const p = this.p, g = this.group;
+      while (this.cheeseMeshes.length > p.cheeses.length) g.remove(this.cheeseMeshes.pop());
+      while (this.cheeseMeshes.length < p.cheeses.length) {
+        const k = this.cheeseMeshes.length;
+        const geo = new T.PlaneGeometry(0.095, 0.095, 14, 14); geo.rotateX(-Math.PI / 2);
+        geo.setAttribute('color', new T.BufferAttribute(new Float32Array(geo.attributes.position.count * 3).fill(1), 3));
+        const m = new T.Mesh(geo, new T.MeshPhysicalMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.5, clearcoat: 0.3, side: T.DoubleSide }));
+        m.castShadow = true; m.userData.base = geo.attributes.position.array.slice(); m.rotation.y = p.cheeses[k].rot; g.add(m); this.cheeseMeshes.push(m);
+      }
+      const yellow = [0.95, 0.70, 0.24], melted = [0.99, 0.74, 0.20], golden = [0.72, 0.42, 0.10], dark = [0.28, 0.13, 0.05];
+      const skirtColour = (sk, onTop) => { if (!sk) return onTop; let c = mix3(onTop, golden, clamp(sk.brown / 2.5, 0, 1)); c = mix3(c, dark, clamp((sk.brown - 2.5) / 3, 0, 1)); return mix3(c, [0.06, 0.05, 0.04], clamp(sk.char / 0.8, 0, 1)); };
+      while (this.underMeshes.length > p.cheeseUnder.length) g.remove(this.underMeshes.pop());
+      while (this.underMeshes.length < p.cheeseUnder.length) {
+        const geo = new T.PlaneGeometry(0.095, 0.095, 2, 2); geo.rotateX(-Math.PI / 2);
+        const m = new T.Mesh(geo, new T.MeshPhysicalMaterial({ color: 0xf2b23c, roughness: 0.5, clearcoat: 0.2, side: T.DoubleSide }));
+        m.receiveShadow = true; g.add(m); this.underMeshes.push(m);
+      }
+      for (let k = 0; k < this.underMeshes.length; k++) {
+        const mesh = this.underMeshes[k], ch = p.cheeseUnder[k], sk = ch.skirt;
+        const lift = 0.0012 * p.cheeseUnder.length;
+        mesh.rotation.y = ch.rot; mesh.position.y = -lift + 0.0005 + k * 0.0012; const sp = 1.06 + 0.06 * ch.melt; mesh.scale.set(sp, 1, sp);
+        const c = skirtColour(sk, mix3(yellow, melted, ch.melt)); mesh.material.color.setRGB(c[0], c[1], c[2]);
+        mesh.material.roughness = clamp(0.5 - 0.3 * ch.melt + (sk ? 0.4 * sk.dry : 0), 0.05, 1);
+      }
+      const TAU = Math.PI * 2;
+      const clipFor = (rot) => {
+        if (!this.cutaway) return null;
+        const cr = Math.cos(rot), sr = Math.sin(rot), cp = this.cutPhi, dx = Math.cos(cp), dz = Math.sin(cp);
+        return (x, z) => { const gx = x * cr + z * sr, gz = -x * sr + z * cr; const rel = ((Math.atan2(gz, gx) - cp) % TAU + TAU) % TAU; if (rel < Math.PI) return null; const t = gx * dx + gz * dz; const px = t * dx, pz = t * dz; return [px * cr - pz * sr, px * sr + pz * cr]; };
+      };
+      for (let k = 0; k < this.cheeseMeshes.length; k++) {
+        const mesh = this.cheeseMeshes[k], ch = p.cheeses[k], R = p.D / 2, geo = mesh.geometry, pos = geo.attributes.position.array, col = geo.attributes.color.array, base = mesh.userData.base;
+        const clip = clipFor(ch.rot);
+        const topY = p.h * (1 + 0.28 * p.dome) + k * 0.0015; mesh.position.y = topY + 0.0008;
+        const floorLocal = -mesh.position.y + 0.0006 + k * 0.0004;
+        const sk = ch.skirt; const sc = 1 + 0.15 * ch.melt + 0.004 * k;
+        const onTop = mix3(yellow, melted, ch.melt);
+        const skirtCol = skirtColour(sk, onTop);
+        for (let i = 0; i < pos.length; i += 3) {
+          const x = base[i], z = base[i + 2]; const rr = Math.hypot(x, z);
+          const over = Math.max(0, rr - R * 0.98);
+          let y = base[i + 1] - over * (0.2 + 1.6 * ch.melt);
+          const touching = y <= floorLocal;
+          let spread = sc;
+          if (touching) { y = floorLocal; spread = sc + (sk ? 0.18 * sk.melt : 0) + 0.1 * ch.melt * over / Math.max(rr, 1e-4); }
+          pos[i] = x * spread; pos[i + 2] = z * spread; pos[i + 1] = y;
+          if (clip) { const q = clip(pos[i], pos[i + 2]); if (q) { pos[i] = q[0]; pos[i + 2] = q[1]; } }
+          const cc = touching || ch.submerged || ch.fried ? skirtCol : onTop;
+          col[i] = cc[0]; col[i + 1] = cc[1]; col[i + 2] = cc[2];
+        }
+        geo.attributes.position.needsUpdate = true; geo.attributes.color.needsUpdate = true; geo.computeVertexNormals();
+        mesh.material.roughness = clamp(0.6 - 0.45 * ch.melt + (sk ? 0.35 * sk.dry : 0), 0.05, 1);
+        mesh.material.clearcoat = 0.3 * (1 - (sk ? sk.dry : 0));
+      }
+    }
+  }
+
   // ------------------------------------------------------------ the viewport
   class Viewport {
     constructor(canvas) {
@@ -234,7 +503,7 @@
       this.cutaway = false;
       this._buildLights(); this._buildKitchen(); this._buildStove(); this._buildBoard(); this._buildParticles(); this._buildProbe();
       this._buildTextures();
-      this.patty = null;
+      this.views = new Map(); this.selected = null; this.previewPatty = null;
       this.controls = new Orbit(this);
       this.resize();
       window.addEventListener('resize', () => this.resize());
@@ -423,12 +692,12 @@
       g.visible = false; this.scene.add(g);
     }
     setProbe(inserted, depthFrac) {
-      const g = this.probeGroup; const p = this.patty;
-      if (!inserted || !p || !this.pattyGroup) { g.visible = false; return; }
+      const g = this.probeGroup; const p = this.selected, pg = this.pattyGroup;
+      if (!inserted || !p || !pg) { g.visible = false; return; }
       g.visible = true;
-      const R = p.D / 2, y = this.pattyGroup.position.y + p.h * (1 - depthFrac);
+      const R = p.D / 2, y = pg.position.y + p.h * (1 - depthFrac);
       const az = -0.6; // comes in from the front-right, tip reaches the centre
-      g.position.set(this.pattyGroup.position.x + Math.cos(az) * 0.0, y, this.pattyGroup.position.z + Math.sin(az) * 0.0);
+      g.position.set(pg.position.x, y, pg.position.z);
       g.rotation.set(0, -az, 0.12);
       g.position.x += Math.cos(az) * 0; g.position.y += 0.006;
     }
@@ -446,188 +715,34 @@
       this.marble = makeBlobs(1024, 3200, 1.2, 5.5, 'rgba(255,255,255,1)');
       this.marbleCut = makeBlobs(512, 900, 1, 4, 'rgba(255,255,255,1)');
       this.spots = makeBlobs(1024, 1400, 2, 9, 'rgba(0,0,0,1)'); this.blotch = makeBlobs(1024, 40, 14, 50, 'rgba(0,0,0,1)');
-      this.atlas = document.createElement('canvas'); this.atlas.width = 1024; this.atlas.height = 1024;
-      this.atlasTex = new T.CanvasTexture(this.atlas); this.atlasTex.anisotropy = 8;
-      this.cut = document.createElement('canvas'); this.cut.width = 512; this.cut.height = 256;
-      this.cutTex = new T.CanvasTexture(this.cut);
-      this.roughCv = document.createElement('canvas'); this.roughCv.width = 1024; this.roughCv.height = 1024;
-      this.roughTex = new T.CanvasTexture(this.roughCv);
     }
 
     // ---- patty mesh management
-    setPatty(p) {
-      if (this.pattyGroup) { this.scene.remove(this.pattyGroup); }
-      this.patty = p; if (!p) return;
-      const g = new T.Group(); this.pattyGroup = g;
-      this.pattyMat = new T.MeshPhysicalMaterial({ map: this.atlasTex, roughnessMap: this.roughTex, roughness: 0.75, metalness: 0, clearcoat: 0.25, clearcoatRoughness: 0.5 });
-      this.cutMat = new T.MeshStandardMaterial({ map: this.cutTex, roughness: 0.6, side: T.DoubleSide });
-      this.pattyMesh = new T.Mesh(new T.BufferGeometry(), this.pattyMat); this.pattyMesh.castShadow = true; this.pattyMesh.receiveShadow = true; g.add(this.pattyMesh);
-      this.cutMesh = new T.Mesh(new T.BufferGeometry(), this.cutMat); this.cutMesh.visible = false; this.cutMesh.castShadow = true; g.add(this.cutMesh);
-      this.cheeseMeshes = []; this.underMeshes = []; this.bunGroup = null; this.bunTop = null; this.served = false;
-      this.scene.add(g);
-      this.lastGeo = null; this.forceTex = true;
-      this._rebuildGeometry(true);
-      this._paintTextures();
+    /** Board preview: show this one patty (or nothing). */
+    setPatty(p) { this.previewPatty = p || null; this.forceTex = true; }
+    /** Keep one PattyView per patty in `list`. */
+    syncViews(list) {
+      const keep = new Set(list);
+      for (const [p, v] of this.views) if (!keep.has(p)) { v.dispose(); this.views.delete(p); }
+      for (const p of list) if (!this.views.has(p)) this.views.set(p, new PattyView(this, p));
     }
-    /** Slice the patty in half along the plane facing the camera. The patty itself never moves:
-     *  the retained half is built from a start angle, and only the cut-face mesh is rotated. */
-    /** Sesame bun in two halves around the patty. Built like the patty: a lathe (half of one when
-     *  cut away) plus a crumb-textured cut face. The bottom bun's crumb darkens with soaked juice. */
-    _buildBuns(p) {
-      const g = this.pattyGroup; if (!g) return;
-      if (this.bunGroup) g.remove(this.bunGroup);
-      const bg = new T.Group(); this.bunGroup = bg; g.add(bg);
-      const Rb = Math.max(0.05, (p.D / 2) * 0.96);
-      const crust = new T.MeshStandardMaterial({ color: 0xc98a45, roughness: 0.75 });
-      const crumbTex = (soak) => {
-        const cv = document.createElement('canvas'); cv.width = 256; cv.height = 128; const c = cv.getContext('2d');
-        c.fillStyle = '#f3e4c4'; c.fillRect(0, 0, 256, 128);
-        c.globalCompositeOperation = 'multiply'; c.globalAlpha = 0.35; c.drawImage(this.noiseFine, 0, 0, 256, 128); c.globalAlpha = 1; c.globalCompositeOperation = 'source-over';
-        for (let i = 0; i < 260; i++) { c.fillStyle = `rgba(200,170,120,${0.3 + Math.random() * 0.4})`; c.beginPath(); c.ellipse(Math.random() * 256, Math.random() * 128, 1 + Math.random() * 3, 1 + Math.random() * 2, Math.random() * 3, 0, Math.PI * 2); c.fill(); }
-        if (soak > 0) { const gr = c.createLinearGradient(0, 0, 0, 128); gr.addColorStop(0, `rgba(120,50,40,${clamp(soak / 0.006, 0, 0.75)})`); gr.addColorStop(0.7, 'rgba(120,50,40,0)'); c.fillStyle = gr; c.fillRect(0, 0, 256, 128); }
-        const t = new T.CanvasTexture(cv); t.wrapS = t.wrapT = T.ClampToEdgeWrapping; return t;
-      };
-      const phi = this.cutaway ? Math.PI : Math.PI * 2, phiStart = this.cutaway ? this.cutPhi : 0;
-      const half = (prof, y0, soak) => {
-        const h = new T.Group(); h.position.y = y0;
-        const m = new T.Mesh(buildLathe(prof, 72, phi, phiStart), crust); m.castShadow = true; m.receiveShadow = true; h.add(m);
-        if (this.cutaway) {
-          const hh = Math.max(...prof.map((q) => q.y)), rr = Math.max(...prof.map((q) => q.r));
-          const tex = crumbTex(soak); tex.repeat.set(1 / (2 * rr), 1 / hh); tex.offset.set(0.5, 0);
-          const face = new T.Mesh(new T.ShapeGeometry(crossSectionShape(prof), 3), new T.MeshStandardMaterial({ map: tex, roughness: 0.9, side: T.DoubleSide }));
-          face.rotation.y = -phiStart; h.add(face);
-        }
-        bg.add(h); return h;
-      };
-      const bottom = [{ r: 0, y: 0, v: 0 }, { r: Rb * 0.92, y: 0, v: 0.2 }, { r: Rb, y: 0.007, v: 0.4 }, { r: Rb * 0.98, y: 0.017, v: 0.6 }, { r: Rb * 0.85, y: 0.022, v: 0.8 }, { r: 0, y: 0.022, v: 1 }];
-      const top = [{ r: 0, y: 0, v: 0 }, { r: Rb * 0.97, y: 0, v: 0.15 }, { r: Rb, y: 0.006, v: 0.3 }, { r: Rb * 0.93, y: 0.013, v: 0.5 }, { r: Rb * 0.72, y: 0.02, v: 0.7 }, { r: Rb * 0.4, y: 0.024, v: 0.85 }, { r: 0, y: 0.025, v: 1 }];
-      this.bunBottomH = 0.022;
-      half(bottom, -this.bunBottomH, p.bunSoak || 0);
-      this.bunTop = half(top, 0, 0);
-      // sesame seeds on the dome (only on the retained half when cut)
-      const seedGeo = new T.SphereGeometry(1, 6, 5); const seedMat = new T.MeshStandardMaterial({ color: 0xf6ead2, roughness: 0.6 });
-      let sd = 7; const rnd = () => { sd = (sd * 1103515245 + 12345) & 0x7fffffff; return sd / 0x7fffffff; };
-      for (let i = 0; i < 70; i++) {
-        const a = rnd() * Math.PI * 2, rr = Math.sqrt(rnd()) * Rb * 0.9;
-        if (this.cutaway) { const rel = ((a - phiStart) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2); if (rel > Math.PI) continue; }
-        let y = 0; for (let k = 1; k < top.length; k++) if (rr <= top[k - 1].r && rr >= top[k].r) { const t = (top[k - 1].r - rr) / (top[k - 1].r - top[k].r + 1e-9); y = lerp(top[k - 1].y, top[k].y, t); }
-        const sm = new T.Mesh(seedGeo, seedMat); sm.position.set(Math.cos(a) * rr, y + 0.0005, Math.sin(a) * rr); sm.scale.set(0.0016, 0.0009, 0.0011); sm.rotation.y = rnd() * 3; this.bunTop.add(sm);
-      }
-    }
+    viewOf(p) { return p ? this.views.get(p) : null; }
+    get pattyGroup() { const v = this.viewOf(this.selected); return v ? v.group : null; }
+    get patty() { return this.selected; }
+    /** Slice the selected patty along the plane facing the camera; nothing moves, only the cut. */
     setCutaway(on) {
       this.cutaway = on;
-      if (on) this.cutPhi = this.controls.goal.azimuth + Math.PI / 2; // retained half sits away from the camera
-      if (this.pattyGroup) this._rebuildGeometry(true);
+      const phi = this.controls.goal.azimuth + Math.PI / 2;
+      for (const [p, v] of this.views) { const want = on && p === this.selected; if (v.cutaway !== want || (want && on)) v.setCutaway(want, phi); }
     }
-    _rebuildGeometry(force) {
-      const p = this.patty; if (!p) return;
-      const R = p.D / 2, h = p.h, dome = p.dome;
-      const raw = 1 - clamp((p.dM.reduce((a, b) => a + b, 0) / p.N) * 1.2, 0, 1);
-      const key = [R.toFixed(4), h.toFixed(4), dome.toFixed(2), raw.toFixed(2), this.cutaway].join('|');
-      if (!force && key === this.lastGeo) return; this.lastGeo = key;
-      const prof = pattyProfile(R, h, dome, p.dimple, raw);
-      const phi = this.cutaway ? Math.PI : Math.PI * 2;
-      this.pattyMesh.geometry.dispose(); this.pattyMesh.geometry = buildLathe(prof, 96, phi, this.cutaway ? this.cutPhi : 0);
-      if (this.served) this._buildBuns(p);
-      if (this.cutaway) {
-        this.cutMesh.geometry.dispose(); this.cutMesh.geometry = new T.ShapeGeometry(crossSectionShape(prof), 4);
-        this.cutMesh.rotation.y = -(this.cutPhi || 0); // the shape lives in the XY plane (phi = 0); turn it onto the cut plane
-        this.cutMesh.visible = true;
-        this.cutTex.repeat.set(1 / (2 * R * 1.06), 1 / (h * 1.02)); this.cutTex.offset.set(0.5, 0); this.cutTex.wrapS = this.cutTex.wrapT = T.ClampToEdgeWrapping;
-      } else this.cutMesh.visible = false;
+    pickPatty(clientX, clientY) {
+      const rect = this.canvas.getBoundingClientRect();
+      const ndc = new T.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+      const ray = new T.Raycaster(); ray.setFromCamera(ndc, this.camera);
+      const targets = []; for (const v of this.views.values()) { targets.push(v.mesh); if (v.cutMesh.visible) targets.push(v.cutMesh); }
+      const hits = ray.intersectObjects(targets, false);
+      return hits.length ? hits[0].object.userData.patty : null;
     }
-    _paintTextures() {
-      const p = this.patty; if (!p) return;
-      const N = p.N, A = this.atlas, c = A.getContext('2d'), W = A.width, H = A.height;
-      // regions in canvas pixels: caps are the two top quadrants, side strip is the lower half
-      const bt = { y0: 0, y1: H / 2, x0: 0, x1: W / 2 }, bb = { y0: 0, y1: H / 2, x0: W / 2, x1: W }, bs = { y0: H * (1 - BANDS.side[1]), y1: H * (1 - BANDS.side[0]), x0: 0, x1: W };
-      c.clearRect(0, 0, W, H);
-      const topCol = p.faceUp.brown > 0.3 ? faceColour(p.faceUp, nodeColour(p, N - 1)) : nodeColour(p, N - 1);
-      c.fillStyle = rgb(topCol); c.fillRect(bt.x0, bt.y0, bt.x1 - bt.x0, bt.y1 - bt.y0);
-      const botCol = faceColour(p.faceDown, nodeColour(p, 0)); c.fillStyle = rgb(botCol); c.fillRect(bb.x0, bb.y0, bb.x1 - bb.x0, bb.y1 - bb.y0);
-      // --- side: node stripes bottom→top
-      for (let i = 0; i < N; i++) {
-        const y1 = bs.y1 - ((i) / N) * (bs.y1 - bs.y0), y0 = bs.y1 - ((i + 1) / N) * (bs.y1 - bs.y0);
-        let col = nodeColour(p, i);
-        if (i === 0) col = mix3(col, botCol, 0.7); if (i === N - 1) col = mix3(col, topCol, 0.7);
-        c.fillStyle = rgb(col); c.fillRect(0, y0 - 0.5, W, y1 - y0 + 1);
-      }
-      // grain
-      c.globalCompositeOperation = 'multiply'; c.globalAlpha = 0.7; c.drawImage(this.noise, 0, 0, W, H); c.globalAlpha = 1;
-      c.globalCompositeOperation = 'multiply'; c.globalAlpha = 0.35; c.drawImage(this.noiseFine, 0, 0, W, H); c.globalAlpha = 1;
-      c.globalCompositeOperation = 'source-over';
-      // marbling: visible fat flecks fade as the fat renders
-      const fatLeft = (i) => clamp((p.fs[i] + p.fl[i]) / (p.fat0 + 1e-12), 0, 1);
-      const paintFat = (y0, y1, frac, melted) => {
-        c.save(); c.beginPath(); c.rect(0, y0, W, y1 - y0); c.clip();
-        c.globalAlpha = 0.85 * frac * p.fatFrac * 3.2; c.globalCompositeOperation = 'lighter';
-        c.fillStyle = rgb(melted ? COL.fatMelt : COL.fat);
-        c.drawImage(this.marble, 0, 0, W, H); c.restore();
-      };
-      // use the mask as an alpha source: draw tinted by compositing
-      const tintMask = (mask, colour, alpha, rg) => {
-        if (alpha <= 0.002) return;
-        const off = this._off || (this._off = document.createElement('canvas')); off.width = W; off.height = H; const oc = off.getContext('2d');
-        oc.clearRect(0, 0, W, H); oc.drawImage(mask, 0, 0, W, H); oc.globalCompositeOperation = 'source-in'; oc.fillStyle = rgb(colour); oc.fillRect(0, 0, W, H); oc.globalCompositeOperation = 'source-over';
-        c.save(); c.beginPath(); c.rect(rg.x0, rg.y0, rg.x1 - rg.x0, rg.y1 - rg.y0); c.clip(); c.globalAlpha = alpha; c.drawImage(off, 0, 0); c.restore();
-      };
-      const rawTop = p.faceUp.brown < 0.3;
-      if (rawTop) tintMask(this.marble, p.T[N - 1] > 40 ? COL.fatMelt : COL.fat, 0.9 * fatLeft(N - 1) * p.fatFrac * 3, bt);
-      tintMask(this.marble, COL.fatMelt, 0.6 * (fatLeft(Math.floor(N / 2))) * p.fatFrac * 3, bs);
-      // crust texture: darker mottled spots where the pan contact was best, black char blotches
-      const crustSpots = (face, rg) => {
-        tintMask(this.spots, [40, 20, 10], clamp(face.brown / 4, 0, 0.6), rg);
-        tintMask(this.blotch, COL.char, clamp(face.char / 0.6, 0, 0.75), rg);
-        tintMask(this.spots, COL.char, clamp(face.char / 0.4, 0, 0.9), rg);
-        if (face.torn > 0) tintMask(this.marbleCut, [150, 60, 60], clamp(face.torn * 3, 0, 0.8), rg);
-      };
-      crustSpots(p.faceDown, bb); if (!rawTop) crustSpots(p.faceUp, bt);
-      // doming: the centre of the down face lifts off the pan and browns less
-      if (p.dome > 0.2) { const cx = (bb.x0 + bb.x1) / 2, cy = (bb.y0 + bb.y1) / 2; const g = c.createRadialGradient(cx, cy, 0, cx, cy, W * 0.2); g.addColorStop(0, `rgba(150,110,95,${0.7 * p.dome})`); g.addColorStop(1, 'rgba(150,110,95,0)'); c.fillStyle = g; c.fillRect(bb.x0, bb.y0, bb.x1 - bb.x0, bb.y1 - bb.y0); }
-      // juice sheen on top / frost when frozen
-      if (p.poolTop > 1e-5) { c.fillStyle = `rgba(200,70,80,${clamp(p.poolTop / 0.002, 0, 0.5)})`; c.fillRect(bt.x0, bt.y0, bt.x1 - bt.x0, bt.y1 - bt.y0); }
-      if (p.T[N - 1] < -2) { c.fillStyle = `rgba(235,240,255,${clamp(-p.T[N - 1] / 20, 0, 0.6)})`; c.fillRect(0, 0, W, H); }
-      this.atlasTex.needsUpdate = true;
-      // roughness map: wet (juicy/fatty) is shiny; dry crust is matte
-      const rc = this.roughCv.getContext('2d');
-      const wet = (i) => clamp(p.w[i] / p.w0, 0, 1);
-      const rough = (v) => `rgb(${(v * 255) | 0},${(v * 255) | 0},${(v * 255) | 0})`;
-      rc.fillStyle = rough(lerp(0.9, 0.35, clamp(wet(N - 1) * (rawTop ? 1 : 0.4) + clamp(p.poolTop / 0.002, 0, 0.6) + clamp(p.fatTop / 0.001, 0, 0.4), 0, 1))); rc.fillRect(bt.x0, bt.y0, bt.x1 - bt.x0, bt.y1 - bt.y0);
-      rc.fillStyle = rough(lerp(0.95, 0.5, wet(0) * 0.3)); rc.fillRect(bb.x0, bb.y0, bb.x1 - bb.x0, bb.y1 - bb.y0);
-      rc.fillStyle = rough(lerp(0.9, 0.3, wet(Math.floor(N / 2)))); rc.fillRect(bs.x0, bs.y0, bs.x1 - bs.x0, bs.y1 - bs.y0);
-      this.roughTex.needsUpdate = true;
-
-      // --- cross-section texture (only when cutaway is showing)
-      if (this.cutaway) {
-        const cc = this.cut.getContext('2d'), CW = this.cut.width, CH = this.cut.height;
-        for (let i = 0; i < N; i++) {
-          const y1 = CH - (i / N) * CH, y0 = CH - ((i + 1) / N) * CH;
-          cc.fillStyle = rgb(nodeColour(p, i)); cc.fillRect(0, y0 - 0.5, CW, y1 - y0 + 1);
-        }
-        cc.globalCompositeOperation = 'multiply'; cc.globalAlpha = 0.45; cc.drawImage(this.noiseFine, 0, 0, CW, CH); cc.globalAlpha = 1; cc.globalCompositeOperation = 'source-over';
-        // marbling flecks per node, fading as rendered; melted fat glistens
-        for (let i = 0; i < N; i++) {
-          const y1 = CH - (i / N) * CH, y0 = CH - ((i + 1) / N) * CH;
-          const fl = fatLeft(i); const melted = p.T[i] > 42;
-          if (fl > 0.02) {
-            const off = this._off2 || (this._off2 = document.createElement('canvas')); off.width = CW; off.height = CH; const oc = off.getContext('2d');
-            oc.clearRect(0, 0, CW, CH); oc.drawImage(this.marbleCut, 0, 0, CW, CH); oc.globalCompositeOperation = 'source-in'; oc.fillStyle = rgb(melted ? COL.fatMelt : COL.fat); oc.fillRect(0, 0, CW, CH); oc.globalCompositeOperation = 'source-over';
-            cc.save(); cc.beginPath(); cc.rect(0, y0, CW, y1 - y0); cc.clip(); cc.globalAlpha = 0.9 * fl * p.fatFrac * 3; cc.drawImage(off, 0, 0); cc.restore();
-          }
-        }
-        // crust bands
-        const crustH = (f) => clamp(f.brown / 7, 0, 1) * 0.06 * CH + 2;
-        cc.fillStyle = rgb(faceColour(p.faceDown, nodeColour(p, 0))); cc.fillRect(0, CH - crustH(p.faceDown), CW, crustH(p.faceDown));
-        if (p.faceUp.brown > 0.3) { cc.fillStyle = rgb(faceColour(p.faceUp, nodeColour(p, N - 1))); cc.fillRect(0, 0, CW, crustH(p.faceUp)); }
-        // free juice glistening between fibres near the faces
-        for (let i = 0; i < N; i++) {
-          const free = Math.max(0, p.w[i] - P.waterHolding(p, i) * p.w0) / p.w0;
-          if (free > 0.005) { const y1 = CH - (i / N) * CH, y0 = CH - ((i + 1) / N) * CH; cc.fillStyle = `rgba(230,90,100,${clamp(free * 6, 0, 0.5)})`; cc.fillRect(0, y0, CW, y1 - y0); }
-        }
-        this.cutTex.needsUpdate = true;
-      }
-    }
-
     // ---- per-frame update from the physics state
     setMode(mode) {
       this.mode = mode;
@@ -702,102 +817,47 @@
       this.oilMat.color.setRGB(lerp(0.85, 0.6, Math.max(deep, fondT * 0.5)), lerp(0.63, 0.34, Math.max(deep, fondT)), lerp(0.22, 0.07, deep));
       this._paintDirt(pan, dt);
 
-      // patty placement
-      if (p && this.patty !== p) this.setPatty(p);
-      if (!p && this.patty) this.setPatty(null);
-      if (p) {
-        const g = this.pattyGroup;
-        if (state.where === 'pan') { g.position.set(0, this.panFloorY + 0.0012 * p.cheeseUnder.length, 0); }
-        else if (state.where === 'board') { g.position.set(0, 0, 0); }
-        else {
-          const served = !!state.served;
-          if (served !== this.served) { this.served = served; if (served) this._buildBuns(p); else if (this.bunGroup) { g.remove(this.bunGroup); this.bunGroup = null; } }
-          g.position.set(this.mode === 'stove' ? 0.42 : 0, (this.mode === 'stove' ? 0.009 : 0) + (served ? this.bunBottomH : 0), this.mode === 'stove' ? 0.12 : 0);
-          if (this.bunTop) this.bunTop.position.y = p.h * (1 + 0.28 * p.dome) + p.cheeses.length * 0.0015 + 0.001;
-        }
-        this._rebuildGeometry(false);
-        if (this.texClock > 0.08 || this.forceTex) { this.texClock = 0; this.forceTex = false; this._paintTextures(); }
-        // cheese stack: one draped, vertex-coloured mesh per slice
-        this.cheeseMeshes = this.cheeseMeshes || [];
-        while (this.cheeseMeshes.length > p.cheeses.length) g.remove(this.cheeseMeshes.pop());
-        while (this.cheeseMeshes.length < p.cheeses.length) {
-          const k = this.cheeseMeshes.length;
-          const geo = new T.PlaneGeometry(0.095, 0.095, 14, 14); geo.rotateX(-Math.PI / 2);
-          geo.setAttribute('color', new T.BufferAttribute(new Float32Array(geo.attributes.position.count * 3).fill(1), 3));
-          const m = new T.Mesh(geo, new T.MeshPhysicalMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.5, clearcoat: 0.3, side: T.DoubleSide }));
-          m.castShadow = true; m.userData.base = geo.attributes.position.array.slice(); m.rotation.y = p.cheeses[k].rot; g.add(m); this.cheeseMeshes.push(m);
-        }
-        const yellow = [0.95, 0.70, 0.24], melted = [0.99, 0.74, 0.20], golden = [0.72, 0.42, 0.10], dark = [0.28, 0.13, 0.05];
-        const skirtColour = (sk, onTop) => { if (!sk) return onTop; let c = mix3(onTop, golden, clamp(sk.brown / 2.5, 0, 1)); c = mix3(c, dark, clamp((sk.brown - 2.5) / 3, 0, 1)); return mix3(c, [0.06, 0.05, 0.04], clamp(sk.char / 0.8, 0, 1)); };
-        // cheese that was flipped face-down: flat fried squares pressed between the pan and the meat
-        this.underMeshes = this.underMeshes || [];
-        while (this.underMeshes.length > p.cheeseUnder.length) g.remove(this.underMeshes.pop());
-        while (this.underMeshes.length < p.cheeseUnder.length) {
-          const geo = new T.PlaneGeometry(0.095, 0.095, 2, 2); geo.rotateX(-Math.PI / 2);
-          const m = new T.Mesh(geo, new T.MeshPhysicalMaterial({ color: 0xf2b23c, roughness: 0.5, clearcoat: 0.2, side: T.DoubleSide }));
-          m.receiveShadow = true; g.add(m); this.underMeshes.push(m);
-        }
-        for (let k = 0; k < this.underMeshes.length; k++) {
-          const mesh = this.underMeshes[k], ch = p.cheeseUnder[k], sk = ch.skirt;
-          const lift = 0.0012 * p.cheeseUnder.length;
-          mesh.rotation.y = ch.rot; mesh.position.y = -lift + 0.0005 + k * 0.0012; const sp = 1.06 + 0.06 * ch.melt; mesh.scale.set(sp, 1, sp);
-          const c = skirtColour(sk, mix3(yellow, melted, ch.melt)); mesh.material.color.setRGB(c[0], c[1], c[2]);
-          mesh.material.roughness = clamp(0.5 - 0.3 * ch.melt + (sk ? 0.4 * sk.dry : 0), 0.05, 1);
-        }
-        // when the burger is cut away, cheese on the removed half is folded onto the cut plane
-        const TAU = Math.PI * 2;
-        const clipFor = (rot) => {
-          if (!this.cutaway) return null;
-          const cr = Math.cos(rot), sr = Math.sin(rot), cp = this.cutPhi, dx = Math.cos(cp), dz = Math.sin(cp);
-          return (x, z) => { const gx = x * cr + z * sr, gz = -x * sr + z * cr; const rel = ((Math.atan2(gz, gx) - cp) % TAU + TAU) % TAU; if (rel < Math.PI) return null; const t = gx * dx + gz * dz; const px = t * dx, pz = t * dz; return [px * cr - pz * sr, px * sr + pz * cr]; };
-        };
-        for (let k = 0; k < this.cheeseMeshes.length; k++) {
-          const mesh = this.cheeseMeshes[k], ch = p.cheeses[k], R = p.D / 2, geo = mesh.geometry, pos = geo.attributes.position.array, col = geo.attributes.color.array, base = mesh.userData.base;
-          const clip = clipFor(ch.rot);
-          const topY = p.h * (1 + 0.28 * p.dome) + k * 0.0015; mesh.position.y = topY + 0.0008;
-          const floorLocal = -mesh.position.y + 0.0006 + k * 0.0004; // pan / plate surface, in mesh coordinates
-          const sk = ch.skirt; const sc = 1 + 0.15 * ch.melt + 0.004 * k;
-          const onTop = mix3(yellow, melted, ch.melt);
-          const skirtCol = skirtColour(sk, onTop);
-          for (let i = 0; i < pos.length; i += 3) {
-            const x = base[i], z = base[i + 2]; const rr = Math.hypot(x, z);
-            const over = Math.max(0, rr - R * 0.98);
-            let y = base[i + 1] - over * (0.2 + 1.6 * ch.melt);
-            const touching = y <= floorLocal;
-            let spread = sc;
-            if (touching) { y = floorLocal; spread = sc + (sk ? 0.18 * sk.melt : 0) + 0.1 * ch.melt * over / Math.max(rr, 1e-4); }
-            pos[i] = x * spread; pos[i + 2] = z * spread; pos[i + 1] = y;
-            if (clip) { const q = clip(pos[i], pos[i + 2]); if (q) { pos[i] = q[0]; pos[i + 2] = q[1]; } }
-            const c = touching || ch.submerged || ch.fried ? skirtCol : onTop;
-            col[i] = c[0]; col[i + 1] = c[1]; col[i + 2] = c[2];
-          }
-          geo.attributes.position.needsUpdate = true; geo.attributes.color.needsUpdate = true; geo.computeVertexNormals();
-          mesh.material.roughness = clamp(0.6 - 0.45 * ch.melt + (sk ? 0.35 * sk.dry : 0), 0.05, 1);
-          mesh.material.clearcoat = 0.3 * (1 - (sk ? sk.dry : 0));
-        }
-      }
-
-      // particles
-      const d = state.diag, R = p ? p.D / 2 : 0.05;
-      const onPan = p && state.where === 'pan';
-      const gx = onPan ? 0 : 0, gz = 0, gy = this.panFloorY;
-      const oilDepth = state.pan.oilDepth || 0, under = p && oilDepth > p.h;
-      const surfY = gy + Math.max(0.002, oilDepth);
-      const edge = () => { const a = Math.random() * Math.PI * 2; const rr = R * rand(0.9, 1.15); return [gx + Math.cos(a) * rr, surfY, gz + Math.sin(a) * rr]; };
-      const anywhereTop = () => { const a = Math.random() * Math.PI * 2; const rr = Math.sqrt(Math.random()) * R * 0.9; return [gx + Math.cos(a) * rr, Math.max(surfY, gy + (p ? p.h : 0) + 0.003), gz + Math.sin(a) * rr]; };
-      const panSpot = () => { const a = Math.random() * Math.PI * 2; const rr = Math.sqrt(Math.random()) * this.panR * 0.8; return [Math.cos(a) * rr, surfY, Math.sin(a) * rr]; };
+      // ---- patties: one view each; the selected one gets the probe and the cutaway
+      const list = state.patties && state.patties.length ? state.patties : (this.previewPatty ? [this.previewPatty] : []);
+      this.syncViews(list);
+      const sel = state.patties && state.patties.length ? state.patty : this.previewPatty;
+      if (sel !== this.selected) { this.selected = sel; if (this.cutaway) this.setCutaway(true); }
       const stoveOn = this.mode === 'stove';
-      const steamRate = stoveOn ? (onPan ? d.evapBottom * 6000 + (p ? p.evapTop * 3000 : 0) : 0) + d.evapPan * 5000 : 0;
-      this.steam.update(dt, Math.min(steamRate, 160), () => (Math.random() < 0.7 && onPan ? edge() : onPan && Math.random() < 0.5 ? anywhereTop() : panSpot()), 0.01);
-      this.smoke.update(dt, stoveOn ? clamp(d.smoke, 0, 2) * 45 : 0, () => (Math.random() < 0.6 && onPan ? edge() : panSpot()), 0.02);
-      // sizzle bubbles in the fat around the patty rim
-      const bubbleRate = stoveOn ? (onPan ? d.evapBottom * 9000 : 0) + d.evapPan * 6000 + d.oilBubble * 40 : 0;
+      const plateBase = stoveOn ? { x: 0.42, y: 0.009, z: 0.12 } : { x: 0, y: 0, z: 0 };
+      const offPan = list.filter((q) => q.where !== 'pan' && q.where !== 'board');
+      if (this.plate) { this.plate.scale.set(1 + 0.55 * Math.max(0, offPan.length - 1), 1, 1); }
+      for (const q of list) {
+        const v = this.views.get(q);
+        const where = state.patties && state.patties.length ? q.where : 'board';
+        let pos;
+        if (where === 'pan') pos = { x: q.pos.x, y: 0, z: q.pos.y };
+        else if (where === 'board') pos = { x: 0, y: 0, z: 0 };
+        else { const i = offPan.indexOf(q); pos = { x: plateBase.x + (i - (offPan.length - 1) / 2) * 0.115, y: plateBase.y, z: plateBase.z }; }
+        if (this.forceTex) v.forceTex = true;
+        v.update(state, dt, where, pos, this.mode);
+      }
+      this.forceTex = false;
+
+      // ---- particles: sizzle, steam, smoke, spatter, beads and drips around every patty on the pan
+      const d = state.diag;
+      const onPan = list.filter((q) => q.where === 'pan');
+      const gy = this.panFloorY, oilDepth = state.pan.oilDepth || 0;
+      const surfY = gy + Math.max(0.002, oilDepth);
+      const pick = () => onPan[Math.floor(Math.random() * onPan.length)];
+      const edge = () => { const q = pick(); const a = Math.random() * Math.PI * 2; const rr = (q.D / 2) * rand(0.9, 1.15); return [q.pos.x + Math.cos(a) * rr, surfY, q.pos.y + Math.sin(a) * rr]; };
+      const anywhereTop = () => { const q = pick(); const a = Math.random() * Math.PI * 2; const rr = Math.sqrt(Math.random()) * (q.D / 2) * 0.9; return [q.pos.x + Math.cos(a) * rr, Math.max(surfY, gy + q.h + 0.003), q.pos.y + Math.sin(a) * rr]; };
+      const panSpot = () => { const a = Math.random() * Math.PI * 2; const rr = Math.sqrt(Math.random()) * this.panR * 0.8; return [Math.cos(a) * rr, surfY, Math.sin(a) * rr]; };
+      const any = onPan.length > 0;
+      let evapTopAll = 0; for (const q of onPan) evapTopAll += q.evapTop || 0;
+      const steamRate = stoveOn ? (any ? d.evapBottom * 6000 + evapTopAll * 3000 : 0) + d.evapPan * 5000 : 0;
+      this.steam.update(dt, Math.min(steamRate, 160), () => (Math.random() < 0.7 && any ? edge() : any && Math.random() < 0.5 ? anywhereTop() : panSpot()), 0.01);
+      this.smoke.update(dt, stoveOn ? clamp(d.smoke, 0, 2) * 45 : 0, () => (Math.random() < 0.6 && any ? edge() : panSpot()), 0.02);
+      const bubbleRate = stoveOn ? (any ? d.evapBottom * 9000 : 0) + d.evapPan * 6000 + d.oilBubble * 40 : 0;
       this.bubbles.acc += Math.min(bubbleRate, 250) * dt;
-      while (this.bubbles.acc >= 1) { this.bubbles.acc -= 1; const e = onPan && Math.random() < 0.8 ? edge() : panSpot(); this.bubbles.spawn({ x: e[0], y: e[1], z: e[2], age: 0, life: rand(0.08, 0.3), s: rand(0.4, 1.0) }); }
+      while (this.bubbles.acc >= 1) { this.bubbles.acc -= 1; const e = any && Math.random() < 0.8 ? edge() : panSpot(); this.bubbles.spawn({ x: e[0], y: e[1], z: e[2], age: 0, life: rand(0.08, 0.3), s: rand(0.4, 1.0) }); }
       this.bubbles.update(dt, (b, dt) => { b.age += dt; b.s *= 1 + dt * 2; return b.age < b.life; });
-      // spatter: droplets thrown out of the fat, landing on the stove
       this.spatter.acc += (stoveOn ? clamp(d.spatter, 0, 40) : 0) * dt;
-      while (this.spatter.acc >= 1) { this.spatter.acc -= 1; const e = onPan && Math.random() < 0.85 ? edge() : panSpot(); const a = Math.random() * Math.PI * 2, v = rand(0.25, 0.9); this.spatter.spawn({ x: e[0], y: e[1], z: e[2], vx: Math.cos(a) * v * 0.6, vy: v, vz: Math.sin(a) * v * 0.6, age: 0, s: rand(0.5, 1.3) }); }
+      while (this.spatter.acc >= 1) { this.spatter.acc -= 1; const e = any && Math.random() < 0.85 ? edge() : panSpot(); const a = Math.random() * Math.PI * 2, v = rand(0.25, 0.9); this.spatter.spawn({ x: e[0], y: e[1], z: e[2], vx: Math.cos(a) * v * 0.6, vy: v, vz: Math.sin(a) * v * 0.6, age: 0, s: rand(0.5, 1.3) }); }
       this.spatter.update(dt, (b, dt) => {
         b.vy -= 9.81 * dt; b.x += b.vx * dt; b.y += b.vy * dt; b.z += b.vz * dt;
         const rr = Math.hypot(b.x, b.z);
@@ -805,18 +865,22 @@
         if (b.y < (this.stainY || 0.0012) + 0.0005 && rr > this.panR) { this._addStain(b.x, b.z, b.s); return false; }
         if (b.y < -0.05) return false; return true;
       });
-      // juice beads on the top surface
-      if (p && onPan && !under) {
-        const want = clamp(Math.round(p.poolTop / 0.00001), 0, 120);
-        while (this.beads.parts.length < want) { const e = anywhereTop(); this.beads.spawn({ x: e[0], y: e[1] - 0.0025, z: e[2], s: rand(0.5, 1.5), sy: 0.6 }); }
-        while (this.beads.parts.length > want) this.beads.parts.pop();
-        const topY = gy + p.h; for (const b of this.beads.parts) { const rr = Math.hypot(b.x, b.z); b.y = topY + 0.28 * p.dome * p.h * (1 - (rr / R) ** 2) + 0.0005 + (p.dimple ? 0 : 0); }
-      } else this.beads.parts.length = 0;
-      this.beads.update(dt, () => true);
-      // rendered fat running down the sides
-      this.drips.acc += (stoveOn && onPan ? clamp(d.fatDrip * 3000, 0, 12) : 0) * dt;
-      while (this.drips.acc >= 1) { this.drips.acc -= 1; const a = Math.random() * Math.PI * 2; this.drips.spawn({ x: Math.cos(a) * R * 1.01, y: gy + p.h * rand(0.3, 0.9), z: Math.sin(a) * R * 1.01, a, age: 0, s: rand(0.6, 1.2), sy: 1.8 }); }
-      this.drips.update(dt, (b, dt) => { b.y -= 0.008 * dt; b.x = Math.cos(b.a) * R * 1.02; b.z = Math.sin(b.a) * R * 1.02; b.age += dt; return b.y > gy + 0.001 && b.age < 6; });
+      // juice beads on every top surface that is not under oil
+      {
+        const parts = this.beads.parts;
+        for (const q of onPan) {
+          if (oilDepth > q.h) { for (let i = parts.length - 1; i >= 0; i--) if (parts[i].q === q) parts.splice(i, 1); continue; }
+          const want = clamp(Math.round(q.poolTop / 0.00001), 0, 120); let have = 0; for (const b of parts) if (b.q === q) have++;
+          while (have < want) { const a = Math.random() * Math.PI * 2, rr = Math.sqrt(Math.random()) * (q.D / 2) * 0.9; parts.push({ q, x: q.pos.x + Math.cos(a) * rr, y: 0, z: q.pos.y + Math.sin(a) * rr, s: rand(0.5, 1.5), sy: 0.6 }); have++; }
+          for (let i = parts.length - 1; i >= 0 && have > want; i--) if (parts[i].q === q) { parts.splice(i, 1); have--; }
+          const R = q.D / 2, topY = gy + q.h; for (const b of parts) if (b.q === q) { const rr = Math.hypot(b.x - q.pos.x, b.z - q.pos.y); b.y = topY + 0.28 * q.dome * q.h * (1 - (rr / R) ** 2) + 0.0005; }
+        }
+        for (let i = parts.length - 1; i >= 0; i--) if (!onPan.includes(parts[i].q)) parts.splice(i, 1);
+        this.beads.update(dt, () => true);
+      }
+      this.drips.acc += (stoveOn && any ? clamp(d.fatDrip * 3000, 0, 12) : 0) * dt;
+      while (this.drips.acc >= 1) { this.drips.acc -= 1; const q = pick(); const a = Math.random() * Math.PI * 2; this.drips.spawn({ q, x: q.pos.x + Math.cos(a) * (q.D / 2) * 1.01, y: gy + q.h * rand(0.3, 0.9), z: q.pos.y + Math.sin(a) * (q.D / 2) * 1.01, a, age: 0, s: rand(0.6, 1.2), sy: 1.8 }); }
+      this.drips.update(dt, (b, dt) => { const q = b.q; if (q.where !== 'pan') return false; b.y -= 0.008 * dt; b.x = q.pos.x + Math.cos(b.a) * (q.D / 2) * 1.02; b.z = q.pos.y + Math.sin(b.a) * (q.D / 2) * 1.02; b.age += dt; return b.y > gy + 0.001 && b.age < 6; });
 
       this.controls.update(dt);
       this.renderer.render(this.scene, this.camera);
@@ -860,7 +924,7 @@
       const rect = this.canvas.getBoundingClientRect();
       const ndc = new T.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
       const ray = new T.Raycaster(); ray.setFromCamera(ndc, this.camera);
-      const targets = []; if (this.pattyMesh) targets.push(this.pattyMesh); if (this.cutMesh && this.cutMesh.visible) targets.push(this.cutMesh); if (this.panMesh && this.stove.visible) targets.push(this.panMesh);
+      const targets = []; for (const v of this.views.values()) { targets.push(v.mesh); if (v.cutMesh.visible) targets.push(v.cutMesh); } if (this.panMesh && this.stove.visible) targets.push(this.panMesh);
       this.stove.visible && targets.push(this.stove.children[0]); this.board.visible && targets.push(this.board.children[0]);
       const hits = ray.intersectObjects(targets, false);
       return hits.length ? hits[0].point : null;
@@ -920,6 +984,7 @@
     onUp(e) {
       const d = this.drag; if (!d) return; this.drag = null;
       if (d.b === 2 && d.moved < 6) this.zoomToPoint(e.clientX, e.clientY);
+      if (d.b === 0 && d.moved < 6 && this.vp.onPick) { const p = this.vp.pickPatty(e.clientX, e.clientY); if (p) this.vp.onPick(p); }
     }
     zoomToPoint(x, y) {
       if (this.zoomStack) { this.goal = this.zoomStack; this.zoomStack = null; return; }

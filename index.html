@@ -13,6 +13,7 @@
 <header id="hud">
   <div class="brand">GRIDDLE <small>burger thermodynamics, nothing hidden</small></div>
   <div class="ticket" id="ticket" data-phase="form cook rest result" tabindex="0">Ticket: <b id="ticket-target">—</b></div>
+  <div class="chips" id="chips" hidden></div>
   <div class="readouts" data-phase="cook rest">
     <div class="ro"><label>IR gun · pan</label><span id="h-pan">—</span></div>
     <div class="ro"><label>probe</label><span id="h-probe">—</span></div>
@@ -47,7 +48,7 @@
 <!-- side panel: forming -->
 <aside id="panel">
   <div data-phase="form" class="section">
-    <h2>1 · Form the patty</h2>
+    <h2 id="f-title">1 · Form the patty</h2>
     <div class="row"><label>Beef blend</label><select id="f-blend">
       <option value="70/30">70/30 — chuck + fat trim</option><option value="80/20" selected>80/20 — classic chuck</option><option value="85/15">85/15 — lean chuck</option><option value="90/10">90/10 — sirloin</option><option value="93/7">93/7 — extra lean</option></select></div>
     <div class="row"><label>Meat <b id="f-mass-v" data-fmt="% g">150 g</b></label><input type="range" id="f-mass" min="80" max="340" step="5" value="150"></div>
@@ -64,7 +65,7 @@
       <dt>Cook time</dt><dd id="f-time"></dd>
     </dl>
     <p class="warn" id="f-warn"></p>
-    <button class="primary" id="btn-to-stove">To the stove →</button>
+    <div class="row two"><button id="btn-copy" hidden title="Give every patty on this ticket the same shape as this one">Same for all patties</button><button class="primary" id="btn-to-stove">To the stove →</button></div>
   </div>
 
   <div data-phase="cook" class="section">
@@ -106,6 +107,7 @@
     <div class="big"><span id="rest-c">—</span><small>centre (probe)</small></div>
     <div class="row probe"><button id="btn-probe-rest" hidden></button></div>
     <button class="primary" id="btn-cut">On a bun, cut it open & serve</button>
+    <p class="muted">Every burger on the ticket goes out together. A patty that sat on the plate while the others cooked goes out lukewarm.</p>
   </div>
 
   <div data-phase="cook rest" id="log"></div>
@@ -123,6 +125,8 @@
   <div class="card wide">
     <div class="eyebrow">Service</div>
     <div class="scoreline"><div class="score"><span id="r-score">0</span><small>/100</small></div><div><h1 id="r-verdict"></h1><p class="muted" id="r-grade"></p></div></div>
+    <div class="chips" id="r-chips" hidden></div>
+    <p class="ticket-sum" id="r-ticket" hidden></p>
     <div id="r-parts"></div>
     <table class="stats"><tbody id="r-stats"></tbody></table>
     <ul id="r-notes"></ul>

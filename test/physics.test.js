@@ -105,7 +105,7 @@ test('oil past its smoke point smokes; a well-done order is scored on a 71+ °C 
   const s = P.createState({}); P.addFat(s, 'butter', 10); preheat(s, 230); cookFor(s, 5);
   assert.ok(s.diag.smoke > 0.2, `smoke=${s.diag.smoke}`);
   const p = std({ thicknessMm: 12, massG: 110 }); P.placePatty(s, p);
-  while (P.centerT(p) < 66) { cookHeld(s, 30, 220); P.flipPatty(s); }
+  while (P.centerT(p) < 68) { cookHeld(s, 30, 220); P.flipPatty(s); }
   P.removePatty(s); cookFor(s, 90);
   const r = P.evaluate(s, 'well-done');
   assert.ok(r.peak >= 71 && r.peak <= 80, `peak=${r.peak}`); assert.ok(r.parts.doneness >= 40, `doneness=${r.parts.doneness}`);
@@ -238,7 +238,7 @@ function recipe(target, thick, pull, opts = {}) {
   return P.evaluate(s, target);
 }
 test('the README recipe scores 100 on every ticket', () => {
-  const plan = [['rare', 18, 41], ['medium-rare', 18, 46], ['medium', 14, 54], ['medium-well', 14, 61], ['well-done', 14, 67]];
+  const plan = [['rare', 18, 41], ['medium-rare', 18, 47], ['medium', 14, 56], ['medium-well', 14, 61], ['well-done', 14, 68]];
   for (const [t, thick, pull] of plan) { const r = recipe(t, thick, pull); assert.equal(r.total, 100, `${t}: ${r.total} ${JSON.stringify(r.parts)}`); }
 });
 test('careless technique is still punished', () => {
