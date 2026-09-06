@@ -57,6 +57,17 @@ body.hard .ro span#h-pan, body.hard .ro span#h-probe { color: var(--muted); }
 .derived dd { margin: 0; }
 p.warn { color: var(--warn); font-size: 12.5px; min-height: 1em; }
 .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 10px 0; }
+.row.four { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin: 4px 0; }
+.row.four button { padding: 6px 4px; font-size: 12.5px; }
+.row.extras { border-top: 1px solid var(--line); padding-top: 8px; }
+.row.extras label small { display: block; color: var(--muted); font-size: 11px; }
+.row.assign { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+.row.assign label { margin: 0; white-space: nowrap; }
+.row.assign button { padding: 4px 9px; font-size: 12px; }
+.chip.item b { color: var(--good); }
+.chip i { font-style: normal; color: var(--good); font-size: 11px; }
+table.stats .pen { color: var(--bad); }
+table.stats .bon { color: var(--good); }
 .actions .primary, .actions .danger { grid-column: 1 / -1; }
 .probe { display: grid; grid-template-columns: auto 1fr; gap: 8px; align-items: center; }
 .big { display: inline-block; margin: 6px 14px 6px 0; }

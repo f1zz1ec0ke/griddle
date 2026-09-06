@@ -42,7 +42,7 @@
       this.speed = 1; this.phase = 'order'; this.hard = false;
       this.probe = { inserted: false, depth: 0.5, reading: null, settle: 0 };
       this.forms = [{ ...DEFAULT_FORM, target: 'medium' }]; this.previews = []; this.sel = 0;
-      this.patties = []; this.spots = [];
+      this.patties = []; this.spots = []; this.selItem = null;
       this.equip = { stove: 'gas', pan: 'castiron', fat: 'canola', fatG: 8 };
       this.state = P.createState({ pan: this.equip.pan, stove: this.equip.stove });
       this.chipsHTML = '';
@@ -81,7 +81,9 @@
     }
     // ------------------------------------------------------------ selection (one chip per patty)
     select(i) {
-      if (i < 0 || i >= this.forms.length || i === this.sel) return;
+      if (i < 0 || i >= this.forms.length) return;
+      if (i === this.sel && !this.selItem) return;
+      this.selItem = null; P.selectItem(this.state, null);
       this.sel = i;
       if (this.phase === 'form') { this.loadForm(); this.rebuildPreview(); }
       else if (this.patty) {
@@ -91,9 +93,18 @@
       }
       this.refreshButtons(); this.updateChips();
     }
+    /** Select a topping instead of a patty: the flip and remove buttons point at it. */
+    selectItem(it) {
+      if (!it) return;
+      this.selItem = it; P.selectItem(this.state, it);
+      this.refreshButtons(); this.updateChips();
+    }
+    /** The toppings this ticket has going, in the order they went in. */
+    get items() { return this.state.items || []; }
     updateChips() {
       const el = $('chips');
-      const chips = this.forms.map((f, i) => {
+      const many = this.forms.length > 1;
+      const pattyChips = this.forms.map((f, i) => {
         const p = this.patties[i];
         let status;
         if (this.phase === 'form') status = `${f.thicknessMm} mm · ${f.massG} g`;
@@ -101,10 +112,19 @@
         else if (!p || p.where === 'board') status = 'on the board';
         else if (p.where === 'pan') status = `in the pan ${P.fmtTime(p.cookTime)}`;
         else status = `resting ${P.fmtTime(p.restT || 0)}`;
-        return `<button class="chip${i === this.sel ? ' on' : ''}" data-chip="${i}" title="Select patty ${i + 1} (Tab cycles)"><b>${i + 1}</b> ${SHORT[f.target]} <small>${status}</small></button>`;
+        // each patty's chip carries the toppings that have been built onto it
+        const tops = p ? this.items.filter((it) => it.burger === p.id) : [];
+        const built = tops.length ? ` <i>+ ${tops.map((it) => it.spec.short).join(' ')}</i>` : '';
+        return `<button class="chip${i === this.sel && !this.selItem ? ' on' : ''}" data-chip="${i}" title="Select patty ${i + 1} (Tab cycles)"><b>${i + 1}</b> ${SHORT[f.target]}${built} <small>${status}</small></button>`;
       }).join('');
+      const itemChips = this.phase === 'form' ? '' : this.items.map((it, i) => {
+        const st = P.itemState(it);
+        const status = it.where === 'pan' ? `${P.fmtTime(it.cookTime)} · ${st.state}` : `${st.state}${it.burger ? ` → ${it.burger}` : ''}`;
+        return `<button class="chip item${it === this.selItem ? ' on' : ''}" data-item="${i}" title="Select this topping"><b>${it.spec.short}</b> <small>${status}</small></button>`;
+      }).join('');
+      const chips = pattyChips + itemChips;
       if (chips !== this.chipsHTML) { el.innerHTML = chips; this.chipsHTML = chips; }
-      el.hidden = this.phase === 'order' || this.forms.length < 2;
+      el.hidden = this.phase === 'order' || (!many && !this.items.length);
     }
     // ------------------------------------------------------------ forming
     loadForm() {
@@ -146,7 +166,7 @@
       const grill = P.STOVES[this.equip.stove].kind === 'grill';
       const reuse = this.stoveUsed && st && st.stove.id === this.equip.stove && (grill || st.pan.id === this.equip.pan);
       if (reuse) {
-        st.patties = []; st.patty = null; st.where = 'board'; st.rest.t = 0; st.lid = false; st.baste = 0; st.served = false;
+        st.patties = []; st.patty = null; st.items = []; st.item = null; st.where = 'board'; st.rest.t = 0; st.lid = false; st.baste = 0; st.served = false;
         st.trace = []; st.lastTrace = -1; st.events = [];
         const keep = {}; for (const k of ['preheat150', 'leiden', 'oilsmoke', 'ptfe']) if (st._ms && st._ms[k]) keep[k] = true; st._ms = keep;
         $('knob').value = st.stove.knob; $('knob-v').textContent = String(st.stove.knob);
@@ -159,7 +179,7 @@
       // every patty on the ticket is formed now and waits on the board until it is laid in
       this.patties = this.forms.map((f, i) => this.makeFromForm(f, i));
       this.layoutSpots();
-      this.sel = 0; this.vp.setPatty(null);
+      this.sel = 0; this.selItem = null; this.vp.setPatty(null);
       this.probe = { inserted: false, depth: 0.5, reading: null, settle: 0 }; $('btn-probe').textContent = 'Insert probe';
       $('btn-lid').textContent = 'Lid on';
       this.chart = []; this.logN = -1;
@@ -202,8 +222,11 @@
       $('f-dimple').addEventListener('change', (e) => { s.form.dimple = e.target.checked; s.rebuildPreview(); });
       $('btn-copy').onclick = () => { const f = s.form; for (let i = 0; i < s.forms.length; i++) if (i !== s.sel) s.forms[i] = { ...f, target: s.forms[i].target }; s.updateChips(); };
       $('btn-to-stove').onclick = () => s.startCook();
-      $('chips').addEventListener('click', (e) => { const b = e.target.closest('[data-chip]'); if (b) s.select(Number(b.dataset.chip)); });
-      this.vp.onPick = (p) => { const i = s.patties.indexOf(p); if (i >= 0) s.select(i); };
+      $('chips').addEventListener('click', (e) => {
+        const b = e.target.closest('[data-chip]'); if (b) { s.select(Number(b.dataset.chip)); return; }
+        const it = e.target.closest('[data-item]'); if (it) s.selectItem(s.items[Number(it.dataset.item)]);
+      });
+      this.vp.onPick = (o) => { const i = s.patties.indexOf(o); if (i >= 0) s.select(i); else if (s.items.indexOf(o) >= 0) s.selectItem(o); };
       // equipment
       const swapStove = () => { s.state = P.createState({ pan: s.equip.pan, stove: s.equip.stove }); s.vp.setStove(s.equip.stove); s.vp.setPan(s.equip.pan); s.vp.clearStains(); $('knob').value = 0; $('knob-v').textContent = '0'; s.layoutSpots(); s.applyEquipUI(); P.logEvent(s.state, s.state.grill ? 'Wheeled the kettle out. Cold coals, cold grate: light it and wait.' : `Swapped to ${s.state.pan.name.toLowerCase()} on ${s.state.stove.name.split(' (')[0].toLowerCase()}: a cold pan.`, 'action'); s.logN = -1; };
       $('e-stove').addEventListener('change', (e) => { s.equip.stove = e.target.value; if (s.phase === 'cook' && !s.anyPlaced()) swapStove(); });
@@ -213,7 +236,31 @@
       $('btn-fat').onclick = () => { P.addFat(s.state, s.equip.fat, s.equip.fatG); s.audio.click(); };
       $('knob').addEventListener('input', (e) => { P.setKnob(s.state, Number(e.target.value)); $('knob-v').textContent = e.target.value; });
       $('btn-place').onclick = () => s.place();
-      $('btn-flip').onclick = () => { const r = P.flipPatty(s.state, s.patty); if (r.ok) { s.audio.hiss(0.6); s.vp.forceTex = true; s.refreshButtons(); } };
+      $('btn-flip').onclick = () => {
+        // one button, whatever is selected: turn the patty, turn the bun or the rasher or the egg,
+        // or stir the onions
+        const r = s.selItem ? P.flipItem(s.state, s.selItem) : P.flipPatty(s.state, s.patty);
+        if (r.ok) { s.audio.hiss(s.selItem ? 0.35 : 0.6); s.vp.forceTex = true; s.refreshButtons(); s.updateChips(); }
+      };
+      const addExtra = (kind) => {
+        // toasting the buns while the meat rests is the normal way round, so putting something in
+        // the pan during the rest puts the stove back in front of you
+        if (s.phase === 'rest') { s.setPhase('cook'); P.logEvent(s.state, 'Back on the stove: something else is going in the pan while the meat rests.', 'action'); }
+        const made = P.addItem(s.state, kind);
+        if (made && made.length) { s.selectItem(made[0]); s.audio.hiss(0.5); }
+        s.refreshButtons(); s.updateChips();
+      };
+      $('btn-bun').onclick = () => addExtra('bun');
+      $('btn-bacon').onclick = () => addExtra('bacon');
+      $('btn-egg').onclick = () => addExtra('egg');
+      $('btn-onion').onclick = () => addExtra('onions');
+      $('assign-btns').addEventListener('click', (e) => {
+        const b = e.target.closest('[data-burger]'); if (!b || !s.selItem) return;
+        const p = s.patties[Number(b.dataset.burger)];
+        P.assignTopping(s.state, s.selItem, p);
+        P.logEvent(s.state, `${s.selItem.label} goes on burger ${p.id}.`, 'action');
+        s.refreshButtons(); s.updateChips();
+      });
       $('btn-press').onclick = () => { P.pressPatty(s.state, false, s.patty); s.audio.hiss(0.5); s.vp.forceTex = true; };
       $('btn-smash').onclick = () => { P.pressPatty(s.state, true, s.patty); s.audio.hiss(0.9); s.vp.forceTex = true; s.refreshButtons(); };
       $('btn-lid').onclick = () => { P.toggleLid(s.state); $('btn-lid').textContent = s.state.lid ? 'Lid off' : 'Lid on'; };
@@ -221,7 +268,7 @@
       $('btn-baste').onclick = () => { P.basteButter(s.state); s.audio.hiss(0.4); };
       $('btn-wash').onclick = () => { if (P.washPan(s.state)) { s.audio.hiss(Math.min(1, (s.state.pan.T - 30) / 100)); s.vp.forceTex = true; } };
       $('btn-wipe').onclick = () => { P.wipeStove(s.state); s.vp.clearStains(); };
-      $('btn-remove').onclick = () => s.remove();
+      $('btn-remove').onclick = () => { if (s.selItem) { if (P.removeItem(s.state, s.selItem)) { s.maybeRest(); s.refreshButtons(); s.updateChips(); } } else s.remove(); };
       $('btn-probe').onclick = () => { s.probe.inserted = !s.probe.inserted; s.probe.settle = 0; s.probe.reading = null; $('btn-probe').textContent = s.probe.inserted ? 'Pull probe' : 'Insert probe'; };
       $('probe-depth').addEventListener('input', (e) => { s.probe.depth = Number(e.target.value) / 100; $('probe-depth-v').textContent = e.target.value + ' %'; });
       $('btn-cut').onclick = () => { P.serve(s.state); s.setPhase('result'); };
@@ -238,7 +285,14 @@
       document.addEventListener('pointerdown', () => { if (!s.audio.ctx && !s.audioAsked) { s.audioAsked = true; s.audio.start(); $('btn-audio').textContent = '🔊 Sound on'; } }, { once: true });
       window.addEventListener('keydown', (e) => {
         if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
-        if (e.key === 'Tab' && s.forms.length > 1 && s.phase !== 'order') { e.preventDefault(); s.select((s.sel + 1) % s.forms.length); return; }
+        if (e.key === 'Tab' && s.phase !== 'order' && (s.forms.length > 1 || s.items.length)) {
+          // Tab walks the chips: every patty, then every topping, then back to the first patty
+          e.preventDefault();
+          const n = s.forms.length, i = s.selItem ? n + s.items.indexOf(s.selItem) : s.sel;
+          const next = (i + 1) % (n + s.items.length);
+          if (next < n) s.select(next); else s.selectItem(s.items[next - n]);
+          return;
+        }
         if (s.phase !== 'cook') return;
         if (e.key === 'f' || e.key === 'F') $('btn-flip').click();
         if (e.key === ' ') { e.preventDefault(); if (s.patty && s.patty.where === 'board') $('btn-place').click(); else $('btn-flip').click(); }
@@ -261,31 +315,57 @@
     remove() {
       const p = this.patty; if (!p || p.where !== 'pan') return;
       P.removePatty(this.state, p);
-      const left = this.inPan().length, board = this.patties.filter((q) => q.where === 'board').length;
-      if (left === 0 && board === 0) {
-        // Burner off with the last patty: the pan (and its fat) cools in real time while the meat rests.
-        P.setKnob(this.state, 0); $('knob').value = 0; $('knob-v').textContent = '0';
-        P.logEvent(this.state, `Burner off. The pan is at ${this.state.pan.T.toFixed(0)} °C and will take a while to come down.`, 'action');
-        this.setPhase('rest');
-      } else if (left === 0) {
+      const board = this.patties.filter((q) => q.where === 'board').length;
+      if (!this.maybeRest() && this.inPan().length === 0 && board > 0) {
         P.logEvent(this.state, `Nothing in the pan. ${board} patt${board > 1 ? 'ies' : 'y'} still on the board while patty ${p.id} rests and cools.`, 'info');
       }
       this.refreshButtons(); this.updateChips();
     }
+    /**
+     * The rest begins when the metal is finally empty — of meat and of toppings — and nothing is
+     * left on the board. A rasher still rendering is a reason to leave the burner on.
+     */
+    maybeRest() {
+      if (this.phase !== 'cook') return false;
+      const left = this.inPan().length + this.items.filter((q) => q.where === 'pan').length;
+      const board = this.patties.filter((q) => q.where === 'board').length;
+      if (left > 0 || board > 0 || !this.patties.some((q) => q.where !== 'board')) return false;
+      // Burner off with the last thing off the pan: the pan (and its fat) cools in real time while the meat rests.
+      P.setKnob(this.state, 0); $('knob').value = 0; $('knob-v').textContent = '0';
+      P.logEvent(this.state, `Burner off. The pan is at ${this.state.pan.T.toFixed(0)} °C and will take a while to come down.`, 'action');
+      this.setPhase('rest');
+      return true;
+    }
     refreshButtons() {
-      const on = this.phase === 'cook', p = this.patty;
+      const on = this.phase === 'cook', p = this.patty, it = this.selItem;
+      if (it && this.items.indexOf(it) < 0) this.selItem = null;
       const where = p ? p.where : 'board';
       const inPan = on && where === 'pan';
+      const itemOn = on && !!it && it.where === 'pan';
       $('btn-place').disabled = !on || where !== 'board';
       $('btn-place').textContent = this.patties.length > 1 ? `Lay patty ${this.sel + 1} in (space)` : 'Lay the patty in (space)';
-      for (const id of ['btn-flip', 'btn-press', 'btn-smash', 'btn-cheese', 'btn-baste', 'btn-remove']) $(id).disabled = !inPan;
-      $('btn-lid').disabled = !on || this.inPan().length === 0;
-      if (inPan) { const raw = P.gridMean(p, p.dM) < 0.25; $('btn-smash').disabled = !raw || p.h < 0.006 || !!this.state.grill; $('btn-cheese').disabled = p.cheeses.length >= 24; $('btn-baste').disabled = !!this.state.grill; }
+      for (const id of ['btn-press', 'btn-smash', 'btn-cheese', 'btn-baste']) $(id).disabled = !inPan || !!it;
+      // the flip and remove buttons act on whichever chip is selected — a patty or a topping
+      $('btn-flip').disabled = it ? !itemOn : !inPan;
+      $('btn-flip').textContent = it ? (it.kind === 'onions' ? 'Stir (F)' : `Turn the ${it.spec.short} (F)`) : 'Flip (F)';
+      $('btn-remove').disabled = it ? !itemOn : !inPan;
+      $('btn-remove').textContent = it ? `Take the ${it.spec.short} off` : 'Off the heat → rest';
+      $('btn-lid').disabled = !on || (this.inPan().length === 0 && !this.items.some((q) => q.where === 'pan'));
+      if (inPan && !it) { const raw = P.gridMean(p, p.dM) < 0.25; $('btn-smash').disabled = !raw || p.h < 0.006 || !!this.state.grill; $('btn-cheese').disabled = p.cheeses.length >= 24; $('btn-baste').disabled = !!this.state.grill; }
+      for (const id of ['btn-bun', 'btn-bacon', 'btn-egg', 'btn-onion']) $(id).disabled = !(on || this.phase === 'rest');
+      // the build step: with more than one burger on the ticket, say which one this topping is for
+      const many = this.patties.length > 1;
+      const live = on || this.phase === 'rest';
+      $('assign-row').hidden = !live || !it || !many;
+      if (live && it && many) {
+        const html = this.patties.map((q, i) => `<button data-burger="${i}" class="${it.burger === q.id ? 'on' : ''}">${i + 1} ${SHORT[q.target]}</button>`).join(' ');
+        if (html !== this.assignHTML) { $('assign-btns').innerHTML = html; this.assignHTML = html; }
+      }
       $('btn-probe').disabled = !(inPan || (p && where === 'rest'));
-      $('btn-wash').disabled = !on || this.inPan().length > 0; $('btn-wipe').disabled = !on;
-      $('e-stove').disabled = $('e-pan').disabled = this.anyPlaced();
+      $('btn-wash').disabled = !on || this.inPan().length > 0 || this.items.some((q) => q.where === 'pan'); $('btn-wipe').disabled = !on;
+      $('e-stove').disabled = $('e-pan').disabled = this.anyPlaced() || this.items.length > 0;
       if (this.state.grill) { $('btn-fat').disabled = true; }
-      $('btn-cut').disabled = this.inPan().length > 0;
+      $('btn-cut').disabled = this.inPan().length > 0 || this.items.some((q) => q.where === 'pan');
     }
     // ------------------------------------------------------------ loop
     frame(now) {
@@ -332,7 +412,10 @@
       $('h-pan').textContent = this.hard ? '—' : fmt(st.pan.T + (Math.random() - 0.5) * 1.5, 0) + ' °C';
       $('h-time').textContent = p && where === 'pan' ? P.fmtTime(p.cookTime) : p && (where === 'rest' || where === 'cut') ? 'rest ' + P.fmtTime(p.restT || 0) : P.fmtTime(st.t);
       $('h-probe').textContent = this.probe.reading == null ? '—' : fmt(this.probe.reading, 1) + ' °C';
-      $('h-side').textContent = p && where === 'pan' ? `${this.patties.length > 1 ? `patty ${p.id} · ` : ''}face ${p.faceDown.id} down · ${P.fmtTime(p.timeDown)} this side` : '';
+      const it = this.selItem;
+      $('h-side').textContent = it
+        ? `${it.label} · ${P.itemState(it).state}${it.where === 'pan' ? ` · ${fmt(P.itemT(it), 0)} °C · ${P.fmtTime(it.timeDown)} this side` : it.burger ? ` · on burger ${it.burger}` : ' · at the pass'}`
+        : p && where === 'pan' ? `${this.patties.length > 1 ? `patty ${p.id} · ` : ''}face ${p.faceDown.id} down · ${P.fmtTime(p.timeDown)} this side` : '';
       $('h-smoke').hidden = d.smoke < 0.25; $('h-smoke').textContent = d.smoke > 1.2 ? '🚨 Heavy smoke — open a window' : '💨 Smoking';
       $('h-lid').hidden = !st.lid;
       // inspector
@@ -367,6 +450,31 @@
           add('Physics step', `${(DT * 1000).toFixed(0)} ms (${Math.round(1 / DT)} Hz) · ${p.subSteps || 1} conduction sub-step${(p.subSteps || 1) > 1 ? 's' : ''} per step`);
           add('Denatured: myosin/collagen/actin', fmt(P.gridMean(p, p.dM) * 100, 0) + ' / ' + fmt(P.gridMean(p, p.dC) * 100, 0) + ' / ' + fmt(P.gridMean(p, p.dA) * 100, 0) + ' %');
           add('Spatter / smoke', fmt(d.spatter, 1) + ' drops/s · ' + fmt(d.smoke, 2));
+        }
+        // the selected topping: its own nodes, in the same units as the patty's
+        const sit = this.selItem;
+        if (sit) {
+          const st = P.itemState(sit);
+          add('— Topping', `${sit.label} · ${st.state}${sit.burger ? ` · built onto burger ${sit.burger}` : ''}`);
+          add('Metal under it / its surface', fmt(sit.Tat, 0) + ' / ' + fmt(sit.Ts, 0) + ' °C · ' + fmt(sit.qBot, 0) + ' W in');
+          add('Mass now', fmt(P.itemMass(sit) * 1000, 1) + ' g of ' + fmt(sit.m0 * 1000, 0) + ' · ' + fmt(sit.lostWater * 1000, 1) + ' g steamed off');
+          if (sit.kind === 'bun') {
+            add('Crust / crumb', fmt(sit.face.T, 0) + ' / ' + fmt(sit.body.T, 0) + ' °C · face ' + fmt(1 - sit.face.w / sit.w0f, 2) + ' dry');
+            add('Toast (browning / char)', fmt(sit.cutFace.brown, 2) + ' / ' + fmt(sit.cutFace.char, 3) + ' · ' + fmt(sit.fatSoaked * 1000, 1) + ' g of fat soaked up');
+          } else if (sit.kind === 'bacon') {
+            add('Strip temperature / dryness', fmt(sit.body.T, 0) + ' °C · ' + fmt(1 - sit.body.w / sit.w0, 2) + ' dry');
+            add('Fat: solid / melted / out', fmt(sit.fs * 1000, 1) + ' / ' + fmt(sit.fl * 1000, 1) + ' / ' + fmt(sit.lostFat * 1000, 1) + ' g of ' + fmt(sit.fat0 * 1000, 1));
+            add('Crisp / curl / shrink', fmt(sit.crisp, 2) + ' / ' + fmt(sit.curl, 2) + ' / ' + fmt(sit.shrink * 100, 0) + ' %');
+            add('Browning A / B', fmt(sit.faceDown.brown, 2) + ' / ' + fmt(sit.faceUp.brown, 2) + ' · char ' + fmt(sit.faceDown.char + sit.faceUp.char, 3));
+          } else if (sit.kind === 'egg') {
+            add('White: pan side / top', fmt(sit.wBot.T, 0) + ' / ' + fmt(sit.wTop.T, 0) + ' °C · set ' + fmt(sit.setBot, 2) + ' / ' + fmt(sit.setTop, 2));
+            add('Yolk / its skin', fmt(sit.yolk.T, 0) + ' / ' + fmt(sit.yolkSkin || sit.yolk.T, 0) + ' °C · set ' + fmt(sit.yolkSet, 2) + (sit.flipped ? ' · turned over ' + P.fmtTime(sit.secondSide) : ''));
+            add('Lace / underside', fmt(sit.lace.brown, 2) + ' brown · ' + fmt(sit.lace.char, 3) + ' char · under ' + fmt(sit.faceDown.brown, 2) + (sit.stuck ? ' · STUCK' : ' · released'));
+          } else if (sit.kind === 'onions') {
+            add('On the metal / in the heap', fmt(sit.bot.T, 0) + ' / ' + fmt(sit.top.T, 0) + ' °C · ' + fmt((sit.bot.w + sit.top.w) * 1000, 0) + ' g of water left of ' + fmt(sit.w0 * 1000, 0));
+            add('Caramel: heap / contact layer', fmt(sit.carm, 2) + ' / ' + fmt(sit.carmBot, 2) + ' · char ' + fmt(sit.char, 3) + ' / ' + fmt(sit.charBot, 3));
+            add('Stirs / fond lifted', sit.stirs + ' · ' + fmt(sit.fond * 1000, 2) + ' g');
+          }
         }
         $('insp-table').innerHTML = rows.join('');
         this.drawChart($('chart'), st.trace);
@@ -408,8 +516,12 @@
       if (many) {
         $('r-chips').innerHTML = tk.results.map((r, i) => `<button class="chip${i === this.sel ? ' on' : ''}" data-chip="${i}"><b>${i + 1}</b> ${r.target.label} <small>${r.total}/100</small></button>`).join('');
         $('r-ticket').hidden = false;
-        $('r-ticket').innerHTML = `<b>Ticket:</b> ${tk.results.map((r) => r.total).join(' + ')} → mean ${tk.mean}${tk.coldPenalty ? ` − ${tk.coldPenalty} for burgers that went out cold` : ''}` + (tk.notes.length ? `<ul>${tk.notes.map((n) => `<li>${n}</li>`).join('')}</ul>` : '');
-      } else { $('r-ticket').hidden = tk.notes.length === 0; $('r-ticket').innerHTML = tk.notes.length ? `<ul>${tk.notes.map((n) => `<li>${n}</li>`).join('')}</ul>` : ''; }
+        $('r-ticket').innerHTML = `<b>Ticket:</b> ${tk.results.map((r) => r.total).join(' + ')} → mean ${tk.mean}${tk.coldPenalty ? ` − ${tk.coldPenalty} for burgers that went out cold` : ''}${tk.buildPenalty ? ` − ${tk.buildPenalty} for the build` : ''}${tk.buildBonus ? ` + ${tk.buildBonus} for the toppings` : ''}` + (tk.notes.length ? `<ul>${tk.notes.map((n) => `<li>${n}</li>`).join('')}</ul>` : '');
+      } else {
+        const line = tk.buildPenalty || tk.buildBonus ? `<b>Ticket:</b> ${tk.mean}${tk.buildPenalty ? ` − ${tk.buildPenalty} for the build` : ''}${tk.buildBonus ? ` + ${tk.buildBonus} for the toppings` : ''} → ${tk.total}` : '';
+        $('r-ticket').hidden = tk.notes.length === 0 && !line;
+        $('r-ticket').innerHTML = line + (tk.notes.length ? `<ul>${tk.notes.map((n) => `<li>${n}</li>`).join('')}</ul>` : '');
+      }
       this.showPattyResult();
     }
     showPattyResult() {
@@ -432,6 +544,9 @@
         ['On the bun', `${r.cheeseSlices ? r.cheeseSlices + ' slice' + (r.cheeseSlices > 1 ? 's' : '') + ' of cheese · ' : ''}${(r.bunSoak * 1000).toFixed(1)} g of juice into the bottom bun`],
         ['Crust (browning index / char)', `A: ${r.faces.down.id === 'A' ? r.faces.down.brown.toFixed(1) : r.faces.up.brown.toFixed(1)} / ${(r.faces.down.id === 'A' ? r.faces.down.char : r.faces.up.char).toFixed(2)} · B: ${r.faces.down.id === 'B' ? r.faces.down.brown.toFixed(1) : r.faces.up.brown.toFixed(1)} / ${(r.faces.down.id === 'B' ? r.faces.down.char : r.faces.up.char).toFixed(2)}`],
         ['Grey band', `${(r.overFrac * 100).toFixed(0)} % of the meat cooked past target`],
+        ['Build', r.build.items.length
+          ? r.build.items.map((b) => `${b.label} — <b>${b.state}</b>`).join('<br>') + (r.build.penalty ? `<br><span class="pen">− ${r.build.penalty.toFixed(1)} on the ticket</span>` : '') + (r.build.bonus ? `<br><span class="bon">+ ${r.build.bonus.toFixed(1)} on the ticket</span>` : '')
+          : 'Nothing on it but the patty (and a plain, untoasted bun)'],
       ].map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
       $('r-notes').innerHTML = r.notes.map((n) => `<li>${n}</li>`).join('');
       this.drawChart($('r-chart'), st.trace);

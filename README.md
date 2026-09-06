@@ -36,7 +36,9 @@ npm run perf         # how many milliseconds of CPU a simulated second costs
 | `1` `2` `3` `4` | kitchen, overhead, side and close-up presets; `R` resets |
 | `C` | cutaway: slice the patty in half and watch the inside cook |
 | `Space` | lay the patty in, then flip; `F` flip, `P` press |
-| `Tab`, click a patty, or the chips under the ticket | select which patty the buttons act on |
+| `Tab`, click a patty or topping, or the chips under the ticket | select what the buttons act on |
+| **Extras** row | put bun halves, bacon, an egg or sliced onions in the pan beside the patties |
+| `F` with a topping selected | turn the bun / rasher / egg — or stir the onions |
 | Stove: charcoal kettle | the knob becomes the vents, the pan goes away, and the lid is the kettle's |
 
 The **Inspector** button opens a live chart (pan, crust surface, bottom layer, centre, top) and a
@@ -103,6 +105,43 @@ band is the volume of meat whose peak temperature went a whole doneness step pas
 At service the patty goes on a sesame bun; juice that ran out during the rest soaks the bottom
 bun.
 
+**Toppings** share the pan with the meat. Two **bun halves** go in cut side down, a rasher of
+**bacon**, an **egg**, or 80 g of sliced **onions** — each takes a spot on the metal (they never
+land on top of each other unless the pan is genuinely full), draws heat out of the rings under its
+own footprint, and shades that metal from the room exactly as a patty does. Each is two or three
+lumped nodes rather than a grid, because none of them is thick enough for a profile through it to
+be worth solving, but every node carries its own water and boils at 100 °C with full latent heat,
+which is what makes them take the time they take.
+
+A **bun face** is dry starch on hot metal: it drinks a few grams of the pan's fat, the crumb behind
+the crust keeps wicking water forward into the drying front (which is why toast takes a minute and
+not ten seconds), and then it browns on the same Maillard kinetics the meat uses — roughly twice as
+fast, because the dough's maltose and free amino acids are already there. Over 200 °C metal that is
+golden in about a minute and black in three. Turn it over and the crown just scorches: its sugars
+went in the oven. A toasted heel is a sealed crust, and it soaks up about 60 % less of the juice
+that runs out during the rest. **Bacon** renders with the patty's own melt-and-release kinetics
+(faster: the fat is in continuous bands, not locked in cells), loses about 40 % of its mass as fat
+into the pan, shrinks by a quarter, curls away from whichever face has dried and contracted more,
+and only goes crisp once the lean is dry *and* the fat is out — eight minutes at 180 °C, or black in
+three at 260. An **egg** is a bottom white, a top white and a yolk: the white sets at 62–65 °C, the
+yolk thickens from 65 and is solid by 70, and because the yolk sets from the skin inward, sunny side
+up leaves it runny for four or five minutes. A lid changes that in ninety seconds — saturated air
+condensing on a cold yolk is worth far more than the convection — and turning the egg over puts the
+yolk a millimetre of white off the metal, which is over-easy in under a minute and over-hard in two.
+The rim that ran out into the fat dries and browns into a lace. **Onions** are 89 % water and the
+whole model is that water: the layer against the metal boils, the pile above re-wets it as fast as
+juice can drain down through a heap of slices, and until that stops the onions sweat at 100 °C and
+nothing browns. Fifteen minutes on medium and the pile runs dry, the contact layer decouples from
+the wet mass above it, and the sugars caramelise — golden, brown, and then bitter. On a 260 °C pan
+the drying front wins in two minutes and that layer scorches instead; stirring is not fussiness, it
+is the only way to caramelise all of them rather than burn a third of them. They also lift the fond
+off the metal as they go.
+
+At service each topping is **built onto a burger** (the chips show which). The patty's own score
+never moves: the build is a separate service penalty of up to ten points on the ticket for anything
+sent out raw or burnt — a raw egg white, limp bacon, a black bun, scorched onions — and a couple of
+points back for a jammy yolk, crisp bacon, sweet onions or a properly toasted bun.
+
 **The charcoal kettle** replaces the pan with a steel grate over 1.5 kg of lump charcoal. The
 knob is the vents: airflow sets the temperature the bed heads for (~350 °C banked, ~750 °C wide
 open, with the lid throttling it) and how fast the coals burn down to ash. The grate is thin bars
@@ -125,7 +164,9 @@ centre temperature by less than 0.2 °C and the cook times by under two seconds,
 regression tests still run at 0.025 s: the constants were calibrated there. One simulated second
 of one patty in a pan costs about 2.7 ms of CPU at 0.025 s and 1.4 ms at the game's 0.05 s, so
 three burgers at 8× speed take under half a millisecond of physics per frame; `node test/perf.js`
-prints the numbers for a pan, a crowded pan, the charcoal grill and a full five-minute cook.
+prints the numbers for a pan, a crowded pan, the charcoal grill and a full five-minute cook. A
+topping is lumped, so it costs about 0.2 ms per simulated second — a tenth of a patty — and a pan
+with everything in it is still comfortably inside a frame.
 
 **Tickets with several burgers** share the pan. Each patty is formed separately (a well-done
 wants a thinner patty than a rare), laid in at its own spot, flipped, pressed, cheesed and pulled
@@ -153,6 +194,15 @@ The recipe that does it, found by `node test/player.js` and confirmed through th
 
 Smashing, a screaming-hot pan, a single flip on a thick patty, or cutting it straight off the
 heat will all cost you somewhere, and the results screen says where.
+
+Toppings are scored separately and can only cost you the ticket, never the patty. If you put them
+in: the buns want about a minute face-down on 200 °C metal (watch the browning index in the
+inspector — 1.2 is toasted, 4.5 is too far, and char over 0.35 is a black bun); bacon wants eight
+minutes at 180 °C with a couple of turns, not four at 260; an egg wants the lid on for ninety
+seconds, or a flip and forty seconds, for the jammy yolk; onions want a quarter of an hour on
+medium with a stir every minute or two, and they will drag the pan down 20 °C while they sweat, so
+start them before the meat. Take each one off when it is right — a topping left in the pan keeps
+cooking — and use the **Build onto** buttons to say which burger it belongs to.
 
 On the charcoal kettle the window is narrower, but it is there: light it on 8, wait for the
 bed to glow and the grate to pass 250 °C, then run the vents on 7 (bed around 630 °C). An 18 mm

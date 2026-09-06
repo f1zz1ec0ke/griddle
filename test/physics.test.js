@@ -460,3 +460,216 @@ test('the benchmark harness measures a sane cost per simulated second', () => {
   assert.ok(r.perSim < 200, `2 sim-seconds should not cost ${r.perSim} ms each`);
   assert.equal(r.all.length, 4);
 });
+
+// ---------------------------------------------------------------- pan items (the toppings)
+// The items are lumped, so they are held against a *local* pan temperature: `holdAt` steers the
+// burner off the metal under the item's own footprint (its `Tat`), not the pan's area mean, which
+// on a gas hot spot is 40–60 °C cooler than the middle. `settle` lets cast iron stop overshooting
+// before anything goes in, the way a cook waits for the IR gun to sit still.
+function holdAt(s, T) { P.setKnob(s, P.clamp(4 + (T - s.pan.Tcenter) * 0.25, 0, 10)); }
+function settleAt(s, T) { P.setKnob(s, 8); let g = 0; while (s.pan.Tcenter < T && g++ < 200000) P.step(s, DT); const u = s.t + 240; while (s.t < u) { holdAt(s, T); P.step(s, DT); } return s; }
+function cookItem(s, seconds, T) { const until = s.t + seconds; while (s.t < until) { holdAt(s, T); P.step(s, DT); } }
+function panAt(T, fatG) { const s = P.createState({}); settleAt(s, T); if (fatG) P.addFat(s, 'canola', fatG); return s; }
+
+test('a bun face toasts golden in about a minute face-down and is black in three', () => {
+  const s = panAt(200, 8);
+  const [heel, crown] = P.addItem(s, 'bun');
+  assert.equal(heel.half, 'bottom'); assert.equal(crown.half, 'top');
+  cookItem(s, 15, 200);
+  assert.ok(heel.cutFace.brown < 0.6, `browned while the crumb was still wet: ${heel.cutFace.brown}`);
+  cookItem(s, 45, 200);
+  const st = P.itemState(heel);
+  assert.ok(heel.cutFace.brown > 1.2 && heel.cutFace.brown < 4.5, `after a minute face down: brown=${heel.cutFace.brown}`);
+  assert.equal(st.state, 'toasted');
+  assert.ok(heel.fatSoaked > 0.001 && heel.fatSoaked <= 0.004, `it should have drunk a few grams of the pan's fat: ${heel.fatSoaked * 1000} g`);
+  cookItem(s, 120, 200);
+  assert.ok(heel.cutFace.char > 0.35, `three minutes face down on a 200 °C pan should be black: char=${heel.cutFace.char}`);
+  assert.equal(P.itemState(heel).state, 'burnt');
+  // and a moderate pan never gets there
+  const s2 = panAt(155, 8); const [h2] = P.addItem(s2, 'bun');
+  cookItem(s2, 180, 155);
+  assert.ok(h2.cutFace.char < 0.15 && h2.cutFace.brown > 1.5, `moderate pan: brown=${h2.cutFace.brown} char=${h2.cutFace.char}`);
+});
+
+test('a toasted bottom bun soaks far less of the juice than an untoasted one', () => {
+  const cook = (toast) => {
+    const s = panAt(200, 8);
+    const p = std({ thicknessMm: 18 }); P.placePatty(s, p, { x: 0.06, y: 0 });
+    cookItem(s, 180, 200); P.flipPatty(s, p); cookItem(s, 180, 200);
+    if (toast) { const [heel] = P.addItem(s, 'bun'); cookItem(s, 60, 200); P.removeItem(s, heel); P.removeItem(s, s.items[1]); }
+    P.removePatty(s, p); cookItem(s, 150, 200);
+    P.serve(s);
+    return p;
+  };
+  const bare = cook(false), toasted = cook(true);
+  assert.ok(toasted.bunToast > 1.2, `the heel should be toasted: ${toasted.bunToast}`);
+  assert.ok(bare.bunSoak > 0, `something has to run out to soak in: ${bare.bunSoak}`);
+  assert.ok(toasted.bunSoak < 0.45 * toasted.bunSoakRaw, `toasted heel took ${(toasted.bunSoak / toasted.bunSoakRaw * 100).toFixed(0)} % of the juice`);
+  assert.ok(Math.abs(bare.bunSoak - bare.bunSoakRaw) < 1e-12, 'no bun in the pan means no reduction');
+});
+
+test('bacon renders most of its fat and crisps in about eight minutes at 180 °C, and chars at 260', () => {
+  const s = panAt(180, 6);
+  const [b] = P.addItem(s, 'bacon');
+  for (let i = 0; i < 8; i++) { cookItem(s, 60, 180); if (i % 2 === 1) P.flipItem(s, b); }
+  assert.ok(b.lostFat / b.m0 > 0.30, `only ${(b.lostFat / b.m0 * 100).toFixed(0)} % of the strip's mass came out as fat`);
+  assert.ok(b.lostFat / b.fat0 > 0.8, `only ${(b.lostFat / b.fat0 * 100).toFixed(0)} % of its fat rendered`);
+  assert.ok(s.pan.oil > 0.006 + b.lostFat * 0.8, 'the rendered fat should be in the pan');
+  assert.ok(b.crisp > 0.6, `crisp=${b.crisp}`);
+  assert.ok(b.shrink > 0.2, `it should have shrunk by about a quarter: ${b.shrink}`);
+  assert.ok(Math.abs(b.curl) > 0.3, `it should have curled: ${b.curl}`);
+  assert.equal(P.itemState(b).state, 'crisp');
+  assert.ok(b.faceDown.char + b.faceUp.char < 0.3, `crisp, not burnt: char=${b.faceDown.char + b.faceUp.char}`);
+  // a screaming pan burns it long before it is ready
+  const s2 = panAt(260, 6); const [b2] = P.addItem(s2, 'bacon');
+  cookItem(s2, 180, 260);
+  assert.ok(b2.faceDown.char + b2.faceUp.char > 0.35, `260 °C for three minutes should char it: ${b2.faceDown.char + b2.faceUp.char}`);
+  assert.equal(P.itemState(b2).state, 'burnt');
+});
+
+test('egg: the white sets before the yolk, and a lid sets the yolk', () => {
+  const open = panAt(160, 8), lid = panAt(160, 8);
+  const [eo] = P.addItem(open, 'egg'), [el] = P.addItem(lid, 'egg');
+  P.toggleLid(lid);
+  cookItem(open, 30, 160); cookItem(lid, 30, 160);
+  assert.ok(eo.setBot > 0.9, `the white on the metal sets first: ${eo.setBot}`);
+  assert.ok(eo.yolkSet < 0.05, `the yolk cannot be set before the white: ${eo.yolkSet}`);
+  cookItem(open, 150, 160); cookItem(lid, 150, 160);
+  assert.ok(eo.setTop > 0.9, `three minutes sunny side up should set the top of the white: ${eo.setTop}`);
+  assert.ok(eo.yolkSet < 0.3, `sunny side up, the yolk stays runny: ${eo.yolkSet}`);
+  assert.ok(el.yolkSet > 0.75, `under a lid the steam sets the yolk: ${el.yolkSet}`);
+  assert.ok(el.yolk.T > eo.yolk.T + 20, `lid ${el.yolk.T} vs open ${eo.yolk.T}`);
+  assert.equal(P.itemState(eo).state, 'runny yolk');
+  // turned over, the yolk is a millimetre off the metal and goes jammy in a minute
+  const over = panAt(160, 8); const [ev] = P.addItem(over, 'egg');
+  cookItem(over, 60, 160); P.flipItem(over, ev); cookItem(over, 35, 160);
+  assert.equal(P.itemState(ev).state, 'jammy yolk');
+  cookItem(over, 60, 160);
+  assert.equal(P.itemState(ev).state, 'hard yolk');
+  // the lace at the rim browns in the fat
+  assert.ok(eo.lace.brown > 1.2, `lace=${eo.lace.brown}`);
+  // and a raw white is a send-back
+  const raw = panAt(160, 8); const [er] = P.addItem(raw, 'egg'); cookItem(raw, 20, 160);
+  assert.equal(P.itemState(er).state, 'raw white');
+  assert.ok(P.itemState(er).score <= -5);
+});
+
+test('onions: sweet and brown in a quarter of an hour on medium, ruined in minutes on a hot pan', () => {
+  const s = panAt(170, 10);
+  P.addFat(s, 'butter', 6); // butter is 2 % milk solids, so there is fond in the pan for them to lift
+  const [o] = P.addItem(s, 'onions');
+  const Tin = s.pan.Tcenter;
+  cookItem(s, 20, 170);
+  assert.ok(s.pan.Tcenter < Tin - 5, `eighty grams of wet onion should drag the metal down: ${Tin} → ${s.pan.Tcenter}`);
+  for (let i = 0; i < 15; i++) { cookItem(s, 60, 170); P.flipItem(s, o); } // stirred every minute, as anyone caramelising onions does
+  assert.ok(o.lostWater > 0.06, `${(o.lostWater * 1000).toFixed(0)} g of the 71 g of water should have boiled off`);
+  assert.ok(o.carm > 1.0, `fifteen minutes on medium should caramelise them: carm=${o.carm}`);
+  assert.ok(o.char < 0.05, `and not burn them: char=${o.char}`);
+  assert.equal(P.itemState(o).state, 'caramelised');
+  assert.ok(P.itemState(o).score > 1);
+  assert.ok(o.fond > 0, 'they should have lifted some fond off the metal');
+  // on a 260 °C pan the layer against the metal is past sweet inside four minutes and black if left
+  const s2 = panAt(260, 10); const [o2] = P.addItem(s2, 'onions');
+  cookItem(s2, 240, 260);
+  assert.ok(o2.carmBot > 2.4, `four minutes on a 260 °C pan: carmBot=${o2.carmBot}`);
+  cookItem(s2, 360, 260);
+  assert.equal(P.itemState(o2).state, 'burnt');
+  assert.ok(P.itemState(o2).score < -3);
+  // stirring is what saves them: the same pan, stirred every half minute, is not black yet
+  const s3 = panAt(260, 10); const [o3] = P.addItem(s3, 'onions');
+  for (let i = 0; i < 12; i++) { cookItem(s3, 30, 260); P.flipItem(s3, o3); }
+  assert.ok(o3.char < o2.char, `stirred ${o3.char} vs left alone ${o2.char}`);
+});
+
+test('items take a spot on the pan, count in the coverage, and pull the metal under them down', () => {
+  const s = panAt(200, 8);
+  const p = std(); P.placePatty(s, p, { x: 0, y: 0 });
+  const [heel, crown] = P.addItem(s, 'bun');
+  for (const b of [heel, crown]) {
+    assert.ok(Math.hypot(b.pos.x, b.pos.y) - b.Dcov / 2 > -p.D / 2, 'a bun must not be laid on top of the patty');
+    assert.ok(Math.hypot(b.pos.x, b.pos.y) + b.Dcov / 2 <= s.pan.floorR * 1.02, 'and it has to be inside the pan');
+  }
+  assert.ok(Math.hypot(heel.pos.x - crown.pos.x, heel.pos.y - crown.pos.y) > 0.05, 'nor on top of each other');
+  // the rings under an item are shaded from the room exactly as the rings under a patty are
+  P.step(s, DT);
+  const j = heel.rings[0].j0;
+  const cov = P.ringCoverage(s);
+  assert.ok(cov[j] > 0, `ring ${j} is under the bun but reads ${cov[j]} covered`);
+  const bare = P.createState({}); bare.patties = []; bare.items = [];
+  assert.equal(P.ringCoverage(bare)[j], 0);
+  // and a cold, wet thing drawing 100-odd watts out of them drags them down: the same pan and the
+  // same burner, with and without a bun on it
+  const run = (withBun) => {
+    const t = P.createState({}); settleAt(t, 200); P.addFat(t, 'canola', 8);
+    P.setKnob(t, 3);
+    if (withBun) P.addItem(t, 'bun');
+    const j0 = withBun ? t.items[0].rings[0].j0 : heel.rings[0].j0;
+    const T0 = t.pan.Tr[j0]; cookFor(t, 30);
+    return t.pan.Tr[j0] - T0;
+  };
+  const withBun = run(true), without = run(false);
+  assert.ok(withBun < without - 3, `ring under the bun moved ${withBun.toFixed(1)} K, the bare ring ${without.toFixed(1)} K`);
+});
+
+test('the build: toppings go on a burger, the ticket pays for raw or burnt ones and the patty score does not move', () => {
+  const s = panAt(200, 8);
+  const p = std({ thicknessMm: 18 }); P.placePatty(s, p, { x: 0.05, y: 0 });
+  let since = 0;
+  while (P.centerT(p) < 47) { holdAt(s, 200); P.step(s, DT); since += DT; if (since >= 45 && !p.faceDown.stuck) { P.flipPatty(s, p); since = 0; } }
+  P.removePatty(s, p);
+  const [b] = P.addItem(s, 'bacon');
+  cookItem(s, 20, 200);           // nowhere near rendered
+  P.removeItem(s, b);
+  P.assignTopping(s, b, p);
+  cookItem(s, 130, 200);
+  const alone = P.evaluate(s, 'medium-rare', p);
+  P.serve(s);
+  const r = P.evaluate(s, 'medium-rare', p);
+  assert.equal(r.total, alone.total, 'a topping must never move the patty score itself');
+  assert.equal(r.build.items.length, 1);
+  assert.equal(r.build.items[0].kind, 'bacon');
+  assert.equal(r.build.items[0].state, 'limp');
+  assert.ok(r.build.penalty >= 3 && r.build.bonus === 0);
+  const tk = P.evaluateTicket(s);
+  assert.ok(tk.buildPenalty >= 3, `ticket build penalty=${tk.buildPenalty}`);
+  assert.ok(tk.total < tk.mean, `${tk.total} should be under the patty mean ${tk.mean}`);
+  assert.ok(tk.notes.some((n) => /send-back/.test(n)), tk.notes.join(' | '));
+  assert.ok(P.toppingsOf(s, p).length === 1);
+});
+
+test('every item stays finite, conserves its mass into steam and fat, and cools off the heat', () => {
+  const s = panAt(210, 8);
+  const made = [];
+  for (const k of ['bun', 'bacon', 'egg', 'onions']) for (const it of P.addItem(s, k)) made.push(it);
+  assert.equal(made.length, 5); // the bun goes in as two halves
+  cookItem(s, 240, 210);
+  for (const it of made) {
+    const m = P.itemMass(it);
+    assert.ok(Number.isFinite(m) && m > 0, `${it.kind}: mass=${m}`);
+    assert.ok(Number.isFinite(P.itemT(it)) && P.itemT(it) > 0 && P.itemT(it) < 400, `${it.kind}: T=${P.itemT(it)}`);
+    const balance = m + it.lostWater + it.lostFat + it.lostDrip - it.fatSoaked;
+    assert.ok(Math.abs(balance - it.m0) < 1e-4, `${it.kind}: ${(balance - it.m0) * 1000} g adrift`);
+    P.removeItem(s, it);
+  }
+  const egg = made.find((i) => i.kind === 'egg');
+  const hot = P.itemT(egg);
+  cookItem(s, 300, 210);
+  assert.ok(P.itemT(egg) < hot - 20, `off the heat it should cool: ${hot} → ${P.itemT(egg)}`);
+  assert.ok(egg.restT > 290);
+});
+
+test('toppings over coals: the bars toast a bun, an egg runs through them, and nothing goes NaN', () => {
+  const s = litGrill(8, 600); cookFor(s, 240);
+  const [heel] = P.addItem(s, 'bun');
+  const [rasher] = P.addItem(s, 'bacon');
+  const [egg] = P.addItem(s, 'egg');
+  cookFor(s, 90);
+  assert.ok(heel.cutFace.brown > 1, `a grate toasts a bun face too: ${heel.cutFace.brown}`);
+  assert.ok(rasher.lostFat > 0.001 && s.grill.fatOnCoals > 0, 'rendered bacon fat falls on the coals');
+  assert.ok(egg.lostDrip > 0.002, `raw white runs through the bars: ${egg.lostDrip * 1000} g`);
+  for (const it of [heel, rasher, egg]) {
+    assert.ok(Number.isFinite(P.itemMass(it)) && Number.isFinite(P.itemT(it)), `${it.kind} went non-finite`);
+    assert.ok(P.itemState(it).state.length > 0);
+  }
+  assert.equal(P.washPan(s), false, 'the grate cannot be brushed with food on it');
+});
