@@ -1562,3 +1562,53 @@ test('the instability guard: a pathological patty stays finite, and a poisoned c
   const q = std(); P.placePatty(clean, q); cookHeld(clean, 120, 230); P.flipPatty(clean); cookHeld(clean, 120, 230);
   assert.equal(clean.guard.restores, 0, 'the guard should never fire on an ordinary cook');
 });
+
+// ---------------------------------------------------------------- what the integration playthrough turned up
+test('the hand test reads a pan on a pan\'s scale: twenty seconds over 200 °C is "about right", eight is a 300 °C pan', () => {
+  // the same count means different metal over a fire and over a pan: eight seconds is "medium" on
+  // the grill chart and a pan past every oil's smoke point
+  assert.equal(P.handWord(8, true), 'medium'); assert.equal(P.handWord(8, false), 'searing');
+  assert.equal(P.handWord(2, true), 'searing'); assert.equal(P.handWord(20, false), 'medium');
+  // cast iron preheated on gas, so with the hot centre a real pan has; the recipe temperature
+  const s = P.createState({ pan: 'castiron', stove: 'gas' }); preheat(s, 200);
+  const ok = P.handTestAt(s, null);
+  console.log(`   200 °C pan: ${ok.seconds.toFixed(1)} s, ${ok.word} — ${s.events[s.events.length - 1].text}`);
+  assert.ok(ok.seconds > 15 && ok.seconds < 30, `about twenty seconds over a 200 °C pan: ${ok.seconds.toFixed(1)}`);
+  assert.equal(ok.word, 'medium');
+  assert.ok(/about right under a patty/.test(s.events[s.events.length - 1].text), 'the note says it is the temperature to cook on');
+  // and the pan that the old "six to eight seconds" advice actually produced
+  preheat(s, 330);
+  const hot = P.handTestAt(s, null);
+  console.log(`   330 °C pan: ${hot.seconds.toFixed(1)} s, ${hot.word} — ${s.events[s.events.length - 1].text}`);
+  assert.ok(hot.seconds < 9, `under nine seconds over 330 °C: ${hot.seconds.toFixed(1)}`);
+  assert.ok(hot.word === 'searing' || hot.word === 'very hot', hot.word);
+  assert.ok(/smoke point|char/.test(s.events[s.events.length - 1].text), 'the note warns that this is a burnt crust');
+  // a pan that is 200 °C edge to edge (no hot spot) still reads as the temperature to cook on
+  const flat = P.createState({}); flat.pan.T = 200; flat.pan.Tr.fill(200);
+  assert.equal(P.handTest(flat, null).word, 'medium');
+  // over coals the words are the grill chart, unchanged
+  const g = litGrill(10, 700); cookFor(g, 300);
+  assert.equal(P.handTest(g).word, 'searing');
+});
+
+test('the grey-band note and the evenness mark draw the same line', () => {
+  // the README's medium: it scores 10/10 for evenness, so it must not also be told it has a wide grey band
+  const r = recipe('medium', 14, 56);
+  assert.equal(r.parts.evenness, 10, JSON.stringify(r.parts));
+  assert.ok(!r.notes.some((n) => /wide grey band/.test(n)), r.notes.join(' / '));
+  // a thick medium-rare given one long flip a side is grey most of the way through, and is told so
+  const bad = recipe('medium-rare', 26, 46, { single: 240 });
+  console.log(`   single-flip 26 mm: evenness ${bad.parts.evenness}, ${(bad.overFrac * 100).toFixed(0)} % past the line`);
+  assert.equal(bad.notes.some((n) => /wide grey band/.test(n)), bad.parts.evenness < 10, `note and mark disagree: ${bad.parts.evenness} ${bad.notes.join(' / ')}`);
+});
+
+test('the customer knows the onions are plural', () => {
+  const burnt = P.verdict(mkResult({ total: 100, build: { items: [{ kind: 'onions', label: 'Sliced onions', state: 'burnt', score: -4 }], penalty: 4, bonus: 0 } }));
+  assert.equal(burnt.outcome, 'sent back');
+  assert.ok(/onions are burnt|onions are black/.test(burnt.quote), burnt.quote);
+  assert.ok(!/onions is/.test(burnt.quote), burnt.quote);
+  const egg = P.verdict(mkResult({ total: 100, build: { items: [{ kind: 'egg', label: 'Egg', state: 'burnt', score: -4 }], penalty: 4, bonus: 0 } }));
+  assert.ok(/egg is burnt|egg is black/.test(egg.quote), egg.quote);
+  const mush = P.verdict(mkResult({ total: 95, build: { items: [{ kind: 'onions', label: 'Sliced onions', state: 'soggy', score: -1 }], penalty: 1, bonus: 0 } }));
+  assert.ok(mush.complaints.some((c) => /onions (have gone to mush|are soggy)/.test(c.text)), JSON.stringify(mush.complaints));
+});

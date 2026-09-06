@@ -981,19 +981,52 @@
     }
     const q = Math.max(1, rad + conv); // W/m²
     const seconds = clamp(HAND.stoll * Math.pow(q / 1000, -HAND.exp), 0.4, 60);
-    const word = seconds < 2.5 ? 'searing' : seconds < 4.5 ? 'very hot' : seconds < 6.5 ? 'hot' : seconds < 9 ? 'medium' : seconds < 16 ? 'moderate' : 'low';
+    const word = handWord(seconds, !!s.grill);
     return { seconds, word, flux: q, radiant: rad, convective: conv, ...source };
   }
+  /**
+   * What the count means, and it means different things over different heat. Over coals it is
+   * the grill chart everybody learns — 2 s searing, 4 very hot, 6 hot, 8 medium — because a bed of
+   * coals radiates at 600–700 °C and the flux at the hand tracks the fire. A pan is a warm plate,
+   * not a fire: at 8 cm the flux off 200 °C metal is a fifth of a fire's, so the same count means a
+   * far hotter surface. Measured on cast iron preheated on gas (a hot centre, a cooler rim): 20.6 s
+   * at a 200 °C mean, 12.7 s at 250, 8.6 s at 300, 5.8 s at 360 (27 s over a pan that is 200 °C
+   * edge to edge). So on a pan twenty seconds is the README's recipe temperature and eight seconds
+   * is a pan past every oil's smoke point — which is why the words are on a pan scale here, and
+   * not the grill's.
+   */
+  const HAND_WORDS = {
+    grill: [[2.5, 'searing'], [4.5, 'very hot'], [6.5, 'hot'], [9, 'medium'], [16, 'moderate'], [Infinity, 'low']],
+    pan: [[9, 'searing'], [13, 'very hot'], [17, 'hot'], [30, 'medium'], [42, 'moderate'], [Infinity, 'low']],
+  };
+  function handWord(seconds, grill) {
+    for (const [lim, word] of HAND_WORDS[grill ? 'grill' : 'pan']) if (seconds < lim) return word;
+    return 'low';
+  }
+  /** What a cook makes of the word, over a fire and over a pan. */
+  const HAND_NOTES = {
+    grill: {
+      searing: 'you cannot keep it there at all. Anything laid on that is being branded, not cooked.',
+      'very hot': 'a crust in a minute a side, and char in three if you forget it.',
+      hot: 'about right under a patty.',
+      medium: 'it will cook and it will brown, but slowly.',
+      moderate: 'enough to cook something through; not enough to sear it.',
+      low: 'meat laid on that would sweat and go grey before anything browned.',
+    },
+    pan: {
+      searing: 'the metal is past 300 °C and past any oil\'s smoke point. A black crust in a minute, before the middle has moved.',
+      'very hot': 'a fast, dark crust, and char in three minutes if you forget it. Turn it down for anything thick.',
+      hot: 'a hard, fast sear — fine for a thin patty, a lot of heat for a thick one.',
+      medium: 'about right under a patty: a proper crust in two or three minutes a side.',
+      moderate: 'it will cook and it will brown, but slowly.',
+      low: 'meat laid on that would sweat and go grey before anything browned.',
+    },
+  };
   /** Hold a hand over it and count, out loud, in the log. */
   function handTestAt(s, pos) {
     const h = handTest(s, pos);
     const where = s.grill ? 'the grate' : 'the pan';
-    const note = h.seconds < 2.5 ? 'you cannot keep it there at all. Anything laid on that is being branded, not cooked.'
-      : h.seconds < 4.5 ? 'a crust in a minute a side, and char in three if you forget it.'
-      : h.seconds < 6.5 ? 'about right under a patty.'
-      : h.seconds < 9 ? 'it will cook and it will brown, but slowly.'
-      : h.seconds < 16 ? 'enough to cook something through; not enough to sear it.'
-      : 'meat laid on that would sweat and go grey before anything browned.';
+    const note = HAND_NOTES[s.grill ? 'grill' : 'pan'][h.word];
     const count = h.seconds >= 59 ? 'You could leave it there' : `${h.seconds < 10 ? h.seconds.toFixed(0) : Math.round(h.seconds)} second${Math.round(h.seconds) === 1 ? '' : 's'} before you have to pull it away`;
     logEvent(s, `Held a hand over ${where}. ${count}: ${h.word} — ${note}`
       + (s.grill ? ` (${(h.radiant / 1000).toFixed(1)} kW/m² of that is radiant off the bed.)` : ''), 'note');
@@ -3199,7 +3232,9 @@
     if ((p.bunToast || 0) > 1.2 && (p.bunSoakRaw || 0) > 0.003) notes.push(`The toasted heel held: ${((p.bunSoakRaw - p.bunSoak) * 1000).toFixed(1)} g of juice that a raw bun would have drunk stayed in the burger instead.`);
     if (p.lostWaterDrip > 0.006) notes.push(`${(p.lostWaterDrip * 1000).toFixed(0)} g of juice ran out ${p.grilled ? 'through the grate onto the coals' : 'onto the pan'} instead of staying in the meat.`);
     if (p.lostFat > 0.004) notes.push(`${(p.lostFat * 1000).toFixed(0)} g of fat rendered out and ${p.grilled ? 'fell on the coals' : 'pooled in the pan'}.`);
-    if (overFrac > 0.5 && target.hi < 68) notes.push('A wide grey band: the outside went well past target before the centre got there. Thicker patty, lower heat, or flip more often.');
+    // the same line the evenness mark is drawn at: a band inside the allowance is not "wide", and the
+    // note used to say so on a patty that had just scored 10/10 for it
+    if (parts.evenness < 10 && target.hi < 68) notes.push('A wide grey band: the outside went well past target before the centre got there. Thicker patty, lower heat, or flip more often.');
     if (p.dome > 0.5) notes.push('The patty domed into a meatball: the centre lifted off the pan and browned unevenly. A thumb dimple prevents that.');
     if (p.salt === 'mixed') notes.push('Salt was mixed through the meat early: dissolved myosin cross-linked into a springy, sausage-like bite.');
     if (p.work > 0.8) notes.push('The meat was overworked: dense and tight instead of loose and tender.');
@@ -3470,15 +3505,17 @@
       const raw = /raw/.test(st) || it.raw === true, burnt = /burnt|charred|black/.test(st) || it.burnt === true;
       const sendBack = score != null ? score <= -3 : raw || burnt;
       buildItems.push({ name, state: st || (raw ? 'raw' : burnt ? 'burnt' : 'ok'), score });
-      if (sendBack && raw) { badBuild = true; gripe('build', 0.9, [`The ${name} is raw.`, `That ${name} hasn't been cooked at all.`], 12); }
-      else if (sendBack && burnt) { badBuild = true; gripe('build', 0.9, [`The ${name} is burnt.`, `That ${name} is black.`], 12); }
-      else if (sendBack) { badBuild = true; gripe('build', 0.9, [`The ${name} is ${st || 'wrong'}. I'm not eating that.`, `Look at the ${name}. It's ${st || 'not right'}.`], 12); }
-      else if (raw) gripe('build', 0.5, [`The ${name} is raw.`, `The ${name} could have done with longer.`], 12);
-      else if (burnt) gripe('build', 0.5, [`The ${name} is burnt.`, `The ${name} has caught.`], 12);
-      else if (st === 'cold') gripe('build', 0.4, [`The ${name} is stone cold on top of it.`, `Cold ${name}. On a hot burger.`], 12);
-      else if (st === 'soggy') gripe('build', 0.35, [`The ${name} has gone to mush.`, `The ${name} is soggy.`], 12);
-      else if (score != null && score < 0) gripe('build', 0.3, [`The ${name} is ${st}.`, `Not sure about the ${name} — it's ${st}.`], 12);
-      else if ((score != null && score >= 1.5) || st === 'melted' || st === 'toasted') nice('build', [`The ${name} is exactly right.`, `Good ${name} on it too.`, st ? `${name[0].toUpperCase() + name.slice(1)} — ${st}. Perfect.` : `Good ${name}.`], 12);
+      // "the onions are burnt", "the egg is raw": the only plural on the menu is the onions
+      const pl = /s$/.test(name), is = pl ? 'are' : 'is', has = pl ? 'have' : 'has', hasnt = pl ? "haven't" : "hasn't", its = pl ? "They're" : "It's";
+      if (sendBack && raw) { badBuild = true; gripe('build', 0.9, [`The ${name} ${is} raw.`, `That ${name} ${hasnt} been cooked at all.`], 12); }
+      else if (sendBack && burnt) { badBuild = true; gripe('build', 0.9, [`The ${name} ${is} burnt.`, `That ${name} ${is} black.`], 12); }
+      else if (sendBack) { badBuild = true; gripe('build', 0.9, [`The ${name} ${is} ${st || 'wrong'}. I'm not eating that.`, `Look at the ${name}. ${its} ${st || 'not right'}.`], 12); }
+      else if (raw) gripe('build', 0.5, [`The ${name} ${is} raw.`, `The ${name} could have done with longer.`], 12);
+      else if (burnt) gripe('build', 0.5, [`The ${name} ${is} burnt.`, `The ${name} ${has} caught.`], 12);
+      else if (st === 'cold') gripe('build', 0.4, [`The ${name} ${is} stone cold on top of it.`, `Cold ${name}. On a hot burger.`], 12);
+      else if (st === 'soggy') gripe('build', 0.35, [`The ${name} ${has} gone to mush.`, `The ${name} ${is} soggy.`], 12);
+      else if (score != null && score < 0) gripe('build', 0.3, [`The ${name} ${is} ${st}.`, `Not sure about the ${name} — ${pl ? "they're" : "it's"} ${st}.`], 12);
+      else if ((score != null && score >= 1.5) || st === 'melted' || st === 'toasted') nice('build', [`The ${name} ${is} exactly right.`, `Good ${name} on it too.`, st ? `${name[0].toUpperCase() + name.slice(1)} — ${st}. Perfect.` : `Good ${name}.`], 12);
     }
 
     // — the wait, if the game is timing this ticket
@@ -3529,7 +3566,7 @@
     makePatty, createState, step, stepPatty, pattySpots, panTat, panTatXY, selectPatty, nextTicket,
     setKnob, setBank, setTopVent, addWood, addCoals, stirCoals, emptyAsh, ventFlow, smokeRead, smokeName, addFat, placePatty, movePatty, moveItem, scrape, slideTo, coalAt, bedAt, zoneAt, flipPatty, pressPatty, removePatty, addCheese, toggleLid, basteButter, washPan, wipeStove, panDirt, serve,
     makeItem, addItem, selectItem, flipItem, removeItem, stepItem, assignTopping, nearestBurger, toppingsOf, itemState, itemMass, itemT, freeSpot, footprintRings, ringCoverage,
-    firmness, firmnessWord, cellStiffness, pressTest, peek, sliceRead, handTest, handTestAt,
+    firmness, firmnessWord, cellStiffness, pressTest, peek, sliceRead, handTest, handTestAt, handWord, HAND_WORDS,
     evaluate, evaluateTicket, buildOf, donenessOf, centerT, cellT, layerMean, gridMean, pattyMass, layerMass, waterHolding, fmtTime, clamp, lerp, rhoVapSat, logEvent, pattyFinite,
     verdict, ticketTargetTime, latePenalty, billFor, tipFraction, spellMinutes, MENU, COOK_S, SERVICE_MAX,
   };

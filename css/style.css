@@ -23,7 +23,8 @@ label.check { display: flex; gap: 8px; align-items: center; color: var(--ink); f
 label.check input { width: auto; }
 
 /* HUD */
-#hud { position: fixed; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 16px; padding: 8px 14px; background: linear-gradient(rgba(10,8,6,0.85), rgba(10,8,6,0)); pointer-events: none; z-index: 5; }
+/* the HUD stops where the side panel starts, and wraps rather than running under it */
+#hud { position: fixed; top: 0; left: 0; right: 364px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding: 8px 14px; background: linear-gradient(rgba(10,8,6,0.85), rgba(10,8,6,0)); pointer-events: none; z-index: 5; }
 #hud > * { pointer-events: auto; }
 .brand { font-weight: 800; letter-spacing: 0.12em; color: var(--accent); }
 .brand small { display: block; letter-spacing: 0; font-weight: 400; color: var(--muted); font-size: 11px; }
@@ -32,19 +33,22 @@ label.check input { width: auto; }
 .ticket { position: relative; cursor: help; }
 .ticket[data-hint]::after { content: attr(data-hint); position: absolute; left: 0; top: calc(100% + 6px); white-space: nowrap; background: #1e1914; color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; font-size: 12px; box-shadow: 0 6px 18px rgba(0,0,0,0.5); opacity: 0; pointer-events: none; transform: translateY(-3px); transition: opacity 0.12s, transform 0.12s; }
 .ticket[data-hint]:hover::after, .ticket[data-hint]:focus::after { opacity: 1; transform: translateY(0); }
-.readouts { display: flex; gap: 12px; }
+.readouts { display: flex; flex-wrap: wrap; gap: 8px 12px; }
 .ro { background: rgba(0,0,0,0.45); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; min-width: 84px; }
-.ro label { margin: 0; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; }
-.ro span { font-variant-numeric: tabular-nums; font-size: 18px; }
-.ro.small { min-width: 0; display: flex; align-items: center; }
-.ro.small span { font-size: 12px; color: var(--muted); }
+.ro label { margin: 0; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; white-space: nowrap; }
+.ro span { font-variant-numeric: tabular-nums; font-size: 18px; white-space: nowrap; }
+/* the fire's readout is a sentence, not a number: give it room and let it wrap */
+#ro-fire { min-width: 200px; max-width: 360px; }
+#ro-fire span { font-size: 13px; line-height: 1.25; display: block; white-space: normal; }
+.ro.small { min-width: 0; max-width: 220px; display: flex; align-items: center; }
+.ro.small span { font-size: 12px; color: var(--muted); white-space: normal; }
 .ro.warn { color: var(--warn); display: flex; align-items: center; }
 body.hard .ro span#h-pan, body.hard .ro span#h-probe { color: var(--muted); }
 /* hard mode: the thermometers are gone, so the cook's own senses take the space they leave */
 body.hard #ro-pan, body.hard #ro-probe, body.hard .row.probe, body.hard #btn-probe-rest { display: none; }
 body.hard #senses button { border-color: var(--accent); }
 .ro.note { min-width: 200px; max-width: 300px; }
-.ro.note span { font-size: 12px; color: var(--good); line-height: 1.25; display: block; }
+.ro.note span { font-size: 12px; color: var(--good); line-height: 1.25; display: block; white-space: normal; }
 .tools { margin-left: auto; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 .tools button { padding: 5px 9px; font-size: 12.5px; }
 .speed button, .views button { border-radius: 0; }
@@ -52,7 +56,7 @@ body.hard #senses button { border-color: var(--accent); }
 .speed button:last-child, .views button:last-child { border-radius: 0 6px 6px 0; }
 
 /* side panel */
-#panel { position: fixed; top: 64px; right: 12px; width: 340px; max-height: calc(100% - 76px); overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; z-index: 4; backdrop-filter: blur(6px); }
+#panel { position: fixed; top: calc(var(--hud-h, 56px) + 8px); right: 12px; width: 340px; max-height: calc(100% - var(--hud-h, 56px) - 20px); overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; z-index: 4; backdrop-filter: blur(6px); }
 #panel h2 { margin: 0 0 10px; font-size: 15px; letter-spacing: 0.04em; color: var(--accent); }
 .row { margin: 8px 0; }
 .row.two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -105,8 +109,9 @@ table.stats .bon { color: var(--good); }
 
 /* modals */
 .modal { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(8,6,4,0.55); z-index: 10; }
-.modal.right { justify-content: flex-end; padding-right: 20px; background: transparent; pointer-events: none; }
-.modal.right .card { pointer-events: auto; }
+/* the results card sits to the right, under the HUD rather than behind it */
+.modal.right { justify-content: flex-end; align-items: flex-start; padding: calc(var(--hud-h, 56px) + 8px) 20px 0; background: transparent; pointer-events: none; }
+.modal.right .card { pointer-events: auto; max-height: calc(100vh - var(--hud-h, 56px) - 24px); }
 .card { width: min(560px, 92vw); max-height: 92vh; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 24px; box-shadow: 0 20px 60px rgba(0,0,0,0.6); }
 .card.wide { width: min(600px, 95vw); }
 .eyebrow { text-transform: uppercase; letter-spacing: 0.2em; font-size: 11px; color: var(--muted); }
@@ -130,6 +135,7 @@ table.stats td:first-child { color: var(--muted); width: 42%; }
 .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .charts canvas { width: 100%; height: auto; border-radius: 6px; }
 @media (max-width: 900px) {
+  #hud { right: 0; }
   #panel { width: min(340px, 92vw); top: auto; bottom: 8px; right: 8px; max-height: 55vh; }
   #inspector { width: min(440px, 92vw); bottom: auto; top: 70px; }
   .readouts { display: none; }

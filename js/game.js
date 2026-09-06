@@ -168,6 +168,7 @@
       this.phase = ph;
       document.body.dataset.phase = ph;
       for (const el of document.querySelectorAll('[data-phase]')) el.hidden = el.dataset.phase.split(' ').indexOf(ph) < 0;
+      $('panel').hidden = !(ph === 'form' || ph === 'cook' || ph === 'rest'); // an empty panel is a box in the corner of the results
       if (ph === 'form') { this.vp.setMode('board'); this.loadForm(); this.rebuildPreview(); }
       if (ph === 'cook') { this.vp.setMode('stove'); }
       if (ph === 'result') { this.showResults(); }
@@ -408,8 +409,18 @@
       };
       $('btn-hand').onclick = () => {
         const p = s.patty && s.patty.where === 'pan' ? s.patty : null; // over the meat if there is meat, otherwise over the middle
+        const count = (r) => `${r.seconds >= 59 ? 'you could leave it there' : `${r.seconds < 10 ? r.seconds.toFixed(1) : Math.round(r.seconds)} s before you pull it away`}: ${r.word}`;
+        const g = s.state.grill;
+        if (!p && g && (g.bank || 0) > 0.05) {
+          // a banked fire has two temperatures and the middle of the grate is neither of them: with
+          // nothing on the bars the hand goes over each side in turn, which is what the test is for
+          const R = s.state.pan.floorR;
+          const hot = P.handTestAt(s.state, { x: 0.62 * R, y: 0 }), cool = P.handTestAt(s.state, { x: -0.62 * R, y: 0 });
+          s.note(`Hand over the coals — ${count(hot)}. Off them — ${count(cool)}.`);
+          return;
+        }
         const r = P.handTestAt(s.state, p ? p.pos : null);
-        s.note(`Hand over the ${s.state.grill ? 'grate' : 'pan'} — ${r.seconds >= 59 ? 'you could leave it there' : `${r.seconds < 10 ? r.seconds.toFixed(1) : Math.round(r.seconds)} s before you pull it away`}: ${r.word}.`);
+        s.note(`Hand over the ${g ? 'grate' : 'pan'} — ${count(r)}.`);
       };
       $('btn-press').onclick = () => { P.pressPatty(s.state, false, s.patty); s.audio.hiss(0.5); s.vp.forceTex = true; };
       $('btn-smash').onclick = () => { P.pressPatty(s.state, true, s.patty); s.audio.hiss(0.9); s.vp.forceTex = true; s.refreshButtons(); };
@@ -439,6 +450,11 @@
       $('btn-help').onclick = () => { $('help').hidden = !$('help').hidden; };
       $('help').addEventListener('click', (e) => { if (e.target === $('help')) $('help').hidden = true; });
       document.addEventListener('pointerdown', () => { if (!s.audio.ctx && !s.audioAsked) { s.audioAsked = true; s.audio.start(); $('btn-audio').textContent = '🔊 Sound on'; } }, { once: true });
+      // the HUD wraps onto two or three lines on a busy ticket (three chips, four toppings, the
+      // kettle's readouts); the side panel starts wherever it ends, instead of under it
+      const hud = $('hud'), fit = () => document.documentElement.style.setProperty('--hud-h', `${hud.offsetHeight}px`);
+      if (root.ResizeObserver) new ResizeObserver(fit).observe(hud);
+      root.addEventListener('resize', fit); fit();
       window.addEventListener('keydown', (e) => {
         if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
         if (e.key === 'Tab' && s.phase !== 'order' && (s.forms.length > 1 || s.items.length)) {
@@ -474,11 +490,13 @@
       const p = this.patty; if (!p || p.where !== 'board') return;
       let pos = this.spots[this.sel];
       const g = this.state.grill;
-      if (g && (g.bank || 0) > 0.05) {
-        // a banked fire has a searing side and a finishing side, and meat goes on over the coals
-        const r = P.slideTo(this.state, p, p.D / 2, { x: 0.55 * this.state.pan.floorR + pos.x * 0.4, y: pos.y });
-        if (r.ok) pos = r.pos;
-      }
+      // a banked fire has a searing side and a finishing side, and meat goes on over the coals
+      const want = g && (g.bank || 0) > 0.05 ? { x: 0.55 * this.state.pan.floorR + pos.x * 0.4, y: pos.y } : pos;
+      // the spot is where the patty would go in an empty pan; if the onions or the bacon are already
+      // sitting on it the patty goes in beside them, the way a topping goes in beside a patty
+      const r = P.slideTo(this.state, p, p.D / 2, want);
+      if (r.ok) pos = r.pos;
+      else P.logEvent(this.state, `No room: patty ${p.id} is going in half on top of something. Crowd a pan and nothing browns.`, 'warn');
       P.placePatty(this.state, p, pos);
       this.audio.hiss(Math.min(1, (P.panTatXY(this.state, p.pos.x, p.pos.y) - 60) / 200));
       this.vp.forceTex = true;
@@ -759,7 +777,8 @@
       const bill = this.verdicts.reduce((a, v) => a + (v.outcome === 'sent back' ? 0 : v.bill), 0);
       const tips = this.verdicts.reduce((a, v) => a + v.tipAmount, 0);
       const points = sentBack.length ? 0 : P.clamp(Math.round(tk.total - tk.service.penalty), 0, 100);
-      const worst = this.verdicts.reduce((a, v) => (v.score < a.score ? v : a), this.verdicts[0]);
+      // what the card remembers this ticket by: the plate that went back if one did, else the lowest
+      const worst = sentBack[0] || this.verdicts.reduce((a, v) => (v.score < a.score ? v : a), this.verdicts[0]);
       this.recordTicket({
         n: (this.shift ? this.shift.n : 0) + 1, who: this.ticket.who, labels: this.ticket.items.map((id) => SHORT[id]).join(' + '),
         points, tips, bill, covers: tk.results.length, elapsed, target: targetT, penalty: tk.service.penalty,

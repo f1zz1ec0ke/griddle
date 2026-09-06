@@ -196,7 +196,12 @@ correlation, t ≈ 121·q^−1.35 with q in kW/m², which is the moment one more
 and so the moment a hand comes away. Wide-open vents put 25 kW/m² on it and you get 1.6 seconds; over a
 banked bed it is about 2 seconds over the coals and 12 off them; a 200 °C pan gives you 21 seconds,
 because a pan is not a fire and the classic 2/4/6/8-second chart is a grill technique. On a pan the
-number still moves where it matters — 21 s at 200 °C, 10 at 300, 5 at 400.
+number still moves where it matters — 21 s at 200 °C, 13 at 250, 9 at 300, 6 at 360 (measured over
+cast iron preheated on gas, so with a hot centre; a pan that is 200 °C edge to edge reads 27) — and
+the word that goes with the count is on a pan scale over a pan: twenty seconds is *medium*, "about
+right under a patty", while eight seconds, which is *medium* over coals, is *searing* over a pan,
+because it means metal past every oil's smoke point. Over a banked kettle with nothing on the bars
+the hand goes over each side in turn and reports both.
 
 **Listen to it.** The sizzle has two voices and they mean different things. Water flashing out of the
 face against the metal is a low, loud, rough crackle at 1–2 kHz, hard amplitude-modulated by
@@ -413,7 +418,9 @@ words, then in the bars. A 100 is delighted and tips the full 25 %; get all six 
 their quoted times and the shift card has nothing to complain about.
 
 In **hard mode** the same recipe is reachable without a single number. Preheat until a hand over the
-pan gives you six to eight seconds (that is 200–250 °C), lay it in, and wait for the loud crackle to
+pan gives you about twenty seconds and the note says *medium* (that is a 200–220 °C pan; the grill
+chart does not apply over a pan — eight seconds over cast iron is 300 °C and a black crust), lay it
+in, and wait for the loud crackle to
 drop to a hiss before you flip — that is the underside telling you it has dried and browned. Press
 it: soft with a spring is rare, springy is medium-rare, firm with a little give is medium. Pull it
 one step *under* the order, because carry-over is still coming, and rest it. Peeking will tell you
