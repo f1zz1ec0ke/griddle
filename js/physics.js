@@ -284,8 +284,10 @@
     for (let i = 0; i < p.N; i++) {
       const whc = waterHolding(p, i);
       const free = Math.max(0, p.w[i] - whc * p.w0);
-      let out = free * 0.8;
-      if (p.dM[i] > 0.3) out += p.w[i] * (hard ? 0.10 : 0.05) * p.dM[i];
+      // free juice goes first; once the protein network has set, pressing squeezes bound water
+      // out of it too (the sheet of juice you see run out from under the spatula)
+      let out = free;
+      if (p.dM[i] > 0.3) out += p.w[i] * (hard ? 0.16 : 0.10) * p.dM[i] * (0.5 + 0.5 * p.dA[i] + 0.5 * p.dC[i]);
       out = Math.min(out, p.w[i]);
       p.w[i] -= out; expelled += out;
       const fatOut = p.fr[i] * 0.7; p.fr[i] -= fatOut; s.pan.oil += fatOut; p.lostFat += fatOut;
@@ -323,6 +325,7 @@
     }
     s.pan.oil += p.fatTop; p.fatTop = 0;
     s.where = 'rest'; s.rest.t = 0; p.poolBottom = 0; p.dripAtRest = p.lostWaterDrip;
+    p.faceDown.crispAtRest = p.faceDown.crisp; p.faceUp.crispAtRest = p.faceUp.crisp; // judge the crust you built, not the one that softened on the plate
     p.peakCenter = Math.max(p.peakCenter, centerT(p));
     logEvent(s, `Off the heat after ${fmtTime(p.cookTime)}. Centre ${centerT(p).toFixed(1)} °C. Resting — carry-over cooking begins.`, 'action');
   }
@@ -861,9 +864,10 @@
     const faceScore = (f) => {
       const b = f.brown;
       let sc = b < 1 ? b * 0.3 : b < 2.5 ? 0.3 + ((b - 1) / 1.5) * 0.7 : b < 4.5 ? 1 : b < 6 ? 1 - (b - 4.5) * 0.4 : 0.4;
-      sc *= 1 - clamp(f.char / 0.6, 0, 0.9);
+      sc *= 1 - clamp((f.char - 0.1) / 0.6, 0, 0.9); // a few dark specks are a crust, not a fault
       sc *= 1 - f.torn * 2;
-      sc *= 0.7 + 0.3 * f.crisp;
+      sc *= 0.85 + 0.15 * (f.crispAtRest == null ? f.crisp : f.crispAtRest);
+
       return clamp(sc, 0, 1);
     };
     const dirtPen = clamp((p.dirtAtStart || 0) / 0.006, 0, 0.35);
@@ -871,12 +875,19 @@
     // 3. juiciness (15) — water retained relative to what that doneness inevitably costs
     let wNow = 0; for (let i = 0; i < p.N; i++) wNow += p.w[i];
     const wRet = wNow / (p.w0 * p.N);
-    const expected = clamp(1 - 0.0075 * Math.max(0, target.hi - 40), 0.55, 0.95); // ~0.86 for MR, ~0.72 for WD
-    const juiceScore = 15 * clamp((wRet - (expected - 0.25)) / 0.25, 0, 1);
+    // Full marks at the retention a well-executed cook to that doneness actually achieves in this
+    // model (measured by test/player.js: ~75 % rare, ~73 % medium-rare, ~68 % medium, ~59 %
+    // medium-well, ~55 % well done, minus a little slack); pressing, overcooking or a cool pan
+    // cost from there.
+    const expected = { rare: 0.72, 'medium-rare': 0.69, medium: 0.65, 'medium-well': 0.58, 'well-done': 0.53 }[target.id] || 0.6;
+    const juiceScore = 15 * clamp((wRet - (expected - 0.15)) / 0.15, 0, 1);
     // 4. evenness (10) — fraction of thickness cooked past the target band (grey band)
     let over = 0; for (let i = 0; i < p.N; i++) if (p.dG[i] > 0.7 && target.hi < 68) over++;
     const overFrac = over / p.N;
-    const evenScore = 10 * clamp(1 - overFrac / 0.7, 0, 1);
+    // A seared burger always carries a grey band; full marks for the band good technique leaves
+    // (thin patty, moderate pan, frequent flips), deductions for a fatter one.
+    const allowedGrey = { rare: 0.42, 'medium-rare': 0.47, medium: 0.66 }[target.id] || 1;
+    const evenScore = 10 * clamp(1 - Math.max(0, overFrac - allowedGrey) / 0.3, 0, 1);
     // 5. structure (5)
     let structure = 1;
     if (p.work > 0.8) structure -= 0.4;

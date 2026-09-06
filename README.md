@@ -88,6 +88,24 @@ induction each have their own burner model and pan height, and the glass lid fog
 Scoring: doneness 50, crust 20, juiciness 15, evenness (grey band) 10, structure 5. At service
 the patty goes on a sesame bun; juice that ran out during the rest soaks the bottom bun.
 
+## Cooking a 100
+
+The score is doneness 50, crust 20, juiciness 15, evenness 10, structure 5. Doneness is the peak
+centre temperature after resting, so cook with the probe and pull early: carry-over on a 150 g
+patty is 6–9 °C. A perfect score is reachable for every ticket with ordinary good technique.
+The recipe that does it, found by `node test/player.js` and confirmed through the UI:
+
+- 150 g, 80/20, straight from the fridge, thumb dimple, salt on the surface, handling ~35.
+- 18 mm for rare and medium-rare, 14 mm for medium and above.
+- Cast iron on gas: preheat on 8 until the IR gun reads ~200 °C, then hold around 4.5.
+  8 g of canola, then lay the patty in and insert the probe at 50 % depth.
+- Flip every 45 s (the meat releases on its own once the underside has dried).
+- Pull when the probe reads: rare 41, medium-rare 46, medium 54, medium-well 61, well done 67 °C.
+- Rest 2–2.5 minutes, then serve. Never press it.
+
+Smashing, a screaming-hot pan, a single flip on a thick patty, or cutting it straight off the
+heat will all cost you somewhere, and the results screen says where.
+
 ## Layout
 
 ```

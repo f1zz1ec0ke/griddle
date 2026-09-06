@@ -221,3 +221,32 @@ test('the pan dirties over tickets, dirt costs contact and crust, and washing re
   assert.ok(s.pan.T < hot * 0.5, `T=${s.pan.T} from ${hot}`); assert.ok(s.pan.fond === 0 && s.pan.cheeseBits === 0 && s.pan.water > 0);
   assert.ok(s.pan.carbon < carbonBefore * 0.1, `carbon ${carbonBefore} -> ${s.pan.carbon}`);
 });
+
+// ---- scoring: a perfect burger is reachable with good technique, and careless technique is punished
+function recipe(target, thick, pull, opts = {}) {
+  const s = P.createState({}); P.setKnob(s, 8); while (s.pan.T < (opts.Tpan || 200)) P.step(s, DT);
+  P.addFat(s, 'canola', 8);
+  const p = std({ thicknessMm: thick, massG: 150, tempC: 4 }); P.placePatty(s, p);
+  let since = 0, g = 0;
+  while (P.centerT(p) < pull && g++ < 60000) {
+    hold(s, opts.Tpan || 200); P.step(s, DT); since += DT;
+    if (opts.single) { if (p.flips === 0 && since >= opts.single) { P.flipPatty(s); since = 0; } }
+    else if (since >= 45 && !p.faceDown.stuck) { P.flipPatty(s); since = 0; }
+    if (opts.press && Math.abs(since - 20) < DT / 2) P.pressPatty(s, false);
+  }
+  P.removePatty(s); cookFor(s, opts.rest == null ? 150 : opts.rest);
+  return P.evaluate(s, target);
+}
+test('the README recipe scores 100 on every ticket', () => {
+  const plan = [['rare', 18, 41], ['medium-rare', 18, 46], ['medium', 14, 54], ['medium-well', 14, 61], ['well-done', 14, 67]];
+  for (const [t, thick, pull] of plan) { const r = recipe(t, thick, pull); assert.equal(r.total, 100, `${t}: ${r.total} ${JSON.stringify(r.parts)}`); }
+});
+test('careless technique is still punished', () => {
+  const thickOneFlip = recipe('medium-rare', 26, 46, { single: 240 });      // thick, one flip, cold centre chases the pull temp
+  const pressed = recipe('medium', 14, 54, { press: true });                 // squeezing the juice out
+  const nuclear = recipe('medium-rare', 18, 46, { Tpan: 300 });              // screaming pan: char
+  const noCarry = recipe('medium-rare', 18, 54);                            // pulled at the band's top: carry-over overshoots
+  const noRest = recipe('medium-rare', 18, 46, { rest: 0 });                 // cut straight off the heat
+  for (const [name, r] of Object.entries({ thickOneFlip, pressed, nuclear, noCarry, noRest })) console.log(`   ${name}: ${r.total} ${JSON.stringify(r.parts)}`);
+  assert.ok(thickOneFlip.total < 90, 'thick single flip'); assert.ok(pressed.total < 93, 'pressed'); assert.ok(nuclear.total < 85, 'nuclear'); assert.ok(noCarry.total < 80, 'no carry-over allowance');
+});
