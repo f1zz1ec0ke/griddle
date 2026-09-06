@@ -43,7 +43,7 @@
       this.vp = new root.BurgerRender.Viewport($('view'));
       this.audio = new root.KitchenAudio();
       this.speed = 1; this.phase = 'order'; this.hard = false;
-      this.probe = { inserted: false, depth: 0.5, reading: null, settle: 0 };
+      this.probe = { inserted: false, depth: 0.5, reading: null };
       this.forms = [{ ...DEFAULT_FORM, target: 'medium' }]; this.previews = []; this.sel = 0;
       this.patties = []; this.spots = []; this.selItem = null;
       this.equip = { stove: 'gas', pan: 'castiron', fat: 'canola', fatG: 8, wood: 'hickory', coalG: 500 };
@@ -182,7 +182,7 @@
       if (this.phase === 'form') { this.loadForm(); this.rebuildPreview(); }
       else if (this.patty) {
         P.selectPatty(this.state, this.patty);
-        this.probe.reading = null; this.probe.settle = 0;
+        this.probe.reading = null;
         if (this.phase === 'result') { this.showPattyResult(); this.vp.controls.preset('serve'); }
       }
       this.refreshButtons(); this.updateChips();
@@ -274,7 +274,7 @@
       this.patties = this.forms.map((f, i) => this.makeFromForm(f, i));
       this.layoutSpots();
       this.sel = 0; this.selItem = null; this.vp.setPatty(null);
-      this.probe = { inserted: false, depth: 0.5, reading: null, settle: 0 }; $('btn-probe').textContent = 'Insert probe';
+      this.probe = { inserted: false, depth: 0.5, reading: null }; $('btn-probe').textContent = 'Insert probe';
       $('btn-lid').textContent = 'Lid on';
       this.chart = []; this.logN = -1;
       $('log').innerHTML = '';
@@ -419,7 +419,7 @@
       $('btn-wash').onclick = () => { if (P.washPan(s.state)) { s.audio.hiss(Math.min(1, (s.state.pan.T - 30) / 100)); s.vp.forceTex = true; } };
       $('btn-wipe').onclick = () => { P.wipeStove(s.state); s.vp.clearStains(); };
       $('btn-remove').onclick = () => { if (s.selItem) { if (P.removeItem(s.state, s.selItem)) { s.maybeRest(); s.refreshButtons(); s.updateChips(); } } else s.remove(); };
-      $('btn-probe').onclick = () => { s.probe.inserted = !s.probe.inserted; s.probe.settle = 0; s.probe.reading = null; $('btn-probe').textContent = s.probe.inserted ? 'Pull probe' : 'Insert probe'; };
+      $('btn-probe').onclick = () => { s.probe.inserted = !s.probe.inserted; s.probe.reading = null; $('btn-probe').textContent = s.probe.inserted ? 'Pull probe' : 'Insert probe'; };
       $('probe-depth').addEventListener('input', (e) => { s.probe.depth = Number(e.target.value) / 100; $('probe-depth-v').textContent = e.target.value + ' %'; });
       $('btn-cut').onclick = () => { s.ticketTiming = false; P.serve(s.state); s.setPhase('result'); }; // the clock stops when the plates leave the pass
       $('btn-again').onclick = () => { s.vp.setCutaway(false); s.vp.setPatty(null); s.state.patties = []; s.state.patty = null; s.state.served = false; if (s.shift && s.shift.n >= SHIFT_LEN) s.showShiftEnd(); else s.newOrder(); };
@@ -671,7 +671,7 @@
         if (p && where !== 'board') {
           if (this.patties.length > 1) add('Selected patty', `${p.id} of ${this.patties.length} (${this.label(p.target)})`);
           add('Heat flux into meat', fmt(d.panQ, 0) + ' W · h = ' + fmt(d.hc, 0) + ' W/m²K');
-          add('Bottom surface / node 0', fmt(p.surfT, 0) + ' / ' + fmt(p.T[0], 0) + ' °C');
+          add('Bottom surface / bottom cell', fmt(p.surfT, 0) + ' / ' + fmt(p.T[0], 0) + ' °C');
           add('Centre / top', fmt(P.centerT(p), 1) + ' / ' + fmt(P.cellT(p, p.Nz - 1, 0), 1) + ' °C');
           add('Centre / edge at mid-height', fmt(P.centerT(p), 1) + ' / ' + fmt(P.cellT(p, Math.floor(p.Nz / 2), p.Nr - 1), 1) + ' °C');
           add('Peak centre so far', fmt(p.peakCenter, 1) + ' °C → ' + P.donenessOf(p.peakCenter).label);
@@ -777,7 +777,10 @@
       this.vp.controls.preset('serve'); $('inspector').hidden = true;
       this.vp.setCutaway(true); $('btn-cutaway').classList.add('on');
       $('r-score').textContent = tk.total;
-      $('r-grade').textContent = tk.total >= 90 ? 'Line-cook royalty' : tk.total >= 75 ? 'Solid. They will come back.' : tk.total >= 55 ? 'Edible. Nobody complained out loud.' : tk.total >= 35 ? 'Sent back.' : 'The customer left. So did the smoke alarm.';
+      // the kitchen's one-line grade agrees with the customer: a plate that went back (under 45 on
+      // its own score, or anything raw or burnt on the build) is "sent back" whatever the ticket total
+      const anyBack = this.verdicts && this.verdicts.some((v) => v.outcome === 'sent back');
+      $('r-grade').textContent = anyBack ? (tk.total >= 55 ? 'Sent back — over the build, not the meat.' : 'Sent back.') : tk.total >= 90 ? 'Line-cook royalty' : tk.total >= 75 ? 'Solid. They will come back.' : tk.total >= 55 ? 'Edible. Nobody complained out loud.' : tk.total >= 45 ? 'They ate it. They will not be back.' : 'The customer left. So did the smoke alarm.';
       const many = tk.results.length > 1;
       $('r-chips').hidden = !many;
       if (many) {

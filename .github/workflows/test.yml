@@ -1,0 +1,36 @@
+# The physics regression suite, on every push and every pull request.
+#
+# There are no dependencies to install: the game is plain HTML/JS with Three.js vendored, and the
+# tests use node's built-in runner. So there is no `npm ci` step and no cache — checkout, node, run.
+#
+# The end-to-end scenarios (`npm run e2e`) are not run here: they need a Chromium with software
+# WebGL and a globally installed Playwright, which this workflow deliberately does not carry.
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  physics:
+    name: physics regression suite
+    runs-on: ubuntu-latest
+    # The suite is a few hundred simulated minutes of cooking; it takes ~2 minutes spread over the
+    # runner's cores. Twenty is a generous ceiling that still fails fast if something hangs.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: physics.js loads in node
+        run: node -e "require('./js/physics.js')"
+
+      - name: run the suite
+        # test/run.js shards test/physics.test.js across min(4, cores) workers and fails if the
+        # shards do not add up to every test in the file. TEST_TIMEOUT is the per-test limit in ms.
+        run: npm test
+        env:
+          TEST_TIMEOUT: 600000
