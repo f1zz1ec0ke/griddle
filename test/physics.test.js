@@ -333,6 +333,152 @@ test('the grill recipe scores 100: 18 mm, vents on 7, flip every 45 s, pull at 4
   assert.ok(r2.parts.crust < 12 && p2.faceDown.char > 0.25, `roaring: ${r2.total} ${JSON.stringify(r2.parts)} char ${p2.faceDown.char.toFixed(2)}`);
 });
 
+// ---------------------------------------------------------------- wood, ash and the vents
+/** Run the grill on for `sec` seconds without touching anything. */
+function grillFor(s, sec) { const until = s.t + sec; while (s.t < until) P.step(s, DT); }
+test('a hickory chunk dries, catches, and smokes for more than eight minutes', () => {
+  const s = litGrill(7, 600); grillFor(s, 120);
+  const wd = P.addWood(s, 'hickory');
+  assert.equal(wd.m, 0.06); assert.ok(wd.water > 0.006, 'a chunk carries its own water');
+  const conc0 = s.grill.smokeConc;
+  grillFor(s, 60);
+  assert.ok(wd.T > 90 && wd.m > 0.0599, `after a minute it is only warming: T=${wd.T} m=${wd.m}`);
+  // it has to dry and reach pyrolysis temperature first — a chunk is not a switch
+  grillFor(s, 180);
+  assert.ok(wd.T > 330 && wd.m < 0.058, `after four minutes it is well alight: T=${wd.T} m=${wd.m}`);
+  let smoking = 0, peak = 0, peakT = 0;
+  for (let i = 0; i < 20; i++) { grillFor(s, 60); if (wd.smoke > 5e-7) smoking += 60; if (wd.smoke > peak) { peak = wd.smoke; peakT = s.t; } }
+  assert.ok(smoking > 8 * 60, `smoked for ${smoking} s`);
+  assert.ok(smoking < 22 * 60, `a 60 g chunk is not a log: ${smoking} s`);
+  assert.ok(wd.spent && wd.m === 0, 'and then it is gone');
+  assert.ok(s.grill.smokeConc < conc0 + 1e-6 || wd.smoke === 0, 'the smoke clears once the chunk is done');
+  assert.ok(s.events.some((e) => /chunk of hickory/.test(e.text)) && s.events.some((e) => /spent/.test(e.text)));
+  // the rate peaks and then decays: the smouldering front lives on a surface that is shrinking
+  assert.ok(peakT - wd.t0 < 420, `peak at ${(peakT - wd.t0).toFixed(0)} s after it went on`);
+  assert.ok(peak > 3e-6, `peak smoke rate ${peak} kg/s`);
+});
+test('a patty over a smouldering chunk takes the smoke, and the wood decides how much', () => {
+  const runs = {};
+  for (const kind of ['none', 'apple', 'hickory', 'mesquite']) {
+    const s = litGrill(8, 600); P.setKnob(s, 7); grillFor(s, 240);
+    if (kind !== 'none') { P.addWood(s, kind); grillFor(s, 180); } else grillFor(s, 180);
+    const p = std({ thicknessMm: 18, massG: 150, work: 0.35 }); P.placePatty(s, p);
+    let since = 0; while (P.centerT(p) < 47) { P.step(s, DT); since += DT; if (since >= 45 && !p.faceDown.stuck) { P.flipPatty(s); since = 0; } }
+    P.removePatty(s); cookFor(s, 150);
+    runs[kind] = { r: P.evaluate(s, 'medium-rare'), read: P.smokeRead(p) };
+  }
+  assert.ok(runs.none.read.smokiness < 0.02, `no wood, no smoke: ${runs.none.read.smokiness}`);
+  assert.ok(runs.hickory.read.smokiness > 0.5, `hickory: ${runs.hickory.read.smokiness}`);
+  assert.ok(runs.apple.read.smokiness < runs.hickory.read.smokiness, 'apple is the mild one');
+  assert.ok(runs.mesquite.read.smokiness > runs.hickory.read.smokiness, 'mesquite is the strong one');
+  assert.equal(runs.hickory.read.wood, 'hickory');
+  assert.ok(runs.hickory.read.creosote < 0.05, 'an open kettle burns the volatiles: no creosote');
+  // and the flavour is worth something, without ever taking a perfect crust above twenty
+  assert.ok(runs.hickory.r.smokeBonus > 2, `smoke bonus ${runs.hickory.r.smokeBonus}`);
+  assert.ok(runs.hickory.r.parts.crust <= 20 && runs.none.r.parts.crust <= 20);
+  assert.ok(runs.hickory.r.notes.some((n) => /hickory smoke/.test(n)), runs.hickory.r.notes.join(' | '));
+});
+test('the grill recipe still scores 100 either way: bare coals, or a chunk of hickory on them', () => {
+  for (const wood of [null, 'hickory']) {
+    const s = litGrill(8, 600); P.setKnob(s, 7); cookFor(s, 240);
+    if (wood) { P.addWood(s, wood); cookFor(s, 180); } else cookFor(s, 180);
+    const p = std({ thicknessMm: 18, massG: 150, work: 0.35 }); P.placePatty(s, p);
+    let since = 0; while (P.centerT(p) < 47) { P.step(s, DT); since += DT; if (since >= 45 && !p.faceDown.stuck) { P.flipPatty(s); since = 0; } }
+    P.removePatty(s); cookFor(s, 150);
+    const r = P.evaluate(s, 'medium-rare');
+    assert.equal(r.total, 100, `${wood || 'bare coals'}: ${r.total} ${JSON.stringify(r.parts)} smoke ${r.smokiness.toFixed(2)}`);
+  }
+});
+test('the lid vent is half the airflow with the lid on and nothing at all with it off', () => {
+  const s = litGrill(8, 600);
+  P.setTopVent(s, 0);
+  assert.equal(P.ventFlow(s), 0.8, 'lid off: the bottom vent is the only vent');
+  P.toggleLid(s);
+  assert.ok(P.ventFlow(s) < 0.1, `lid on, top shut: ${P.ventFlow(s)}`);
+  P.setTopVent(s, 1);
+  const both = P.ventFlow(s);
+  assert.ok(both > 0.6 && both < 0.8, `both wide: ${both}`); // two orifices in series: 0.71 of one
+  P.setKnob(s, 1); // shutting either one shuts the fire down
+  assert.ok(P.ventFlow(s) < 0.2, `bottom nearly shut: ${P.ventFlow(s)}`);
+});
+test('lid on with both vents shut smothers it: the fire falls, the smoke goes white and acrid', () => {
+  const open = litGrill(8, 600), shut = litGrill(8, 600);
+  for (const s of [open, shut]) { P.setKnob(s, 7); grillFor(s, 240); P.addWood(s, 'hickory'); grillFor(s, 180); }
+  const pOpen = std({ thicknessMm: 18, massG: 150 }), pShut = std({ thicknessMm: 18, massG: 150 });
+  P.placePatty(open, pOpen); P.placePatty(shut, pShut);
+  P.toggleLid(open); P.toggleLid(shut);
+  P.setKnob(shut, 0); P.setTopVent(shut, 0);
+  const T0 = shut.grill.Tfire;
+  grillFor(open, 300); grillFor(shut, 300);
+  assert.ok(shut.grill.Tfire < T0 - 80, `smothered fire ${T0.toFixed(0)} → ${shut.grill.Tfire.toFixed(0)}`);
+  assert.ok(shut.grill.Tfire < open.grill.Tfire - 100, `smothered ${shut.grill.Tfire} vs vented ${open.grill.Tfire}`);
+  assert.ok(shut.grill.comb < 0.05 && open.grill.comb > 0.9, `combustion ${shut.grill.comb} vs ${open.grill.comb}`);
+  // thick white smoke: the concentration under a shut dome is orders of magnitude higher
+  assert.ok(shut.grill.smokeConc > 10 * open.grill.smokeConc, `conc ${shut.grill.smokeConc} vs ${open.grill.smokeConc}`);
+  const rs = P.smokeRead(pShut), ro = P.smokeRead(pOpen);
+  assert.ok(rs.creosote > 2 && rs.creosote > 20 * (ro.creosote + 1e-3), `creosote ${rs.creosote} vs ${ro.creosote}`);
+  assert.ok(rs.smokiness > ro.smokiness, 'and far more of everything else too');
+  // the top face is also cooler under a smothered dome
+  assert.ok(shut.grill.Tdome < open.grill.Tdome, `dome ${shut.grill.Tdome} vs ${open.grill.Tdome}`);
+  P.removePatty(shut, pShut); cookFor(shut, 150);
+  const r = P.evaluate(shut, 'medium-rare', pShut);
+  assert.ok(r.smokePenalty > 4, `creosote penalty ${r.smokePenalty}`);
+  assert.ok(r.notes.some((n) => /Smothered smoke/.test(n)), r.notes.join(' | '));
+});
+test('half a kilo of cold coals dips the bed before it lifts it', () => {
+  const add = litGrill(6, 500), ctl = litGrill(6, 500);
+  grillFor(add, 600); grillFor(ctl, 600);
+  const T0 = add.grill.Tfire;
+  P.addCoals(add, 0.5);
+  assert.equal(add.grill.unlit, 0.5);
+  grillFor(add, 120); grillFor(ctl, 120);
+  const dip = add.grill.Tfire;
+  assert.ok(dip < T0 - 50, `cold coals are a heat sink: ${T0.toFixed(0)} → ${dip.toFixed(0)}`);
+  assert.ok(add.grill.unlit > 0.4, 'and they have not caught yet');
+  grillFor(add, 240); grillFor(ctl, 240);           // six minutes after they went on
+  assert.ok(add.grill.Tfire > dip + 50, `by six minutes it is climbing again: ${add.grill.Tfire.toFixed(0)}`);
+  assert.ok(add.grill.unlit < 0.2 && add.grill.coal > 1.4, 'the new coals have caught and joined the bed');
+  grillFor(add, 240); grillFor(ctl, 240);           // ten minutes
+  assert.ok(add.grill.Tfire > ctl.grill.Tfire + 8, `topped up ${add.grill.Tfire.toFixed(0)} vs left alone ${ctl.grill.Tfire.toFixed(0)}`);
+  assert.ok(add.events.some((e) => /have caught/.test(e.text)));
+});
+test('ash builds over forty minutes, chokes the bed, and raking it out gets the heat back', () => {
+  const dirty = litGrill(5, 450), raked = litGrill(5, 450);
+  for (let i = 0; i < 8; i++) { grillFor(dirty, 300); grillFor(raked, 300); P.stirCoals(raked); }
+  assert.ok(dirty.grill.ash + dirty.grill.ashBowl > 0.02, `ash after 40 min: ${dirty.grill.ash + dirty.grill.ashBowl}`);
+  assert.ok(dirty.grill.ash > 3 * raked.grill.ash, `bed ash: choked ${dirty.grill.ash} vs raked ${raked.grill.ash}`);
+  assert.ok(raked.grill.ashBowl > dirty.grill.ashBowl, 'what comes off the lumps ends up in the bowl');
+  assert.ok(raked.grill.Tfire > dirty.grill.Tfire + 15, `same vents: choked ${dirty.grill.Tfire.toFixed(0)} vs raked ${raked.grill.Tfire.toFixed(0)}`);
+  assert.ok(raked.grill.air > dirty.grill.air, 'ash is a restriction on the draught, and that is the mechanism');
+  assert.ok(dirty.grill.coal > raked.grill.coal, 'a choked bed burns slower as well as cooler');
+  assert.ok(dirty.pan.T < raked.pan.T, `and the bars follow: ${dirty.pan.T.toFixed(0)} vs ${raked.pan.T.toFixed(0)}`);
+  // the ash only comes out when the kettle is cold
+  assert.equal(P.emptyAsh(dirty), false);
+  assert.ok(dirty.events.some((e) => /Ash goes in a bin/.test(e.text)));
+  P.setKnob(dirty, 0); let g = 0; while (dirty.grill.Tfire > 60 && g++ < 400000) P.step(dirty, DT);
+  assert.equal(P.emptyAsh(dirty), true);
+  assert.equal(dirty.grill.ash + dirty.grill.ashBowl, 0);
+});
+test('the kettle keeps its fire between tickets', () => {
+  const s = litGrill(7, 600); grillFor(s, 240);
+  P.addWood(s, 'apple'); grillFor(s, 240);
+  const p = std({ thicknessMm: 16 }); P.placePatty(s, p); grillFor(s, 120); P.removePatty(s, p); grillFor(s, 60);
+  const before = { coal: s.grill.coal, ash: s.grill.ash, bowl: s.grill.ashBowl, Tfire: s.grill.Tfire, grate: s.pan.T, wood: s.grill.woods[0].m, conc: s.grill.smokeConc, dirt: P.panDirt(s.pan) };
+  P.nextTicket(s);
+  assert.equal(s.patties.length, 0); assert.equal(s.lid, false); assert.equal(s.events.length, 0);
+  assert.equal(s.grill.coal, before.coal); assert.equal(s.grill.ash, before.ash); assert.equal(s.grill.ashBowl, before.bowl);
+  assert.equal(s.grill.Tfire, before.Tfire); assert.equal(s.pan.T, before.grate);
+  assert.equal(s.grill.woods.length, 1); assert.equal(s.grill.woods[0].m, before.wood);
+  assert.equal(s.grill.smokeConc, before.conc); assert.equal(P.panDirt(s.pan), before.dirt);
+  // and it goes on burning while the next patty is formed: coal down, ash up, chunk smaller
+  grillFor(s, 300);
+  assert.ok(s.grill.coal < before.coal - 0.01 && s.grill.ash + s.grill.ashBowl > before.ash + before.bowl);
+  assert.ok(s.grill.woods[0].m < before.wood, 'the chunk kept smouldering through the changeover');
+  const p2 = std({ thicknessMm: 16 }); P.placePatty(s, p2); grillFor(s, 60);
+  assert.ok(P.centerT(p2) > 5 && s.pan.T > 250, 'and the next patty lands on a hot grate');
+  assert.ok(P.smokeRead(p2).smokiness > 0, 'in a kettle that still smells of apple');
+});
+
 // ---------------------------------------------------------------- performance & timestep
 // The model is on the browser's frame budget, so the shape of the hot path is part of the
 // contract: no allocation per step, no sub-cycling that is not needed, and the same answers at

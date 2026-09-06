@@ -44,8 +44,11 @@ npm run perf         # how many milliseconds of CPU a simulated second costs
 | `Tab`, click a patty or topping, or the chips under the ticket | select what the buttons act on |
 | **Extras** row | put bun halves, bacon, an egg or sliced onions in the pan beside the patties |
 | `F` with a topping selected | turn the bun / rasher / egg — or stir the onions |
-| Stove: charcoal kettle | the knob becomes the vents, the pan goes away, and the lid is the kettle's |
+| Stove: charcoal kettle | the knob becomes the bottom vent, the pan goes away, and the lid is the kettle's |
 | **Bank coals** (kettle only) | rake the bed to one side: a searing zone over the coals and a gentle one off them |
+| **Lid vent** (kettle only) | the damper in the lid: the other half of the airflow when the lid is on, and the way the smoke gets out |
+| **Add wood** (kettle only) | a 60 g chunk of hickory, apple or mesquite on the coals — smoke for a quarter of an hour |
+| **Add coals**, **Stir**, **Empty ash** | more lump charcoal (cold, so the bed dips first), rake the ash off the bed, tip the bowl out when it is cold |
 
 The **Inspector** button opens a live chart (pan, crust surface, bottom layer, centre, top) and a
 table of everything the model knows. **Hard mode** takes the probe and the IR gun away entirely and
@@ -210,8 +213,8 @@ sent out raw or burnt — a raw egg white, limp bacon, a black bun, scorched oni
 points back for a jammy yolk, crisp bacon, sweet onions or a properly toasted bun.
 
 **The charcoal kettle** replaces the pan with a steel grate over 1.5 kg of lump charcoal. The
-knob is the vents: airflow sets the temperature the bed heads for (~350 °C banked, ~750 °C wide
-open, with the lid throttling it) and how fast the coals burn down to ash. The grate is thin bars
+knob is the bottom vent: airflow sets the temperature the bed heads for (~350 °C shut down,
+~750 °C wide open, with the lid throttling it) and how fast the coals burn down to ash. The grate is thin bars
 heated by the bed's radiation and the hot gas coming up through it. A patty over the coals gets
 bar contact on about a quarter of its face — hotter lines that brand grill marks with their own
 browning and char — and radiation plus hot gas on the rest, with radiant heat browning the edge
@@ -238,6 +241,57 @@ and about a sixth of the radiant load (0.36 of the view factor at 0.75 of the be
 ambient, and radiation goes as T⁴). A patty reads the fire at its own position — bottom boundary,
 crust temperature cap, edge radiation and flare-ups included, because a flare burns where the fat
 lands, not over bare ash. Sear over the coals, slide it across, and finish it gently.
+
+**Wood, and the smoke that is the point of a fire.** A chunk is ~60 g of split hardwood: 700 kg/m³
+air-dried to about 12 % moisture, so a 4.4 cm block with 0.012 m² of surface for the fire to work
+on. It does nothing at all for a minute or two — the bed has to boil 7 g of water out of it (pinned
+at 100 °C, full latent heat, like everything else in here) and then take it to pyrolysis
+temperature, about 300 °C — and then it smoulders for ten to fifteen minutes. The rate follows the
+remaining surface, m^⅔, because a smouldering front lives on a surface: the smoke peaks a couple of
+minutes after the chunk is alight and decays as it is eaten away. Pyrolysis is endothermic
+(~400 kJ/kg), which is what holds a smouldering chunk in the 350–450 °C band instead of running away
+to the bed's temperature, and what is left at the end is charcoal, which joins the bed as fuel.
+
+Whether that smoke is worth eating is entirely a question of air. With the vents open the volatiles
+ignite as they leave the wood and what escapes is thin and blue — a few per cent of the mass as
+phenols and guaiacols, and that is the flavour. Smothered, they never ignite, come off cool, and
+condense on everything above them as thick white smoke: that is creosote, and it is bitter. The
+smoke under the dome is solved as a stirred tank, one per kind of wood, dC/dt = (S − C·Q)/V: V is
+the ~30 litres over the grate, and Q is what carries it away — the plume off an open kettle (fast,
+so most of the smoke never touches the meat) or what the vents draw through a closed one, which is
+what puts smoke over the food in the first place. Shut the top vent and Q collapses to the leak past
+the lid, the concentration goes up twentyfold, and the meat is sitting in it. It lands on the meat at
+a couple of millimetres a second — impaction plus thermophoresis onto a surface cooler than the gas
+— and better while that surface is still cool and wet, which is why smoke goes into meat early and
+stops mattering once the crust has dried, and it saturates, because past a few tenths of a gram per
+square metre the smoke is landing on tar. **A moderate deposit is worth up to three of the twenty
+crust marks** and can never take a crust that has already earned twenty above it; creosote is a
+straight penalty of up to six. Mesquite smokes half again as hard as hickory, apple two thirds as
+hard.
+
+**Two vents in series.** With the lid off the bottom vent is the only vent. With the lid on the two
+are orifices in series and the flows add as 1/A² = 1/A₁² + 1/A₂², i.e. A = A₁A₂/√(A₁²+A₂²) — a
+smooth minimum, so shutting either one shuts the fire down and opening one wide does not rescue the
+other. Both wide gives 0.71 of an open kettle, which is about what a lid costs; both shut leaves the
+6 % that leaks past a lid that never quite seats, and the bed sags a couple of hundred degrees over
+five minutes rather than going out in seconds.
+
+**Ash, and the bed as something you keep.** Lump charcoal is ~6 % mineral ash by mass. Half of it
+falls through the fire into the bowl and half stays up in the bed blanketing the lumps, and what
+matters is how much there is *relative to the coal left*, not its absolute mass — so a fresh deep
+bed swallows its own ash for a long time and a half-spent one is strangled by it. Ash at a tenth of
+the bed's mass takes nearly half the draught away, which makes the fire both cooler and slower.
+**Stir** rakes it through: the ash drops into the bowl, fresh incandescent surface comes up, and the
+bed draws harder for about a minute and a half before settling. **Empty ash** tips the bowl, and only
+when the kettle is cold, because live ash in a bin is how sheds burn down. **Add coals** tips in more
+lump straight from the bag, and it is cold: 0.5 kg from room temperature to ignition at ~350 °C is
+140 kJ, which is nearly a minute of the fire's entire output, so the bed drops 80–90 °C over the
+first two minutes, the new lumps catch at four or five, and only then does the bed come back up —
+past where it was, because a deeper bed has more incandescent surface for the same draught. Add
+coals before you need them, not when the fire is already dying. And **the kettle persists between
+tickets** exactly as the pan does: the coals go on burning down while the next patty is being formed,
+the ash goes on building, the bars keep their heat and whatever is welded to them, and a chunk that
+is still smouldering is still smouldering.
 
 **Speed and the timestep.** The model steps at 0.05 s of simulated time (20 Hz). That is a long
 way inside the stability limit of the explicit conduction — 0.6 mm layers of meat allow about
@@ -296,9 +350,18 @@ start them before the meat. Take each one off when it is right — a topping lef
 cooking — and use the **Build onto** buttons to say which burger it belongs to.
 
 On the charcoal kettle the window is narrower, but it is there: light it on 8, wait for the
-bed to glow and the grate to pass 250 °C, then run the vents on 7 (bed around 630 °C). An 18 mm
-patty flipped every 45 s and pulled at 47 °C lands a medium-rare 100 with bars branded into
-both faces. Vents wide open, a thick patty and lazy flips is a charred one.
+bed to glow and the grate to pass 250 °C, then run the bottom vent on 7 (bed around 630 °C). An
+18 mm patty flipped every 45 s and pulled at 47 °C lands a medium-rare 100 with bars branded into
+both faces. Vents wide open, a thick patty and lazy flips is a charred one. As the bed burns down it
+cools at the same vent setting — ash chokes it and a shallower bed runs cooler — so **Stir** it, or
+open the vent a notch, or put more coals on well before you need them.
+
+Put a chunk of hickory on three minutes before the meat and the same cook still scores 100, and the
+smoke is worth three of the twenty crust marks on any cook that has not already earned them all: a
+moderate line of clean smoke is flavour. What is not flavour is a smothered fire. Lid on with both
+vents shut and the wood stops burning its volatiles: the bed falls, the smoke goes white, and the
+creosote it leaves on the meat costs up to six. If the lid is on, leave the lid vent open — that is
+what draws the smoke across the food and out.
 
 That last one is what the **two-zone fire** is for. Bank the coals fully, give the bars two minutes
 to settle, and sear over the pile — then, once the crust has set (about three minutes, so it lifts

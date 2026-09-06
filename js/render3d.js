@@ -964,7 +964,12 @@
         for (let i = 0; i < 3; i++) { const a = Math.PI / 2 + (i * 2 * Math.PI) / 3; const leg = new T.Mesh(new T.CylinderGeometry(0.008, 0.008, bowlBottom + 0.09, 10), steel); leg.position.set(Math.cos(a) * 0.19, (bowlBottom + 0.09) / 2 - 0.0, Math.sin(a) * 0.19); leg.rotation.z = -Math.cos(a) * 0.35; leg.rotation.x = Math.sin(a) * 0.35; leg.castShadow = true; g.add(leg); }
         // ash pan and the coal bed: lumps of charcoal, glowing from inside as the bed heats
         const bedY = bowlBottom + 0.075;
-        const ash = new T.Mesh(new T.CircleGeometry(0.2, 48), new T.MeshStandardMaterial({ color: 0x4d4944, roughness: 1 })); ash.rotation.x = -Math.PI / 2; ash.position.y = bedY - 0.012; g.add(ash);
+        // the ash that has fallen through the bed: a disc on the bowl floor that rises and goes pale
+        // as it builds. Wood ash is ~250 kg/m³ loose, so a kilo of it over the 0.126 m² floor of a
+        // 57 cm kettle is about 3 cm deep — which is when it starts burying the bottom vent.
+        this.ashMat = new T.MeshStandardMaterial({ color: 0x4d4944, roughness: 1 });
+        const ash = new T.Mesh(new T.CircleGeometry(0.2, 48), this.ashMat); ash.rotation.x = -Math.PI / 2; ash.position.y = bedY - 0.012; g.add(ash);
+        this.ashDisc = ash; this.ashY0 = bedY - 0.012;
         this.coalMat = new T.MeshStandardMaterial({ color: 0x0f0e0d, roughness: 0.95, emissive: new T.Color(0xff3a08), emissiveIntensity: 0 });
         const lumpGeo = new T.DodecahedronGeometry(0.019, 0);
         const lumps = new T.InstancedMesh(lumpGeo, this.coalMat, 160); lumps.castShadow = true; lumps.receiveShadow = true;
@@ -979,6 +984,18 @@
         lumps.instanceColor.needsUpdate = true;
         g.add(lumps); this.coals = lumps; this.coalY = bedY; this.coalBank = -1;
         this.setBank(0);
+        // chunks of wood sitting on the coals: split hardwood, so a rough block rather than a lump.
+        // Each one shrinks as it is consumed (side ∝ m^⅓) and goes from bark-brown through charcoal
+        // black, glowing at its edges once it is hot enough to be smouldering.
+        this.woodMats = []; this.woodMeshes = [];
+        for (let i = 0; i < 6; i++) {
+          const m = new T.MeshStandardMaterial({ color: 0x9e7342, roughness: 0.95, emissive: new T.Color(0xff3c08), emissiveIntensity: 0 });
+          const box = new T.Mesh(new T.BoxGeometry(1, 1, 1), m); // unit cube, scaled to the chunk's side
+          const a = (i * 2.4) + 0.7, rr = 0.055 + 0.035 * (i % 3);
+          box.userData.home = { x: Math.cos(a) * rr, z: Math.sin(a) * rr, ry: a * 1.7 };
+          box.castShadow = true; box.visible = false;
+          g.add(box); this.woodMeshes.push(box); this.woodMats.push(m);
+        }
         // the grate: a ring with rods across it
         const Rg = Rk * 0.93, rodR = 0.003, gy = this.PAN_Y - rodR;
         const ringG = new T.Mesh(new T.TorusGeometry(Rg, rodR * 1.2, 8, 96), steel); ringG.rotation.x = Math.PI / 2; ringG.position.y = gy; ringG.castShadow = true; g.add(ringG);
@@ -994,7 +1011,32 @@
         const wood = new T.MeshStandardMaterial({ color: 0x6b4a2a, roughness: 0.7 });
         const handle = new T.Mesh(new T.CylinderGeometry(0.012, 0.012, 0.11, 12), wood); handle.rotation.z = Math.PI / 2; handle.position.y = lidH + 0.035; lid.add(handle);
         for (const x of [-0.045, 0.045]) { const post = new T.Mesh(new T.CylinderGeometry(0.004, 0.004, 0.03, 8), steel); post.position.set(x, lidH + 0.018, 0); lid.add(post); }
-        const vent = new T.Mesh(new T.CylinderGeometry(0.03, 0.03, 0.004, 24), steel); vent.position.set(0.12, lidH * 0.55, 0.05); vent.rotation.z = 0.5; lid.add(vent);
+        // The top vent, on the shoulder of the dome where a kettle's actually is (clear of the
+        // handle, and where you can put a hand near it without reaching over the fire): a collar
+        // with four openings in it and a damper wheel of four steel petals sitting over them. The
+        // wheel turns 45° from shut (petals over the holes) to wide (petals over the metal between
+        // them), which is the throw a kettle damper has, and it is the same 0..1 the physics reads.
+        const holeR = 0.030, tilt = -0.62;                       // ~35° off vertical: the dome's own slope there
+        const vg = new T.Group(); vg.position.set(0.16, 0.081, 0); vg.rotation.z = tilt; lid.add(vg);
+        const collar = new T.Mesh(new T.CylinderGeometry(holeR, holeR + 0.003, 0.012, 24), steel); collar.position.y = -0.002; vg.add(collar);
+        const dark = new T.MeshStandardMaterial({ color: 0x090909, roughness: 1 });
+        const plate = new T.Mesh(new T.CircleGeometry(holeR * 0.96, 24), steel); plate.rotation.x = -Math.PI / 2; plate.position.y = 0.0045; vg.add(plate);
+        for (let i = 0; i < 4; i++) { // four 45° openings, with 45° of metal between them
+          const hole = new T.Mesh(new T.CircleGeometry(holeR * 0.93, 16, (i * Math.PI) / 2 - 0.39, 0.78), dark);
+          hole.rotation.x = -Math.PI / 2; hole.position.y = 0.0052; vg.add(hole);
+        }
+        const wheel = new T.Group(); wheel.position.y = 0.0072; vg.add(wheel);
+        for (let i = 0; i < 4; i++) {
+          // four blades the size of the openings: over them at 0°, over the metal between them at 45°
+          const petal = new T.Mesh(new T.CircleGeometry(holeR * 0.94, 16, (i * Math.PI) / 2 - 0.42, 0.84), steel);
+          petal.rotation.x = -Math.PI / 2; wheel.add(petal);
+        }
+        const tab = new T.Mesh(new T.BoxGeometry(0.018, 0.004, 0.007), steel); tab.position.set(holeR * 0.85, 0.002, 0); wheel.add(tab); // the tab you push it round with
+        const knobV = new T.Mesh(new T.CylinderGeometry(0.0045, 0.0045, 0.009, 10), steel); knobV.position.y = 0.004; wheel.add(knobV);
+        this.ventWheel = wheel;
+        // where the smoke comes out, in world coordinates: the mouth of the vent, a little way out
+        // along its own axis
+        this.ventPos = { x: 0.16 + 0.020 * -Math.sin(tilt), y: bowlTop + 0.081 + 0.020 * Math.cos(tilt), z: 0 };
         g.add(lid); this.kettleLid = lid;
         this.flameBaseY = bedY + 0.01; this.flameMaxLen = this.PAN_Y - this.flameBaseY + 0.05;
       } else {
@@ -1027,7 +1069,7 @@
         }
       }
       this.flameLight.position.y = id === 'charcoal' ? this.coalY + 0.03 : this.PAN_Y - 0.01;
-      if (id !== 'charcoal') { this.coals = null; this.coalMat = null; this.kettleLid = null; this.coalSeeds = null; }
+      if (id !== 'charcoal') { this.coals = null; this.coalMat = null; this.kettleLid = null; this.coalSeeds = null; this.woodMeshes = null; this.ashDisc = null; this.ventWheel = null; this.ventPos = null; }
       if (this.panSpec) this.setPan(this.panSpec.id);
       if (this.panGroup) this.panGroup.visible = id !== 'charcoal';
       if (id === 'charcoal') { this.panFloorY = this.PAN_Y; this.panR = 0.26; }
@@ -1325,6 +1367,36 @@
         this.flameLight.intensity = 1.4 * glow * flick + 2.5 * clamp(gr.flare, 0, 1.5);
         if (this.kettleLid) this.kettleLid.visible = !!state.lid;
         this.setBank(gr.bank || 0);
+        // the ash on the bowl floor: loose wood/charcoal ash at ~250 kg/m³ over the 0.126 m² floor,
+        // so it rises about 3 cm per kilogram, and it goes from dark grey to pale as it deepens
+        if (this.ashDisc) {
+          const m = (gr.ash || 0) + (gr.ashBowl || 0), depth = m / (250 * 0.126);
+          this.ashDisc.position.y = this.ashY0 + depth;
+          const pale = clamp(m / 0.15, 0, 1);
+          this.ashMat.color.setRGB(0.30 + 0.32 * pale, 0.29 + 0.31 * pale, 0.26 + 0.29 * pale);
+          this.ashDisc.scale.setScalar(1 + 0.15 * pale);
+        }
+        // the damper: 45° of throw from shut to wide, which is where the airflow number comes from
+        if (this.ventWheel) this.ventWheel.rotation.y = (Math.PI / 4) * clamp(gr.topVent == null ? 1 : gr.topVent, 0, 1);
+        // wood on the coals
+        if (this.woodMeshes) {
+          const woods = gr.woods || [];
+          for (let i = 0; i < this.woodMeshes.length; i++) {
+            const box = this.woodMeshes[i], wd = woods[woods.length - 1 - i]; // the newest chunk first
+            if (!wd || wd.m <= 1e-6) { box.visible = false; continue; }
+            box.visible = true;
+            const side = Math.cbrt(wd.m / 700); // the chunk's own dimension, straight off its mass
+            const h = box.userData.home;
+            box.scale.set(side, side * 0.75, side * 0.9); // a split billet is wider than it is deep
+            box.position.set(h.x, this.coalY + 0.020 + side * 0.375, h.z); // sitting proud on top of the lumps
+            box.rotation.set(0.12, h.ry, 0.06);
+            // bark brown → charcoal: the chunk chars from the outside in as it gives up its volatiles
+            const burnt = clamp(1 - wd.m / wd.m0, 0, 1), hot = clamp((wd.T - 260) / 200, 0, 1);
+            const mat = this.woodMats[i];
+            mat.color.setRGB(lerp(0.62, 0.07, burnt), lerp(0.45, 0.06, burnt), lerp(0.26, 0.05, burnt));
+            mat.emissiveIntensity = 0.5 * hot * hot * (0.8 + 0.2 * Math.sin(this.clock * 6 + i));
+          }
+        }
       } else if (this.stoveType === 'electric' && this.coilMat) {
         const glow = clamp((stv.pDelivered || 0) / (stv.pMax * stv.eff), 0, 1);
         this.coilMat.emissiveIntensity = 2.4 * glow * glow;
@@ -1511,7 +1583,24 @@
       let evapTopAll = 0; for (const q of onPan) evapTopAll += q.evapTop || 0;
       const steamRate = stoveOn ? (any ? d.evapBottom * 6000 + evapTopAll * 3000 : 0) + d.evapPan * 5000 : 0;
       this.steam.update(dt, Math.min(steamRate, 160), () => (Math.random() < 0.7 && any ? edge() : any && Math.random() < 0.5 ? anywhereTop() : panSpot()), 0.01);
-      this.smoke.update(dt, stoveOn ? clamp(d.smoke, 0, 2) * 45 : 0, () => (Math.random() < 0.6 && any ? edge() : panSpot()), 0.02);
+      // Smoke: its colour and body are the fire's, not a constant. Thin blue smoke is volatiles
+      // burning as they leave the wood; thick white smoke is volatiles that never found any air.
+      // With the lid on, all of it leaves through the top vent, so that is where it is drawn from —
+      // in a jet, because it is being pushed through a 6 cm hole rather than drifting off a bed.
+      const kettle = this.stoveType === 'charcoal';
+      const lidOn = kettle && !!state.lid && !!this.ventPos;
+      if (kettle) {
+        const kind = clamp(d.smokeKind || 0, 0, 1), dens = clamp(d.smokeDens || 0, 0, 3);
+        this.smoke.mat.uniforms.color.value.setRGB(lerp(0.34, 0.87, kind), lerp(0.37, 0.86, kind), lerp(0.47, 0.83, kind));
+        this.smoke.opts.alpha = 0.20 + 0.30 * kind + 0.18 * Math.min(1, dens);
+        this.smoke.opts.size = 0.05 + 0.05 * kind + 0.04 * Math.min(1.5, dens);
+        this.smoke.opts.rise = lidOn ? 0.34 : 0.11; // out of the vent under pressure, or drifting off the bed
+        this.smoke.opts.spread = lidOn ? 0.012 : 0.03;
+      } else { this.smoke.mat.uniforms.color.value.setHex(0x5a5a62); this.smoke.opts.alpha = 0.3; this.smoke.opts.size = 0.07; this.smoke.opts.rise = 0.11; this.smoke.opts.spread = 0.03; }
+      const ventSpot = () => { const a = Math.random() * Math.PI * 2, rr = Math.sqrt(Math.random()) * 0.022; return [this.ventPos.x + Math.cos(a) * rr, this.ventPos.y, this.ventPos.z + Math.sin(a) * rr]; };
+      // a lid with the vent shut lets almost nothing out: the smoke stays in there, on the meat
+      const smokeRate = stoveOn ? clamp(d.smoke, 0, 2) * 45 * (lidOn ? clamp(d.ventOut, 0, 1) : 1) : 0;
+      this.smoke.update(dt, smokeRate, () => (lidOn ? ventSpot() : Math.random() < 0.6 && any ? edge() : panSpot()), lidOn ? 0.005 : 0.02);
       const bubbleRate = stoveOn ? (any ? d.evapBottom * 9000 : 0) + d.evapPan * 6000 + d.oilBubble * 40 : 0;
       this.bubbles.acc += Math.min(bubbleRate, 250) * dt;
       while (this.bubbles.acc >= 1) { this.bubbles.acc -= 1; const e = any && Math.random() < 0.8 ? edge() : panSpot(); this.bubbles.spawn({ x: e[0], y: e[1], z: e[2], age: 0, life: rand(0.08, 0.3), s: rand(0.4, 1.0) }); }

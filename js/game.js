@@ -43,7 +43,7 @@
       this.probe = { inserted: false, depth: 0.5, reading: null, settle: 0 };
       this.forms = [{ ...DEFAULT_FORM, target: 'medium' }]; this.previews = []; this.sel = 0;
       this.patties = []; this.spots = []; this.selItem = null;
-      this.equip = { stove: 'gas', pan: 'castiron', fat: 'canola', fatG: 8 };
+      this.equip = { stove: 'gas', pan: 'castiron', fat: 'canola', fatG: 8, wood: 'hickory', coalG: 500 };
       this.state = P.createState({ pan: this.equip.pan, stove: this.equip.stove });
       this.chipsHTML = '';
       this.bind();
@@ -166,9 +166,9 @@
       const grill = P.STOVES[this.equip.stove].kind === 'grill';
       const reuse = this.stoveUsed && st && st.stove.id === this.equip.stove && (grill || st.pan.id === this.equip.pan);
       if (reuse) {
-        st.patties = []; st.patty = null; st.items = []; st.item = null; st.where = 'board'; st.rest.t = 0; st.lid = false; st.baste = 0; st.served = false;
-        st.trace = []; st.lastTrace = -1; st.events = [];
-        const keep = {}; for (const k of ['preheat150', 'leiden', 'oilsmoke', 'ptfe']) if (st._ms && st._ms[k]) keep[k] = true; st._ms = keep;
+        // the equipment carries over: a pan keeps its heat, fat, fond and carbon, and a kettle keeps
+        // its fire — coals, ash, the bars' heat and any chunk of wood still smouldering on the bed
+        P.nextTicket(st);
         $('knob').value = st.stove.knob; $('knob-v').textContent = String(st.stove.knob);
       } else {
         this.state = P.createState({ pan: this.equip.pan, stove: this.equip.stove });
@@ -188,7 +188,11 @@
       const labels = this.ticket.items.map((id) => this.label(id)).join(' + ');
       const n = this.patties.length;
       const surf = grill ? 'grate' : 'pan';
-      if (reuse) P.logEvent(this.state, `Order: ${labels}. ${n > 1 ? `${n} patties are` : 'Patty is'} on the board; the ${surf} is still at ${this.state.pan.T.toFixed(0)} °C from the last ticket` + (this.state.pan.oil > 0.001 ? ` with ${(this.state.pan.oil * 1000).toFixed(1)} g of fat in it.` : '.'), 'info');
+      if (reuse && grill) {
+        const g = this.state.grill, wood = g.woods.filter((w) => w.m > 1e-6).length;
+        P.logEvent(this.state, `Order: ${labels}. ${n > 1 ? `${n} patties are` : 'Patty is'} on the board; the kettle is still going from the last ticket — bars at ${this.state.pan.T.toFixed(0)} °C, bed at ${g.Tfire.toFixed(0)} °C, ${(g.coal * 1000).toFixed(0)} g of charcoal left and ${((g.ash + g.ashBowl) * 1000).toFixed(0)} g of ash under it`
+          + (wood ? `, and ${wood > 1 ? `${wood} chunks` : 'a chunk'} of wood still smouldering on the coals.` : '.'), 'info');
+      } else if (reuse) P.logEvent(this.state, `Order: ${labels}. ${n > 1 ? `${n} patties are` : 'Patty is'} on the board; the ${surf} is still at ${this.state.pan.T.toFixed(0)} °C from the last ticket` + (this.state.pan.oil > 0.001 ? ` with ${(this.state.pan.oil * 1000).toFixed(1)} g of fat in it.` : '.'), 'info');
       else if (grill) P.logEvent(this.state, `Order: ${labels}. ${n > 1 ? `${n} patties are` : 'Patty is'} on the board. The kettle is cold: light the coals (open the vents) and give the bed a few minutes.`, 'info');
       else P.logEvent(this.state, `Order: ${labels}. ${n > 1 ? `${n} patties are` : 'Patty is'} on the board; the pan is cold (${this.state.pan.T.toFixed(0)} °C).`, 'info');
       this.applyEquipUI();
@@ -206,7 +210,11 @@
       $('btn-fat').disabled = grill; $('e-fat').disabled = grill; $('e-fatg').disabled = grill;
       $('e-pan').hidden = grill; $('e-pan-wrap').hidden = grill;
       $('bank-row').hidden = !grill;
-      if (grill) { $('bank').value = Math.round((this.state.grill.bank || 0) * 100); $('bank-v').textContent = $('bank').value; }
+      $('topvent-row').hidden = !grill; $('fire-row').hidden = !grill;
+      if (grill) {
+        $('bank').value = Math.round((this.state.grill.bank || 0) * 100); $('bank-v').textContent = $('bank').value;
+        $('topvent').value = Math.round(this.state.grill.topVent * 100); $('topvent-v').textContent = $('topvent').value;
+      }
       $('btn-move-in').textContent = grill ? 'Over the coals' : 'Move to centre';
       $('btn-move-out').textContent = grill ? 'Off the coals' : 'Move to edge';
       $('btn-lid').title = grill ? 'The kettle lid: turns the grill into an oven and calms the coals.' : 'A glass lid: traps steam, cooks the top, softens the crust.';
@@ -241,6 +249,13 @@
       $('btn-fat').onclick = () => { P.addFat(s.state, s.equip.fat, s.equip.fatG); s.audio.click(); };
       $('knob').addEventListener('input', (e) => { P.setKnob(s.state, Number(e.target.value)); $('knob-v').textContent = e.target.value; });
       $('bank').addEventListener('input', (e) => { P.setBank(s.state, Number(e.target.value) / 100); $('bank-v').textContent = e.target.value; });
+      $('topvent').addEventListener('input', (e) => { P.setTopVent(s.state, Number(e.target.value) / 100); $('topvent-v').textContent = e.target.value; });
+      $('e-wood').addEventListener('change', (e) => { s.equip.wood = e.target.value; });
+      $('e-coalg').addEventListener('input', (e) => { s.equip.coalG = Number(e.target.value); $('e-coalg-v').textContent = e.target.value + ' g'; });
+      $('btn-wood').onclick = () => { P.addWood(s.state, s.equip.wood); s.audio.hiss(0.2); s.refreshButtons(); };
+      $('btn-coals').onclick = () => { P.addCoals(s.state, s.equip.coalG / 1000); s.audio.click(); s.refreshButtons(); };
+      $('btn-stir').onclick = () => { P.stirCoals(s.state); s.audio.hiss(0.35); s.refreshButtons(); };
+      $('btn-emptyash').onclick = () => { if (P.emptyAsh(s.state)) s.audio.click(); s.refreshButtons(); };
       $('btn-place').onclick = () => s.place();
       $('btn-scrape').onclick = () => { const p = s.patty; if (!p || p.where !== 'pan') return; P.scrape(s.state, p); s.audio.hiss(0.3); s.vp.forceTex = true; s.refreshButtons(); };
       $('btn-move-in').onclick = () => s.slide(false);
@@ -409,7 +424,9 @@
       if (left > 0 || board > 0 || !this.patties.some((q) => q.where !== 'board')) return false;
       // Burner off with the last thing off the pan: the pan (and its fat) cools in real time while the meat rests.
       P.setKnob(this.state, 0); $('knob').value = 0; $('knob-v').textContent = '0';
-      P.logEvent(this.state, `Burner off. The pan is at ${this.state.pan.T.toFixed(0)} °C and will take a while to come down.`, 'action');
+      P.logEvent(this.state, this.state.grill
+        ? `Bottom vent shut. The bars are at ${this.state.pan.T.toFixed(0)} °C and the bed will sulk down to about ${(this.state.env.Tamb + 350 * 0.2).toFixed(0)} °C on the leak alone — open it again before the next thing goes on.`
+        : `Burner off. The pan is at ${this.state.pan.T.toFixed(0)} °C and will take a while to come down.`, 'action');
       this.setPhase('rest');
       return true;
     }
@@ -427,7 +444,9 @@
       $('btn-flip').textContent = it ? (it.kind === 'onions' ? 'Stir (F)' : `Turn the ${it.spec.short} (F)`) : 'Flip (F)';
       $('btn-remove').disabled = it ? !itemOn : !inPan;
       $('btn-remove').textContent = it ? `Take the ${it.spec.short} off` : 'Off the heat → rest';
-      $('btn-lid').disabled = !on || (this.inPan().length === 0 && !this.items.some((q) => q.where === 'pan'));
+      // a pan lid is for what is in the pan; a kettle lid is part of the fire (it is half the
+      // airflow and it is what holds the smoke in), so it is always available on the kettle
+      $('btn-lid').disabled = !on || (!this.state.grill && this.inPan().length === 0 && !this.items.some((q) => q.where === 'pan'));
       // the spatula acts on whatever is selected, and only on the metal
       const onMetal = it ? itemOn : inPan;
       $('btn-scrape').disabled = !inPan || !!it; // only meat welds itself down
@@ -448,6 +467,12 @@
       $('btn-hand').disabled = !(on || this.phase === 'rest');
       $('btn-probe').disabled = !(inPan || (p && where === 'rest')) || this.hard; // hard mode: no thermometers at all
       $('btn-wash').disabled = !on || this.inPan().length > 0 || this.items.some((q) => q.where === 'pan'); $('btn-wipe').disabled = !on;
+      // the fire: wood and coals go on any time there is a kettle, ash only comes out of a cold one
+      if (this.state.grill) {
+        const g = this.state.grill, live = on || this.phase === 'rest';
+        $('btn-wood').disabled = !live; $('btn-coals').disabled = !live; $('btn-stir').disabled = !live;
+        $('btn-emptyash').disabled = !live || g.Tfire > 60 || this.state.pan.T > 60 || (g.ash + g.ashBowl) < 1e-4;
+      }
       $('e-stove').disabled = $('e-pan').disabled = this.anyPlaced() || this.items.length > 0;
       if (this.state.grill) { $('btn-fat').disabled = true; }
       $('btn-cut').disabled = this.inPan().length > 0 || this.items.some((q) => q.where === 'pan');
@@ -505,6 +530,18 @@
         $('h-pan').textContent = `${fmt(st.grill.Thot, 0)} / ${fmt(st.grill.Tcool, 0)} °C`;
         $('h-pan-label').textContent = 'IR gun · hot / cool';
       } else if (st.grill) $('h-pan-label').textContent = 'IR gun · grate';
+      // the kettle's own readout: what is left of the fire, what is choking it, and what is coming
+      // off it. The bed temperature is a number, so hard mode does not get it — the hand test does.
+      $('ro-fire').hidden = !st.grill;
+      if (st.grill) {
+        const g = st.grill;
+        const wood = g.woods.filter((w) => w.m > 1e-6);
+        const smk = P.smokeName(st);
+        $('h-fire').textContent = `${this.hard ? '—' : fmt(g.Tfire, 0) + ' °C'} · ${fmt(g.coal * 1000, 0)} g coal${g.unlit > 0.001 ? ` (+${fmt(g.unlit * 1000, 0)} g unlit)` : ''} · ${fmt((g.ash + g.ashBowl) * 1000, 0)} g ash`
+          + (wood.length ? ` · ${wood.length > 1 ? `${wood.length} × ` : ''}${wood[0].spec.name.toLowerCase()}` : '')
+          + (smk ? ` · ${smk}` : '') + (st.lid ? ` · lid vent ${fmt(g.topVent * 100, 0)} %` : '');
+        $('h-fire-label').textContent = this.hard ? 'the fire (no numbers)' : 'bed · coal · ash';
+      }
       $('h-smoke').hidden = d.smoke < 0.25; $('h-smoke').textContent = d.smoke > 1.2 ? '🚨 Heavy smoke — open a window' : '💨 Smoking';
       $('h-lid').hidden = !st.lid;
       // inspector
@@ -512,10 +549,22 @@
         const rows = [];
         const add = (k, v) => rows.push(`<tr><td>${k}</td><td>${v}</td></tr>`);
         if (st.grill) {
-          add('Coal bed', fmt(st.grill.Tfire, 0) + ' °C · ' + fmt(st.grill.coal * 1000, 0) + ' g of charcoal left · burning ' + fmt(st.stove.pDelivered / 1000, 1) + ' kW');
-          add('Flare / fat on the coals', fmt(st.grill.flare, 2) + ' · ' + fmt(st.grill.fatOnCoals * 1000, 2) + ' g');
-          add('Bed raked', fmt((st.grill.bank || 0) * 100, 0) + ' % to one side' + ((st.grill.bank || 0) > 0.05 ? ` · bars ${fmt(st.grill.Thot, 0)} °C over the coals, ${fmt(st.grill.Tcool, 0)} °C off them` : ' (spread flat)'));
-          add('Dome air', fmt(st.grill.Tdome, 0) + ' °C' + (st.lid ? ' (lid on)' : ''));
+          const g = st.grill;
+          // hard mode takes the thermometers away, and the bed's temperature is a thermometer
+          add('Coal bed', (this.hard ? '— °C' : fmt(g.Tfire, 0) + ' °C') + ' · ' + fmt(g.coal * 1000, 0) + ' g of charcoal left'
+            + (g.unlit > 0.001 ? ` · ${fmt(g.unlit * 1000, 0)} g unlit at ${this.hard ? '—' : fmt(g.unlitT, 0) + ' °C'}` : '') + ' · burning ' + fmt(st.stove.pDelivered / 1000, 1) + ' kW');
+          add('Ash', fmt(g.ash * 1000, 0) + ' g in the bed · ' + fmt(g.ashBowl * 1000, 0) + ' g in the bowl · draught ' + fmt(g.air, 2)
+            + ' of full' + (g.stir > 0.01 ? ` · just raked (${fmt(g.stir, 2)})` : ''));
+          add('Vents', 'bottom ' + fmt(st.stove.knob * 10, 0) + ' % · lid ' + fmt(g.topVent * 100, 0) + ' %' + (st.lid ? ` · in series: ${fmt(P.ventFlow(st) * 100, 0)} % open` : ' (lid off: the top vent does nothing)'));
+          const wood = g.woods.filter((w) => w.m > 1e-6);
+          add('Wood', wood.length
+            ? wood.map((w) => `${w.spec.name} ${fmt(w.m * 1000, 0)} g of ${fmt(w.m0 * 1000, 0)} · ${this.hard ? '—' : fmt(w.T, 0) + ' °C'} · ${w.water > 1e-6 ? `${fmt(w.water * 1000, 1)} g of water still in it` : 'dry'} · ${fmt(w.smoke * 1e6, 2)} mg/s`).join('<br>')
+            : 'nothing on the coals');
+          add('Smoke under the dome', fmt(g.smokeConc * 1e6, 0) + ' mg/m³ · ' + (P.smokeName(st) || 'clear') + ' · combustion ' + fmt(g.comb, 2));
+          if (p && p.grilled) { const sr = P.smokeRead(p); add('Smoke on the patty', fmt(sr.smokiness, 2) + ' smokiness · ' + fmt(sr.creosote, 2) + ' creosote' + (sr.wood ? ' · mostly ' + sr.wood : '')); }
+          add('Flare / fat on the coals', fmt(g.flare, 2) + ' · ' + fmt(g.fatOnCoals * 1000, 2) + ' g');
+          add('Bed raked', fmt((g.bank || 0) * 100, 0) + ' % to one side' + ((g.bank || 0) > 0.05 ? ` · bars ${fmt(g.Thot, 0)} °C over the coals, ${fmt(g.Tcool, 0)} °C off them` : ' (spread flat)'));
+          add('Dome air', (this.hard ? '—' : fmt(g.Tdome, 0) + ' °C') + (st.lid ? ' (lid on)' : ''));
         } else add('Burner power to pan', fmt(st.stove.pDelivered, 0) + ' W');
         add(st.grill ? 'Grate temperature' : 'Pan temperature', fmt(st.pan.T, 1) + ' °C mean · centre ' + fmt(st.pan.Tcenter, 0) + ' · edge ' + fmt(st.pan.Tedge, 0));
         add('Oil / fat in pan', fmt(st.pan.oil * 1000, 1) + ' g' + (st.pan.oilKind !== 'none' ? ` (${st.pan.oilKind})` : ''));
@@ -639,6 +688,11 @@
         ['On the bun', `${r.cheeseSlices ? r.cheeseSlices + ' slice' + (r.cheeseSlices > 1 ? 's' : '') + ' of cheese · ' : ''}${(r.bunSoak * 1000).toFixed(1)} g of juice into the bottom bun`],
         ['Crust (browning index / char)', `A: ${r.faces.down.id === 'A' ? r.faces.down.brown.toFixed(1) : r.faces.up.brown.toFixed(1)} / ${(r.faces.down.id === 'A' ? r.faces.down.char : r.faces.up.char).toFixed(2)} · B: ${r.faces.down.id === 'B' ? r.faces.down.brown.toFixed(1) : r.faces.up.brown.toFixed(1)} / ${(r.faces.down.id === 'B' ? r.faces.down.char : r.faces.up.char).toFixed(2)}`],
         ['Grey band', `${(r.overFrac * 100).toFixed(0)} % of the meat cooked past target`],
+        // the smoke line only exists if it was cooked over a fire
+        ...(r.patty && r.patty.grilled ? [['Smoke', r.smokiness < 0.05 ? 'None: bare charcoal, no wood on it'
+          : `${r.smokiness.toFixed(2)} deposited${r.smokeWood ? ` (mostly ${r.smokeWood})` : ''}${r.creosote > 0.15 ? ` · ${r.creosote.toFixed(2)} of it creosote off smothered smoke` : ' · clean'}`
+            + (r.smokeBonus > 0.05 ? `<br><span class="bon">+ ${r.smokeBonus.toFixed(1)} of the crust mark</span>` : '')
+            + (r.smokePenalty > 0.05 ? `<br><span class="pen">− ${r.smokePenalty.toFixed(1)} of the crust mark</span>` : '')]] : []),
         ['Senses used', [
           r.peeks ? `cut into it ${r.peeks === 1 ? 'once' : r.peeks === 2 ? 'twice' : r.peeks + ' times'} — ${(r.cutJuice * 1000).toFixed(1)} g of juice out of the cut, and a slit in the burger` : null,
           r.pressTests ? `${r.pressTests} press test${r.pressTests > 1 ? 's' : ''} — ${(r.pressJuice * 1000).toFixed(2)} g` : null,

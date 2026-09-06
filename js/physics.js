@@ -95,7 +95,65 @@
   };
   /** The grate over the coals, standing in for the pan when the stove is a grill. */
   const GRATE = { id: 'grate', name: 'Steel grate over charcoal', mass: 1.6, cp: 470, diam: 0.54, wall: 0.0, k: 50, thick: 0.004, emiss: 0.9, release: 0.7, hcMul: 1.0, maxT: 900, barFrac: 0.28 };
-  const COAL = { H: 30e6, view: 0.5, viewGrate: 0.4, viewSide: 0.2, tauUp: 150, tauDown: 300 };
+  const COAL = {
+    H: 30e6, view: 0.5, viewGrate: 0.4, viewSide: 0.2, tauUp: 150, tauDown: 300,
+    cp: 840,          // J/(kg K) for charcoal, hot or cold
+    leak: 0.06,       // the flow past a kettle lid with everything shut: no lid ever seats perfectly
+    ashYield: 0.06,   // lump charcoal is ~6 % non-combustible mineral ash by mass
+    ashStay: 0.5,     // half of that falls through the fire into the bowl; the rest blankets the lumps
+    ashChoke: 0.10,   // ash at a tenth of the bed's mass is a properly choked fire: half the draught gone
+    hUnlit: 8.0,      // W/(kg K) between the bed and the cold lumps sitting in it: a kilo of lump is
+                      //   ~0.24 m² of surface, taking ~15 kW/m² of radiation off a 600 °C bed plus
+                      //   convection off its gas — call it 8 W per kelvin per kilo of cold charcoal
+    Tignite: 350,     // °C — lump charcoal catches when its surface gets there
+    tauCatch: 90,     // s — and then the pile lights through over a minute or two
+    stirTau: 90,      // s — a raked bed draws harder for about a minute and a half, then settles back
+  };
+  /**
+   * Wood on the coals. A chunk (not chips, not a log) is ~60 g of split hardwood: 700 kg/m³ air-dried
+   * to about 12 % moisture, so roughly a 4 cm cube with 0.012 m² of surface. It does nothing at all
+   * for a minute or two — the bed has to boil the water out of it and take it to pyrolysis
+   * temperature, around 300 °C, where the hemicellulose and cellulose start cracking — and then it
+   * smoulders for ten to fifteen minutes. The smoke rate peaks once the whole chunk is up to
+   * temperature and decays as the chunk is eaten away, because a smouldering front lives on the
+   * surface and the surface goes as m^⅔.
+   *
+   * Whether that smoke is worth eating is entirely a question of air. With the vents open the
+   * volatiles ignite as they leave the wood and what escapes is thin and blue: a few per cent of the
+   * mass as phenols, guaiacols and syringols, which is the flavour. Smothered — lid on, vents shut —
+   * they never ignite, come off cool and condense on everything above them as thick white smoke.
+   * That is creosote, and it is bitter.
+   *
+   * Kind is intensity: mesquite is oily and resinous and smokes half again as hard as hickory,
+   * apple is mild enough that it is difficult to overdo.
+   */
+  const WOOD = {
+    hickory:  { id: 'hickory',  name: 'Hickory',  chunk: 0.060, intensity: 1.00, note: 'sweet and bacony — the classic barbecue smoke' },
+    apple:    { id: 'apple',    name: 'Apple',    chunk: 0.060, intensity: 0.62, note: 'mild and fruity; hard to overdo' },
+    mesquite: { id: 'mesquite', name: 'Mesquite', chunk: 0.060, intensity: 1.45, note: 'oily and aggressive; it turns bitter if you let it' },
+  };
+  const SMOKE_KINDS = ['hickory', 'apple', 'mesquite', 'bed'];
+  const SMOKE = {
+    rho: 700,        // kg/m³ — air-dried hardwood
+    water: 0.12,     // and 12 % of that mass is water that has to boil off before anything pyrolyses
+    cp: 1600,        // J/(kg K) for wood at cooking temperatures
+    Tpyro: 300,      // °C — where the chunk starts cracking into volatiles in earnest
+    Hpyro: 4.0e5,    // J/kg — pyrolysis is endothermic, which is what holds a smouldering chunk near 400 °C
+    hGas: 30,        // W/(m²K) convection off the fire's gas onto a lump sitting in it
+    view: 0.55,      // half buried in the bed: it sees the fire over a bit more than half its surface
+    burn: 2.0e-4,    // kg/s at full smoulder for a fresh 60 g chunk: most of the smoke inside a quarter of an hour, with a tail
+    yield: 0.05,     // ~5 % of the mass leaves as smoke solids and condensables; the rest is CO₂, CO and water
+    dirty: 1.5,      // and a smothered chunk yields two and a half times that, because nothing burns it off
+    char: 0.20,      // what is left behind is charcoal, and it joins the bed as fuel
+    bed: 2.0e-7,     // kg/s of smoke off the charcoal itself, nearly all of it only when it is starved
+    V: 0.030,        // m³ under the dome of a 57 cm kettle, above the grate
+    Qopen: 0.060,    // m³/s carried away by the plume off an open kettle
+    Qlid: 0.022,     // m³/s drawn through a closed kettle with both vents wide (~20× what the bed needs)
+    Qleak: 0.0010,   // m³/s past the lid with everything shut: the smoke has nowhere to go but onto the meat
+    vDep: 2.0e-3,    // m/s deposition velocity of smoke particles onto meat (impaction plus thermophoresis onto a cool, wet surface)
+    ref: 4.0e-5,     // kg/m² of deposit that reads as a smokiness of 1.0: one clean chunk over a five-minute cook
+    dense: 1.5e-4,   // kg/m³ of smoke that reads as a full plume to the eye
+  };
   /**
    * Raking the coals to one side. `bank` 0 spreads the same charcoal under the whole grate, 1 piles
    * it into the +x half: twice as deep over half the bed, bare ash under the rest. It moves the
@@ -251,6 +309,9 @@
       flips: 0, cookTime: 0, timeDown: 0,
       peakCenter: T0, cheeses: [], cheeseUnder: [],
       steamRate: 0, boilBottom: 0, evapTop: 0, surfT: T0,
+      // smoke deposited on it over a fire: kg/m² in total, how much of that is creosote off smoke
+      // that never had enough air, and which wood it came from
+      smokeDep: 0, creoDep: 0, smokeBy: { hickory: 0, apple: 0, mesquite: 0, bed: 0 },
     };
     for (let j = 0; j < Nr; j++) p.aj[j] = (2 * j + 1) / (Nr * Nr);
     for (let k = 0; k < Nz; k++) for (let j = 0; j < Nr; j++) {
@@ -329,9 +390,18 @@
         zoneT: grill ? new Float64Array(BANK.N).fill(Tamb) : null, zoneDT: grill ? new Float64Array(BANK.N) : null, zoneW: grill ? zoneWeights() : null, zoned: false,
       },
       lid: false, lidAirT: Tamb,
-      // the fire, when the stove is a grill: coal left, bed temperature, ash, flare-ups, dome air,
-      // and how the bed is raked (0 = spread under the whole grate, 1 = banked into one half)
-      grill: grill ? { coal: 1.5, coal0: 1.5, Tfire: Tamb, ash: 0, lit: false, flare: 0, flareTotal: 0, Tdome: Tamb, fatOnCoals: 0, burnW: 0, bank: 0, mView: COAL.viewGrate, mViewTs4: 0, mTgas: Tamb } : null,
+      // The fire, when the stove is a grill: coal left (lit and not), bed temperature, the ash in the
+      // bed and the ash that has fallen into the bowl, flare-ups, dome air, how the bed is raked
+      // (0 = spread under the whole grate, 1 = banked into one half), the top vent in the lid, the
+      // wood chunks on the coals, and the smoke they make — one stirred tank of concentration under
+      // the dome per kind of wood, plus the charcoal's own.
+      grill: grill ? {
+        coal: 1.5, coal0: 1.5, Tfire: Tamb, ash: 0, ashBowl: 0, unlit: 0, unlitT: Tamb, lit: false,
+        flare: 0, flareTotal: 0, Tdome: Tamb, fatOnCoals: 0, burnW: 0, bank: 0,
+        topVent: 1, air: 0, comb: 1, stir: 0, woods: [], smokeConc: 0,
+        conc: { hickory: 0, apple: 0, mesquite: 0, bed: 0 },
+        mView: COAL.viewGrate, mViewTs4: 0, mTgas: Tamb,
+      } : null,
       patties: [], patty: null, where: 'board', // s.patty / s.where mirror the selected patty
       items: [], item: null, // toppings sharing the pan: bun halves, bacon, an egg, onions
       baste: 0,
@@ -406,6 +476,82 @@
     if (Math.abs(b - was) < 0.05) return;
     if (b < 0.05) logEvent(s, 'Raked the coals back out flat under the grate. One temperature everywhere again.', 'action');
     else logEvent(s, `Banked the coals ${b > 0.75 ? 'hard' : 'partly'} to one side with the tongs (${(b * 100).toFixed(0)} %). The bed is deeper over there and bare ash on the other side: sear over the coals, then slide it across to finish. The bars take a minute or two to settle into two zones.`, 'action');
+  }
+
+  /**
+   * The vent in the lid. With the lid on it is half of the kettle's airflow (see ventFlow) and it is
+   * also the only way the smoke under the dome gets out: shut it and the smoke stops moving over the
+   * meat and starts sitting on it. With the lid off it does nothing at all.
+   */
+  function setTopVent(s, v) {
+    if (!s.grill) return;
+    const t = clamp(v, 0, 1), was = s.grill.topVent;
+    s.grill.topVent = t;
+    if (Math.abs(t - was) < 0.05) return;
+    if (!s.lid) { logEvent(s, `Set the lid vent to ${(t * 100).toFixed(0)} %. With the lid off the kettle it does nothing — the fire is breathing straight up through the grate.`, 'info'); return; }
+    logEvent(s, t < 0.05
+      ? 'Top vent shut. Nothing is drawing through the kettle now: the fire will fade, and the smoke under the dome has nowhere to go but onto the meat.'
+      : `Top vent ${(t * 100).toFixed(0)} % open. That and the bottom vent are in series — the smaller one sets the draught${t < 0.35 ? ', and the smoke is going to hang under the dome' : '.'}`, t < 0.05 ? 'warn' : 'action');
+  }
+  /**
+   * A chunk of wood on the coals. It sits there heating for a minute or two, then smoulders for
+   * ten to fifteen minutes; what a chunk is worth is in WOOD/SMOKE above.
+   */
+  function addWood(s, kind) {
+    if (!s.grill) { logEvent(s, 'Wood goes on a fire, and there is no fire under a pan.', 'info'); return null; }
+    const spec = WOOD[kind] || WOOD.hickory;
+    const m0 = spec.chunk;
+    const V = m0 / SMOKE.rho, side = Math.cbrt(V);
+    const wd = {
+      kind: spec.id, spec, m0, m: m0, water: m0 * SMOKE.water, T: s.env.Tamb,
+      A0: 6 * side * side,      // a ~4.4 cm cube: 0.0116 m² of surface for the fire to work on
+      lit: 0, smoke: 0, caught: false, spent: false, t0: s.t,
+    };
+    s.grill.woods.push(wd);
+    if (s.grill.woods.length > 6) s.grill.woods.shift(); // a kettle only holds so many; the oldest is ash by now anyway
+    logEvent(s, `A ${(m0 * 1000).toFixed(0)} g chunk of ${spec.name.toLowerCase()} on the coals — ${spec.note}. It has to dry and reach ~300 °C before it gives you anything, and then it smoulders for a quarter of an hour.`
+      + (s.grill.Tfire < 250 ? ' On a bed this cool it will just sit there.' : ''), 'action');
+    return wd;
+  }
+  /**
+   * More charcoal. Straight out of the bag it is cold and unlit: it takes heat out of the fire until
+   * its surface reaches ignition (~350 °C), so the bed dips first and only then comes back up
+   * hotter — which is why you add coals well before you need them, not when the fire is already low.
+   */
+  function addCoals(s, kg) {
+    if (!s.grill) return;
+    const m = clamp(kg || 0, 0, 3); if (m <= 0) return;
+    const g = s.grill;
+    g.unlitT = (g.unlit * g.unlitT + m * s.env.Tamb) / (g.unlit + m); // mixing cold lumps with lumps already warming
+    g.unlit += m;
+    logEvent(s, `${(m * 1000).toFixed(0)} g of unlit lump charcoal onto the bed. It is a heat sink until it catches: expect the fire to drop for a few minutes before it comes back up.`, 'action');
+  }
+  /**
+   * Raking the bed with the tongs. Ash falls off the lumps and through into the bowl, fresh
+   * incandescent surface comes up, and the fire draws harder for a minute or two before settling.
+   */
+  function stirCoals(s) {
+    if (!s.grill) return false;
+    const g = s.grill, knocked = g.ash * 0.7; // most of the ash sitting on the lumps comes off
+    g.ash -= knocked; g.ashBowl += knocked;
+    g.stir = 1;
+    logEvent(s, g.lit
+      ? `Raked the bed through with the tongs. ${(knocked * 1000).toFixed(0)} g of ash knocked off the lumps and down into the bowl; the fire is drawing harder and it will glow up for a minute or so.`
+      : 'Raked the cold bed through. Nothing to glow up yet.', 'action');
+    return true;
+  }
+  /** Empty the ash out of the bowl. Only when it is cold — this is a bucket of fine grey dust. */
+  function emptyAsh(s) {
+    if (!s.grill) return false;
+    const g = s.grill;
+    if (g.Tfire > 60 || s.pan.T > 60) {
+      logEvent(s, `Not with the bed at ${g.Tfire.toFixed(0)} °C and the bars at ${s.pan.T.toFixed(0)} °C. Ash goes in a bin, and live ash in a bin is how sheds burn down. Wait for it to go out.`, 'warn');
+      return false;
+    }
+    const had = g.ash + g.ashBowl;
+    g.ash = 0; g.ashBowl = 0;
+    logEvent(s, `Emptied ${(had * 1000).toFixed(0)} g of cold ash out of the bowl. The vents are clear again.`, 'action');
+    return true;
   }
 
   function addFat(s, kind, grams) {
@@ -1364,22 +1510,70 @@
   }
 
   /**
-   * The coal bed. Airflow (the knob: vents and fanning) sets the temperature the bed heads for
-   * and how fast it eats the charcoal; the lid throttles it. Fat that falls on a hot bed flares:
-   * a few grams within seconds is a foot of yellow flame that licks the meat, dies back in
-   * seconds, and leaves soot. Ash builds as the coals burn and dulls the bed.
+   * How much air the fire is getting, 0..1, as an opening. With the lid off it is the bottom vent
+   * (the knob) and nothing else. With the lid on the bottom and top vents are two orifices in
+   * series, so the flows add as 1/A² = 1/A₁² + 1/A₂², i.e. A = A₁A₂/√(A₁²+A₂²): a smooth minimum.
+   * Shutting either one shuts the fire down; opening one wide does not rescue the other. Both wide
+   * gives 0.71 of an open kettle, which is about what a lid costs. COAL.leak is the flow past a lid
+   * that never quite seats, and it is the reason a smothered kettle takes minutes to go out and not
+   * seconds.
+   */
+  function ventFlow(s) {
+    const vb = clamp(s.stove.knob / 10, 0, 1), vt = clamp(s.grill.topVent, 0, 1);
+    return s.lid ? COAL.leak + (vb * vt) / Math.sqrt(vb * vb + vt * vt + 1e-6) : vb;
+  }
+
+  /**
+   * The coal bed. Airflow (the vents, in series when the lid is on) sets the temperature the bed
+   * heads for and how fast it eats the charcoal. Ash chokes it from below: it falls through the fire
+   * and blankets the lumps, and what matters is how much of it there is relative to the coal left,
+   * not its absolute mass — so a fresh deep bed swallows its own ash for a long time and a
+   * half-spent one is strangled by it. Raking knocks the ash off and the fire glows up for a minute.
+   * Cold coals dumped on it are a heat sink until they catch. Fat that falls on a hot bed flares:
+   * a few grams within seconds is a foot of yellow flame that licks the meat, dies back in seconds,
+   * and leaves soot.
    */
   function stepCoals(s, dt) {
-    const g = s.grill, Tamb = s.env.Tamb, v = s.stove.knob / 10;
+    const g = s.grill, Tamb = s.env.Tamb;
     if (!g.lit && s.stove.knob > 0) { g.lit = true; g.litAt = s.t; logEvent(s, 'A chimney of lit lump charcoal dumped in and raked out under the grate. Open the vents and wait for the bed to glow.', 'action'); }
-    if (!g.lit) { g.burnW = 0; g.flare = Math.max(0, g.flare - dt); g.smoke = 0; g.sizzle = 0; return; }
-    const air = (0.12 + 0.88 * v) * (s.lid ? 0.75 : 1);
+    // ash in the bed, as a fraction of what is in there: a tenth by mass is a properly choked fire
+    const choke = clamp((g.ash / (g.ash + g.coal + g.unlit + 1e-9)) / COAL.ashChoke, 0, 1);
+    g.stir = Math.max(0, g.stir - dt / COAL.stirTau);
+    const vEff = ventFlow(s);
+    const air = clamp((0.12 + 0.88 * vEff) * (1 - 0.45 * choke) * (1 + 0.35 * g.stir), 0, 1);
+    g.air = air;
+    // How completely the volatiles burn. An open fire lights them as they come off the fuel and what
+    // leaves is thin and blue; a starved one lets them out cold and white, and they condense as tar
+    // on whatever is above them. 0.16 is the bottom of the range (a lid with everything shut).
+    g.comb = smooth(0.16, 0.5, air);
+    if (!g.lit) { g.burnW = 0; g.flare = Math.max(0, g.flare - dt); g.smoke = 0; g.sizzle = 0; stepWood(s, dt); stepSmokeTank(s, dt); return; }
     const alive = clamp(g.coal / 0.25, 0, 1);
-    const target = Tamb + (300 + 430 * air) * alive * (1 - 0.25 * clamp(g.ash / 0.4, 0, 1)); // ~350 °C banked, ~750 °C wide open
+    // and how deep the bed is: a deeper one runs hotter at the same draught, because there is more
+    // incandescent surface for the same air and less of that air slips through it cold. A chimney of
+    // lump settles to its working depth in the first few minutes as the loose lumps on top burn off,
+    // so the reference is ~80 % of what went in: a bed burnt down to a third of a chimney has lost
+    // about 7 % of its rise over ambient, and a fresh top-up buys that straight back.
+    const size = 0.90 + 0.10 * clamp(g.coal / (0.8 * g.coal0), 0, 1.5);
+    const target = Tamb + (300 + 430 * air) * alive * size; // ~350 °C banked, ~750 °C wide open
     const tau = target > g.Tfire ? COAL.tauUp * (s.t - g.litAt < 90 ? 0.4 : 1) : COAL.tauDown;
     g.Tfire += ((target - g.Tfire) * dt) / tau;
+    // cold coals: a lumped pile heated by the bed, taking that heat straight out of it. 0.5 kg from
+    // 20 °C to ignition is 0.5 × 840 × 330 ≈ 140 kJ, which a bed finds in three or four minutes.
+    if (g.unlit > 1e-6) {
+      const qIn = COAL.hUnlit * g.unlit * Math.max(0, g.Tfire - g.unlitT);
+      g.unlitT += (qIn * dt) / (g.unlit * COAL.cp);
+      g.Tfire -= (qIn * dt) / (Math.max(g.coal, 0.05) * COAL.cp);
+      if (g.unlitT > COAL.Tignite) {
+        const caught = Math.min(g.unlit, (g.unlit * dt) / COAL.tauCatch);
+        g.unlit -= caught; g.coal += caught;
+        if (!g._caughtLog) { g._caughtLog = true; logEvent(s, 'The new coals have caught: grey at the edges, glowing underneath. The bed is coming back up.', 'good'); }
+      }
+    } else g._caughtLog = false;
     const burn = ((0.35 + 1.4 * air) / 3600) * alive; // kg/s: a chimney lasts 45 min flat out, two hours banked
-    const used = Math.min(g.coal, burn * dt); g.coal -= used; g.ash += used * 0.06; g.burnW = (used / dt) * COAL.H * 0.3;
+    const used = Math.min(g.coal, burn * dt); g.coal -= used; g.burnW = (used / dt) * COAL.H * 0.3;
+    // the mineral ash it leaves: half of it falls through into the bowl, half stays up in the fire
+    const madeAsh = used * COAL.ashYield;
+    g.ash += madeAsh * COAL.ashStay; g.ashBowl += madeAsh * (1 - COAL.ashStay);
     // fat on the coals: ignites above ~450 °C; the flare grows with the amount and dies in seconds
     const hot = clamp((g.Tfire - 450) / 250, 0, 1);
     const ignite = Math.min(g.fatOnCoals, g.fatOnCoals * Math.min(1, dt * (0.1 + 2 * hot)));
@@ -1389,10 +1583,128 @@
     g.flareTotal += ignite * hot;
     const juice = g.juiceOnCoals || 0; g.juiceOnCoals = 0;
     g.sizzle = clamp(juice * 400 / dt, 0, 1) * 0.6;
-    g.smoke = 0.12 * alive + clamp(g.flare, 0, 2) * 0.7 + clamp(juice / dt * 30, 0, 0.3) + (g.fatOnCoals > 0.001 && hot < 0.3 ? 0.4 : 0);
+    stepWood(s, dt);
+    stepSmokeTank(s, dt, alive);
+    g.smoke = 0.12 * alive + clamp(g.flare, 0, 2) * 0.7 + clamp(juice / dt * 30, 0, 0.3) + (g.fatOnCoals > 0.001 && hot < 0.3 ? 0.4 : 0)
+      + clamp(g.smokeConc / SMOKE.dense, 0, 2.5);
     if (g.flare > 0.6 && (!g._flareLogT || s.t - g._flareLogT > 20)) { g._flareLogT = s.t; logEvent(s, `FLARE-UP: fat hit the coals and lit. Flames up through the grate, licking the meat${s.lid ? ' under the lid' : ''}. Move it or close the vents.`, 'warn'); }
     if (g.coal < 0.2 && !g._lowLogged) { g._lowLogged = true; logEvent(s, 'The coals are burning down to ash. The bed is cooling; whatever is not cooked yet had better be close.', 'warn'); }
+    // the cue that matters and costs nothing to see: white smoke means the fire is starved
+    if (g.comb < 0.3 && g.smokeConc > 2e-4 && (!g._acridLogT || s.t - g._acridLogT > 90)) {
+      g._acridLogT = s.t;
+      logEvent(s, `Thick white smoke${s.lid ? ' seeping out from under the lid' : ''}. That is unburnt tar, not flavour — it will settle on the meat as creosote and taste of a bonfire. Open a vent.`, 'warn');
+    }
+    if (g.ash / (g.ash + g.coal + 1e-9) > 0.09 && !g._ashLogged) { g._ashLogged = true; logEvent(s, `The bed is choking on its own ash (${(g.ash * 1000).toFixed(0)} g of it in among ${(g.coal * 1000).toFixed(0)} g of coal). It is running cool and burning slowly at the same vent setting: rake it through.`, 'warn'); }
+    if (g.ash / (g.ash + g.coal + 1e-9) < 0.05) g._ashLogged = false;
+    if (g.coal > 0.3) g._lowLogged = false; // a top-up means the warning can be earned again
   }
+  /**
+   * Every chunk of wood on the bed, one lumped node each. It takes heat from the fire by radiation
+   * over the part of its surface that faces the coals plus convection from the gas around it; that
+   * heat first boils the wood's own water off (pinned at 100 °C, full latent heat, like everything
+   * else in here), then takes it up to pyrolysis. Past ~300 °C it smoulders: the rate follows the
+   * remaining surface (m^⅔, because a smouldering front lives on the surface), so the smoke peaks
+   * once the chunk is fully alight and decays as it is consumed. Pyrolysis is endothermic, which is
+   * what holds a smouldering chunk in the 350–450 °C band instead of running away to the bed's
+   * temperature. What is left when it is done is charcoal, and that joins the bed as fuel.
+   */
+  function stepWood(s, dt) {
+    const g = s.grill, list = g.woods; if (!list.length) return;
+    const Tamb = s.env.Tamb, Tgas = Tamb + 0.5 * (g.Tfire - Tamb), Tf4 = p4(g.Tfire + 273.15);
+    for (let i = 0; i < list.length; i++) {
+      const wd = list[i];
+      if (wd.m <= 1e-6) { wd.smoke = 0; continue; }
+      const f = clamp(wd.m / wd.m0, 0, 1), A = wd.A0 * Math.cbrt(f * f); // surface ∝ m^⅔
+      let q = A * (0.85 * C.sigma * SMOKE.view * (Tf4 - p4(wd.T + 273.15)) + SMOKE.hGas * (Tgas - wd.T));
+      const Cw = wd.m * SMOKE.cp + wd.water * C.cpW;
+      if (wd.water > 1e-7 && wd.T >= C.Tboil - 0.5 && q > 0) {
+        // pinned at the boiling point until the chunk is dry: 7 g of water in a chunk is 16 kJ
+        const boil = Math.min(wd.water, (q * dt) / C.Lvap);
+        wd.water -= boil; q -= (boil * C.Lvap) / dt;
+        wd.T = Math.min(wd.T, C.Tboil);
+      }
+      // smoulder: nothing below ~260 °C, everything by ~400 °C. A starved fire smoulders more slowly
+      // and dirtier; an open one burns the volatiles as they leave and eats the chunk faster.
+      const lit = smooth(SMOKE.Tpyro - 40, SMOKE.Tpyro + 100, wd.T);
+      const rate = SMOKE.burn * Math.cbrt(f * f) * lit * (0.55 + 0.45 * g.air);
+      const used = Math.min(wd.m, rate * dt);
+      wd.m -= used; wd.lit = lit;
+      q -= (used / dt) * SMOKE.Hpyro;
+      wd.T += (q * dt) / Math.max(Cw, 1);
+      g.coal += used * SMOKE.char;
+      // smoke solids and condensables off it: a few per cent of the mass burnt, two and a half times
+      // that when there is not enough air to burn the volatiles as they come off
+      wd.smoke = (used / dt) * SMOKE.yield * (1 + SMOKE.dirty * (1 - g.comb)) * wd.spec.intensity;
+      if (!wd.caught && lit > 0.5) {
+        wd.caught = true;
+        logEvent(s, `The ${wd.spec.name.toLowerCase()} has caught — it took ${fmtTime(s.t - wd.t0)} to dry out and reach pyrolysis. `
+          + (g.comb > 0.6 ? 'Thin blue smoke off it: the volatiles are burning on the way out, and that is the smoke you want.' : 'White smoke off it — there is not enough air to burn what is coming off the wood, and that is the smoke you do not want.'), g.comb > 0.6 ? 'good' : 'warn');
+      }
+      if (wd.m <= 1e-6 && !wd.spent) {
+        wd.spent = true; wd.m = 0;
+        logEvent(s, `The ${wd.spec.name.toLowerCase()} chunk is spent after ${fmtTime(s.t - wd.t0)} — a handful of charcoal where it was. Another one if you want more smoke.`, 'info');
+      }
+    }
+  }
+  /**
+   * The smoke under the dome, as a stirred tank: dC/dt = (S − C·Q)/V, one tank per kind of wood so
+   * the flavour can be attributed to the wood that made it. V is the ~30 litres over the grate. Q is
+   * what carries the smoke away: with the lid off, the plume off the bed (fast — most of the smoke
+   * never touches the meat); with the lid on, what the vents draw through, which is what puts smoke
+   * over the food in the first place. Shut the top vent and Q collapses to the leak past the lid,
+   * the concentration goes up by a factor of twenty, and the meat is sitting in it.
+   */
+  function stepSmokeTank(s, dt, alive) {
+    const g = s.grill, conc = g.conc;
+    const Q = s.lid ? SMOKE.Qleak + SMOKE.Qlid * ventFlow(s) : SMOKE.Qopen;
+    const k = dt / SMOKE.V;
+    for (let i = 0; i < g.woods.length; i++) { const wd = g.woods[i]; if (wd.smoke > 0) conc[wd.kind] += wd.smoke * k; }
+    // the charcoal's own smoke: almost nothing while it is drawing properly, a haze when it is not
+    conc.bed += SMOKE.bed * (alive || 0) * (0.12 + 0.88 * (1 - g.comb)) * k;
+    let tot = 0;
+    for (let i = 0; i < SMOKE_KINDS.length; i++) {
+      const kd = SMOKE_KINDS[i];
+      conc[kd] = Math.max(0, conc[kd] - conc[kd] * Q * k);
+      tot += conc[kd];
+    }
+    g.smokeConc = tot;
+  }
+  /**
+   * What lands on a patty over the fire. Smoke deposits on meat at a velocity of a couple of
+   * millimetres a second — impaction of the particles plus thermophoresis of the condensables onto a
+   * surface that is cooler than the gas — and far better while the surface is still cool and wet,
+   * which is why smoke goes into meat early and stops mattering once the crust has dried. And it
+   * saturates: past a few tenths of a gram per square metre the smoke is landing on tar, not meat.
+   */
+  function depositSmoke(s, p, dt) {
+    const g = s.grill, conc = g.conc, by = p.smokeBy;
+    const wet = 0.3 + 0.7 * clamp(layerMean(p, p.w, p.Nz - 1) / layerMean(p, p.w0c, p.Nz - 1), 0, 1);
+    const sat = 1 / (1 + p.smokeDep / (6 * SMOKE.ref));
+    const k = SMOKE.vDep * wet * sat * dt;
+    let tot = 0;
+    for (let i = 0; i < SMOKE_KINDS.length; i++) { const kd = SMOKE_KINDS[i], d = k * conc[kd]; by[kd] += d; tot += d; }
+    p.smokeDep += tot; p.creoDep += tot * (1 - g.comb);
+  }
+  /**
+   * What is coming off the kettle, in words — the same two numbers the renderer colours the plume
+   * with. Volatiles that burn on their way out leave thin blue smoke; volatiles that never find
+   * any oxygen leave thick white smoke that smells of a bonfire and tastes worse.
+   */
+  function smokeName(s) {
+    const g = s.grill; if (!g || g.smokeConc < 8e-6) return '';
+    const thick = g.smokeConc > 3e-4;
+    return g.comb > 0.7 ? (thick ? 'heavy blue smoke' : 'thin blue smoke')
+      : g.comb > 0.35 ? (thick ? 'thick grey smoke' : 'grey smoke')
+        : (thick ? 'thick white acrid smoke' : 'white acrid smoke');
+  }
+  /** Smokiness and creosote as indices: 1.0 is one clean chunk's worth over a five-minute cook. */
+  function smokeRead(p) {
+    const sm = p.smokeDep / SMOKE.ref, cre = p.creoDep / SMOKE.ref;
+    let kind = null, best = 0;
+    for (let i = 0; i < 3; i++) { const kd = SMOKE_KINDS[i]; if (p.smokeBy[kd] > best) { best = p.smokeBy[kd]; kind = kd; } }
+    return { smokiness: sm, creosote: cre, wood: kind, clean: sm - cre };
+  }
+
   /**
    * The bars' two-zone temperature, and what the bed looks like averaged over the whole grate.
    *
@@ -2304,6 +2616,9 @@
             p.flareChar = (p.flareChar || 0) + soot;
             faceMean(p, p.faceDown);
           }
+          // and the smoke in the kettle lands on it: flavour while the fire has air, creosote when
+          // it has not, and far more of both under a closed lid
+          if (grill.smokeConc > 0) depositSmoke(s, p, dt);
         } else {
           bc = psc.bcPan || (psc.bcPan = {
             bottom: { type: 'pan', TatR, T: 0, Tedge: 0, oil: 0, hcMul: 1, release: 0 },
@@ -2449,12 +2764,20 @@
     // which is exactly the moment the sound changes
     dg.boilNoise = clamp(boilTotal * 4000, 0, 1.5) * (0.35 + 0.65 * dg.contact);
     dg.hiss = clamp((oilBubble * 0.7 + (fatDripAll + fatSideAll) * 2.2e4) * dryDown + itemSizzle * 0.3, 0, 1.2) * (0.35 + 0.65 * dg.contact);
-    dg.roar = grill && grill.lit ? clamp(0.12 + 0.88 * (st.knob / 10), 0, 1) * clamp(grill.Tfire / 500, 0, 1.4) * (s.lid ? 0.5 : 1) : 0;
+    // the roar of a kettle drawing air is the airflow it is actually getting — the two vents in
+    // series, less whatever the ash is taking — not just where the bottom vent is set
+    dg.roar = grill && grill.lit ? clamp(grill.air, 0, 1) * clamp(grill.Tfire / 500, 0, 1.4) * (s.lid ? 0.5 : 1) : 0;
     dg.sizzle = clamp(boilTotal * 300 + oilBubble * 0.15 + evapTopAll * 20 + itemSizzle * 0.5 + (grill ? grill.sizzle : 0), 0, 1.5);
     dg.spatter = spatter; dg.steam = steamAll + evapPan + itemBoil;
     dg.smoke = pan.smokeOil + pan.smokeChar + pan.smokeFond + pan.smokeItems + (pan.flare > 0 ? 1.5 : 0) + (grill ? grill.smoke : 0);
     dg.flare = grill ? grill.flare : pan.flare; dg.oilDepth = pan.oilDepth; dg.overflow = pan.overflow; dg.lid = s.lid;
     dg.fire = grill ? grill.Tfire : 0;
+    // what the smoke looks like: 0 is the thin blue smoke of volatiles burning as they leave the
+    // wood, 1 is the thick white smoke of volatiles that never found any air. `smokeDens` is how
+    // much of it there is under the dome, which is what the renderer scales the plume by.
+    dg.smokeKind = grill ? 1 - grill.comb : 0;
+    dg.smokeDens = grill ? clamp(grill.smokeConc / SMOKE.dense, 0, 3) : 0;
+    dg.ventOut = grill && s.lid ? clamp(0.15 + 0.85 * grill.topVent, 0, 1) : 0; // how much of it leaves by the lid vent
     dg.evapBottom = boilBottomAll; dg.evapPan = evapPan; dg.oilBubble = oilBubble;
     dg.fatDrip = fatDripAll + fatSideAll; dg.juiceTop = sel ? sel.poolTop : 0; dg.juiceSide = juiceSideAll;
     dg.panQ = panQ; dg.Ts = TsSel; dg.hc = hcSel;
@@ -2542,6 +2865,23 @@
     logEvent(s, `Washed the pan${dirt > 0.002 ? ' (it needed it)' : ''}. It is wet and at ${pan.T.toFixed(0)} °C now.` + (wasHot && pan.id === 'castiron' ? ' Cold water on hot cast iron: it survived, but that is how they crack.' : wasHot ? ' The steam off it was impressive.' : ''), wasHot ? 'warn' : 'action');
     return true;
   }
+  /**
+   * Between tickets on the same equipment. The patties and the toppings go, the lid comes off and
+   * the log starts again — but the stove does not reset: a pan keeps its heat, its fat, its fond and
+   * its carbon, and a kettle keeps its fire. The coals go on burning down while the next order is
+   * being formed, the ash goes on building in the bed and the bowl, the bars keep the heat they have
+   * and whatever is welded to them, and a chunk of wood that is still smouldering is still
+   * smouldering. The milestones that are about the equipment rather than this ticket's meat are
+   * kept, so the log does not announce the same 150 °C pan or the same glowing bed twice.
+   */
+  const KEEP_MS = ['preheat150', 'leiden', 'oilsmoke', 'ptfe', 'coalglow', 'grateHot', 'coalfull'];
+  function nextTicket(s) {
+    s.patties = []; s.patty = null; s.items = []; s.item = null; s.where = 'board';
+    s.rest.t = 0; s.lid = false; s.baste = 0; s.served = false;
+    s.trace = []; s.lastTrace = -1; s.events = [];
+    const keep = {}; for (const k of KEEP_MS) if (s._ms && s._ms[k]) keep[k] = true; s._ms = keep;
+    return s;
+  }
   function serve(s, patty) {
     const list = patty ? [patty] : s.patties.filter((p) => p.where !== 'pan');
     // the build step: anything off the heat that the cook has not already put on a burger goes to
@@ -2618,7 +2958,15 @@
       return clamp(sc, 0, 1);
     };
     const dirtPen = clamp((p.dirtAtStart || 0) / 0.006, 0, 0.35);
-    const crustScore = 20 * 0.5 * (faceScore(p.faceDown) + faceScore(p.faceUp)) * (1 - dirtPen);
+    // Smoke is part of the crust the way the crust is part of the flavour: a moderate deposit of
+    // clean wood smoke is worth up to three of the twenty (0.15 of the mark), and it can only make
+    // up for a crust that is not already perfect — a patty that has earned the full twenty on
+    // browning alone still scores twenty. Past a couple of chunks' worth it stops helping, and
+    // creosote off smoke that never had air is a straight penalty of up to six.
+    const sr = smokeRead(p);
+    const smokeBonus = 0.15 * smooth(0.15, 0.7, sr.clean) * (1 - smooth(2.5, 6, sr.clean));
+    const smokePen = 0.30 * smooth(0.15, 1.2, sr.creosote);
+    const crustScore = 20 * clamp(0.5 * (faceScore(p.faceDown) + faceScore(p.faceUp)) * (1 - dirtPen) + smokeBonus - smokePen, 0, 1);
     let wNow = 0, w0 = 0; for (let c = 0; c < p.T.length; c++) { wNow += p.w[c]; w0 += p.w0c[c]; }
     const wRet = wNow / w0;
     // a grilled patty loses more: juice falls through the grate and radiant heat dries the edge
@@ -2664,6 +3012,10 @@
     else if (p.cheeses.some((c) => c.skirt && c.skirt.brown > 2)) notes.push('A crisp golden cheese skirt around the edge. Good.');
     if (s._ms && s._ms.deepfry) notes.push('It was deep-fried: cooked in enough fat to cover it, so heat came in from every side at once.');
     if (p.grilled) notes.push(p.flareChar > 0.15 ? 'Flare-ups from dripping fat licked the underside: sooty, acrid patches.' : 'Grilled over charcoal: smoke and radiant heat, the edges browned too.');
+    if (sr.creosote > 0.35) notes.push(`Smothered smoke: ${sr.creosote.toFixed(1)} of creosote on it. Wood that smoulders without air gives up its volatiles cold, they condense on the meat as tar, and it tastes of a bonfire the morning after. Open a vent.`);
+    else if (sr.clean > 2.5) notes.push(`Over-smoked${sr.wood ? ` on ${sr.wood}` : ''}: ${sr.clean.toFixed(1)} times what a burger wants. Smoke is a seasoning, and this one has been seasoned like a brisket.`);
+    else if (sr.clean > 0.5) notes.push(`A proper line of ${sr.wood ? `${sr.wood} ` : ''}smoke through it (${sr.clean.toFixed(1)}) — ${sr.wood ? WOOD[sr.wood].note : 'clean and thin'}. That is worth ${(20 * smokeBonus).toFixed(1)} of the crust mark.`);
+    else if (sr.clean > 0.15) notes.push(`A trace of ${sr.wood ? `${sr.wood} ` : ''}smoke on it — there, but you would have to be looking for it. A chunk wants ten minutes with the meat over it.`);
     if ((p.bunSoak || 0) > 0.004) notes.push(`${(p.bunSoak * 1000).toFixed(0)} g of juice soaked into the bottom bun. It will not survive the walk to the table.`);
     if ((p.bunToast || 0) > 1.2 && (p.bunSoakRaw || 0) > 0.003) notes.push(`The toasted heel held: ${((p.bunSoakRaw - p.bunSoak) * 1000).toFixed(1)} g of juice that a raw bun would have drunk stayed in the burger instead.`);
     if (p.lostWaterDrip > 0.006) notes.push(`${(p.lostWaterDrip * 1000).toFixed(0)} g of juice ran out ${p.grilled ? 'through the grate onto the coals' : 'onto the pan'} instead of staying in the meat.`);
@@ -2683,6 +3035,7 @@
       parts, build,
       massStart: p.massKg0, massEnd: massNow, waterRetained: wRet, waterEvap: p.lostWaterEvap, waterDrip: p.lostWaterDrip, fatLost: p.lostFat, stuck: p.lostStuck,
       overFrac, notes, cookTime: p.cookTime, restTime: p.restT || 0, flips: p.flips, bunSoak: p.bunSoak || 0, cheeseSlices: p.cheeses.length,
+      smokiness: sr.smokiness, creosote: sr.creosote, smokeWood: sr.wood, smokeBonus: 20 * smokeBonus, smokePenalty: 20 * smokePen,
       peeks: p.slits, cutJuice: p.lostWaterCut, pressTests: p.pressTests, pressJuice: p.pressTestJuice, firmness: firmness(p).index,
       faces: { down: { ...p.faceDown }, up: { ...p.faceUp } },
       profile, dG,
@@ -2723,9 +3076,9 @@
   }
 
   return {
-    C, BLENDS, PANS, FATS, STOVES, GRATE, COAL, BANK, DONENESS, ITEMS, TOUCH, PEEK, HAND,
-    makePatty, createState, step, stepPatty, pattySpots, panTat, panTatXY, selectPatty,
-    setKnob, setBank, addFat, placePatty, movePatty, moveItem, scrape, slideTo, coalAt, bedAt, zoneAt, flipPatty, pressPatty, removePatty, addCheese, toggleLid, basteButter, washPan, wipeStove, panDirt, serve,
+    C, BLENDS, PANS, FATS, STOVES, GRATE, COAL, BANK, WOOD, SMOKE, DONENESS, ITEMS, TOUCH, PEEK, HAND,
+    makePatty, createState, step, stepPatty, pattySpots, panTat, panTatXY, selectPatty, nextTicket,
+    setKnob, setBank, setTopVent, addWood, addCoals, stirCoals, emptyAsh, ventFlow, smokeRead, smokeName, addFat, placePatty, movePatty, moveItem, scrape, slideTo, coalAt, bedAt, zoneAt, flipPatty, pressPatty, removePatty, addCheese, toggleLid, basteButter, washPan, wipeStove, panDirt, serve,
     makeItem, addItem, selectItem, flipItem, removeItem, stepItem, assignTopping, nearestBurger, toppingsOf, itemState, itemMass, itemT, freeSpot, footprintRings, ringCoverage,
     firmness, firmnessWord, cellStiffness, pressTest, peek, sliceRead, handTest, handTestAt,
     evaluate, evaluateTicket, buildOf, donenessOf, centerT, cellT, layerMean, gridMean, pattyMass, nodeMass, waterHolding, fmtTime, clamp, lerp, rhoVapSat, logEvent,

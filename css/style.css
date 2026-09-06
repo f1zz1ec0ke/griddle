@@ -68,6 +68,9 @@ p.warn { color: var(--warn); font-size: 12.5px; min-height: 1em; }
 .row.three button { padding: 6px 4px; font-size: 12.5px; }
 .row.move label small { display: block; color: var(--muted); font-size: 11px; }
 .row.knob label small { display: block; color: var(--muted); font-size: 11px; font-weight: 400; }
+.row.fire { border-top: 1px solid var(--line); padding-top: 8px; }
+.row.fire > label small { display: block; color: var(--muted); font-size: 11px; font-weight: 400; }
+.row.fire .row.two label { font-size: 12px; }
 .row.extras { border-top: 1px solid var(--line); padding-top: 8px; }
 .row.extras label small { display: block; color: var(--muted); font-size: 11px; }
 .row.assign { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
