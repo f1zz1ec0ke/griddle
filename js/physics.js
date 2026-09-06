@@ -151,7 +151,7 @@
     const n = Nz * Nr;
     const p = {
       id: o.id || 1, target: o.target || null, where: 'board', pos: { x: 0, y: 0 },
-      N: Nz, Nz, Nr, massKg0: massKg, rho0: rho, voids, work,
+      Nz, Nr, massKg0: massKg, rho0: rho, voids, work,
       h0: h, D0: D, A0: A, h, D, A,
       dimple: !!o.dimple, salt: o.salt || 'surface', fatFrac: fat, T0,
       T: new Float64Array(n).fill(T0),
@@ -195,13 +195,12 @@
     return k * (1 - 0.10 * (1 - p.work)) * (1 - 0.40 * dryness);
   }
   function cellMass(p, c) { return p.w[c] + p.fs[c] + p.fl[c] + p.fr[c] + p.p[c]; }
-  function nodeMass(p, k) { let m = 0; for (let j = 0; j < p.Nr; j++) m += cellMass(p, k * p.Nr + j); return m; }
+  function layerMass(p, k) { let m = 0; for (let j = 0; j < p.Nr; j++) m += cellMass(p, k * p.Nr + j); return m; }
   function pattyMass(p) { let m = 0; for (let c = 0; c < p.T.length; c++) m += cellMass(p, c); return m + p.poolBottom + p.poolTop + p.fatTop; }
   function centerT(p) { const N = p.Nz, Nr = p.Nr; return N % 2 ? p.T[((N - 1) / 2) * Nr] : 0.5 * (p.T[(N / 2 - 1) * Nr] + p.T[(N / 2) * Nr]); }
   function cellT(p, k, j) { return p.T[k * p.Nr + j]; }
   function layerMean(p, arr, k) { let s = 0; for (let j = 0; j < p.Nr; j++) s += arr[k * p.Nr + j] * p.aj[j]; return s; }
   function gridMean(p, arr) { let s = 0; for (let k = 0; k < p.Nz; k++) s += layerMean(p, arr, k); return s / p.Nz; }
-  function avg(arr) { let s = 0; for (const v of arr) s += v; return s / arr.length; }
   function faceMean(p, face) { let b = 0, ch = 0; for (let j = 0; j < p.Nr; j++) { b += face.brownR[j] * p.aj[j]; ch += face.charR[j] * p.aj[j]; } face.brown = b; face.char = ch; }
 
   // ---------------------------------------------------------------- state
@@ -225,15 +224,17 @@
         cheeseBits: 0, meatBits: 0, carbon: 0, washes: 0,
         floorR, oilDepth: 0, overflow: 0, flare: 0,
         smoke: 0, smokeOil: 0, smokeChar: 0, smokeFond: 0,
-        lostSpatter: 0, area: Math.PI * (pan.diam / 2) ** 2,
+        lostSpatter: 0,
       },
       lid: false, lidAirT: Tamb,
       // the fire, when the stove is a grill: coal left, bed temperature, ash, flare-ups, dome air
       grill: grill ? { coal: 1.5, coal0: 1.5, Tfire: Tamb, ash: 0, lit: false, flare: 0, flareTotal: 0, Tdome: Tamb, fatOnCoals: 0, burnW: 0 } : null,
       patties: [], patty: null, where: 'board', // s.patty / s.where mirror the selected patty
       baste: 0,
-      events: [], log: [], trace: [], traceEvery: 0.5, lastTrace: -1,
+      events: [], trace: [], traceEvery: 0.5, lastTrace: -1,
       diag: { sizzle: 0, spatter: 0, steam: 0, smoke: 0, evapBottom: 0, evapPan: 0, oilBubble: 0, fatDrip: 0, juiceTop: 0, juiceSide: 0, panQ: 0 },
+      // the instability guard's book-keeping (see stepPattyGuarded)
+      guard: { restores: 0, retries: 0, sanitised: 0, panRestores: 0, lastLog: -1e9 },
       rest: { t: 0 }, result: null,
     };
     return s;
@@ -300,7 +301,7 @@
     let torn = 0;
     if (fd.stuck && fd.brown < relThr && s.pan.release > 0) {
       torn = clamp(0.25 * (1 - fd.brown / relThr), 0.03, 0.25);
-      const m0 = nodeMass(p, 0);
+      const m0 = layerMass(p, 0);
       for (const k of ['w', 'fs', 'fl', 'fr', 'p']) for (let j = 0; j < p.Nr; j++) { p.lostStuck += p[k][j] * torn; p[k][j] *= (1 - torn); }
       s.pan.fond += m0 * torn * 0.3; s.pan.meatBits += m0 * torn;
       fd.torn += torn;
@@ -314,9 +315,13 @@
     p.w0 = p.w0c[0]; p.fat0 = p.fat0c[0];
     const tmp = p.faceDown; p.faceDown = p.faceUp; p.faceUp = tmp;
     let juiceHit = 0; for (let j = 0; j < p.Nr; j++) { juiceHit += p.poolT[j]; p.poolT[j] = 0; p.poolB[j] = 0; }
-    s.pan.water += juiceHit; p.poolTop = 0; p.poolBottom = 0;
-    s.pan.oil += p.fatTop; p.fatTop = 0;
+    // over coals there is no pan to catch any of it: the juice that was pooled on top and the fat
+    // wicked to the surface go through the bars onto the fire
+    if (s.grill) { s.grill.juiceOnCoals = (s.grill.juiceOnCoals || 0) + juiceHit; s.grill.fatOnCoals += p.fatTop; }
+    else { s.pan.water += juiceHit; s.pan.oil += p.fatTop; }
+    p.poolTop = 0; p.poolBottom = 0; p.fatTop = 0;
     p.faceDown.stuck = true;
+    if (p._snap) p._snap.valid = false; // the columns have been reversed: the old snapshot is upside down
     p.faceDown.crisp = Math.max(0, p.faceDown.crisp - 0.1);
     p.flips++; p.timeDown = 0;
     p.dome *= 0.6;
@@ -329,7 +334,7 @@
       if (up.length) logEvent(s, `Flipped with ${up.length} slice${up.length > 1 ? 's' : ''} of cheese on it. The cheese is now between the meat and the pan: it will fry, weld to the metal, and insulate that side.`, 'warn');
       if (under.length) logEvent(s, welded > 0.002 ? `${(welded * 1000).toFixed(0)} g of fried cheese stayed welded to the pan; the rest came up as a burnt lace on top.` : 'The fried cheese came back up on top.', under.length && welded > 0.002 ? 'warn' : 'info');
     }
-    logEvent(s, `Patty ${p.id}: flip #${p.flips}. Face ${p.faceDown.id} down.` + (juiceHit > 0.0005 ? ` ${(juiceHit * 1000).toFixed(1)} g of pooled juice hit the pan and flashed to steam.` : ''), 'action');
+    logEvent(s, `Patty ${p.id}: flip #${p.flips}. Face ${p.faceDown.id} down.` + (juiceHit > 0.0005 ? ` ${(juiceHit * 1000).toFixed(1)} g of pooled juice ${s.grill ? 'fell through the bars and hissed on the coals' : 'hit the pan and flashed to steam'}.` : ''), 'action');
     return { ok: true, torn };
   }
 
@@ -348,6 +353,13 @@
     }
     p.lostWaterDrip += expelled; if (s.grill) s.grill.juiceOnCoals = (s.grill.juiceOnCoals || 0) + expelled; else s.pan.water += expelled;
     p.dome = 0;
+    if (hard && s.grill) {
+      // You cannot smash on a grate: there is no flat surface to spread against, the meat just
+      // squeezes down between the bars. It presses (juice and fat go straight on the coals) but
+      // the patty keeps its shape.
+      logEvent(s, `Leaned on patty ${p.id} with the spatula, but a grate is bars and air: nothing to smash it against. ${(expelled * 1000).toFixed(1)} g of juice and the fat went straight down onto the coals.`, 'warn');
+      return;
+    }
     if (cooked < 0.25 && hard) {
       let hNew = Math.max(0.004, p.h * 0.55);
       const Dmax = 2 * s.pan.floorR * 0.94;
@@ -357,6 +369,7 @@
       if (Dnew > Dmax) { Dnew = Dmax; Anew = (Math.PI * Dnew * Dnew) / 4; hNew = V / Anew; hitWall = true; }
       if (hNew >= p.h * 0.98) { logEvent(s, 'Pressed hard, but it already fills the pan: nowhere left to go.', 'action'); return; }
       p.h = hNew; p.A = Anew; p.D = Dnew;
+      if (p._snap) p._snap.valid = false; // a smash re-forms the grid; the old snapshot is a different patty
       p.h0 = p.h; p.A0 = p.A; p.D0 = p.D;
       p.faceDown.stuck = true;
       logEvent(s, `SMASHED. Patty ${p.id} flattened to ${(p.h * 1000).toFixed(0)} mm, ${(p.D * 100).toFixed(1)} cm across.` + (hitWall ? ' It has hit the pan wall.' : ' Huge contact area, huge crust, no pink centre.'), 'action');
@@ -375,7 +388,8 @@
       fd.torn += torn;
       logEvent(s, `Scraped patty ${p.id} off the pan; the bottom crust stayed behind.`, 'warn');
     }
-    s.pan.oil += p.fatTop; p.fatTop = 0;
+    if (s.grill) s.grill.fatOnCoals += p.fatTop; else s.pan.oil += p.fatTop;
+    p.fatTop = 0;
     p.where = 'rest'; p.restT = 0; if (s.patty === p) s.where = 'rest';
     for (let j = 0; j < p.Nr; j++) p.poolB[j] = 0; p.poolBottom = 0; p.dripAtRest = p.lostWaterDrip;
     p.faceDown.crispAtRest = p.faceDown.crisp; p.faceUp.crispAtRest = p.faceUp.crisp;
@@ -414,9 +428,12 @@
   const CHEESE_SIDE = 0.095, CHEESE_THICK = 0.0015, CHEESE_WATER = 0.38;
   function stepCheeseSkirt(p, ch, k, dt, bc) {
     const R = p.D / 2, baseY = p.h * (1 + 0.28 * p.dome) + k * CHEESE_THICK;
+    // a slice that has lost mass (dripped through a grate) covers less: same thickness, so the
+    // square shrinks as the square root of what is left of it
+    const side = CHEESE_SIDE * Math.sqrt(clamp(ch.mass / 0.02, 0, 1));
     const n = 10; let overN = 0, touchN = 0;
     for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
-      const x = ((i + 0.5) / n - 0.5) * CHEESE_SIDE, z = ((j + 0.5) / n - 0.5) * CHEESE_SIDE;
+      const x = ((i + 0.5) / n - 0.5) * side, z = ((j + 0.5) / n - 0.5) * side;
       const over = Math.hypot(x, z) - R * 0.98; if (over <= 0) continue;
       overN++;
       if (bc.bottom.type === 'pan' && over * (0.2 + 1.6 * ch.melt) >= baseY) touchN++;
@@ -425,10 +442,24 @@
     const inOil = !!bc.top.oil;
     if (inOil) { ch.overhang = 1; ch.contact = 1; ch.melt = clamp(ch.melt + 0.5 * dt, 0, 1); }
     ch.submerged = inOil;
+    if (bc.bottom.type === 'grill') {
+      // A grate has nothing under the overhang to hold it: once the slice is molten the part
+      // hanging past the meat sags between the bars and falls on the coals. Melted processed
+      // cheese is thick (emulsifying salts keep it from running like a sauce), so it leaves at
+      // ~1.5 %/s of what is hanging over: a 20 g slice on a 10 cm patty has ~4 g past the rim and
+      // loses it over a minute or so, and stops once the slice has pulled back inside the meat.
+      const sag = ch.mass * ch.overhang * 0.015 * ch.melt * ch.melt * dt;
+      ch.mass -= sag; ch.pending = (ch.pending || 0) + sag;
+      // it does not run off in a film: surface tension holds the sagging cheese until about a
+      // gram has gathered on the low corner and the gob lets go all at once, which is why
+      // cheese on a grill flares in bursts rather than smouldering steadily
+      if (ch.pending >= 0.0008) { p.cheeseDrip = (p.cheeseDrip || 0) + ch.pending; ch.dripped = (ch.dripped || 0) + ch.pending; ch.pending = 0; }
+      ch.contact = 0; // nothing to fry against: no skirt on a grate, it simply leaves
+    }
     const sk = ch.skirt || (ch.skirt = { T: ch.T, water: CHEESE_WATER, melt: 0, brown: 0, char: 0, dry: 0, charRate: 0, mass: 0 });
     const massS = ch.mass * ch.overhang * ch.contact; sk.mass = massS;
     if (massS < 1e-5) { sk.T += (ch.T - sk.T) * Math.min(1, dt / 2); sk.charRate = 0; return; }
-    const areaS = CHEESE_SIDE * CHEESE_SIDE * ch.overhang * ch.contact;
+    const areaS = side * side * ch.overhang * ch.contact;
     const Cs = massS * (1500 + 4180 * sk.water);
     const Tpan = bc.bottom.Tedge == null ? bc.bottom.T : bc.bottom.Tedge;
     const q = inOil ? 2 * C.hOil * areaS * (bc.top.T - sk.T) : 200 * areaS * (Tpan - sk.T) - 12 * areaS * (sk.T - bc.top.T);
@@ -451,9 +482,16 @@
   function stepCheeseUnder(p, dt, bc, TbotMean) {
     const cu = p.cheeseUnder, n = cu.length, A = p.A;
     const onPan = bc.bottom.type === 'pan';
-    const hPan = (onPan ? 250 : bc.bottom.h) * A, gc = 300 * A;
+    // 250 W/(m² K) for molten cheese wetting metal — poorer than meat on metal because the layer
+    // itself is an insulator. Over coals the cheese lies on the bars like the meat does: line
+    // contact on barFrac of it, the fire's radiation and hot gas through the gaps.
+    const gc = 300 * A;
     const flux = new Array(n + 1);
-    flux[0] = hPan * (bc.bottom.T - cu[0].T);
+    if (bc.bottom.type === 'grill') {
+      const g = bc.bottom, Tk = cu[0].T + 273.15;
+      flux[0] = A * (g.barFrac * 200 * (g.Tbar - cu[0].T)
+        + (1 - g.barFrac) * (0.9 * C.sigma * g.view * ((g.Tfire + 273.15) ** 4 - Tk ** 4) + 25 * (g.Tair - cu[0].T)));
+    } else flux[0] = (onPan ? 250 : bc.bottom.h) * A * (bc.bottom.T - cu[0].T);
     for (let k = 1; k < n; k++) flux[k] = gc * (cu[k - 1].T - cu[k].T);
     flux[n] = gc * (cu[n - 1].T - TbotMean);
     for (let k = 0; k < n; k++) {
@@ -479,6 +517,7 @@
   function stepPatty(s, p, dt, bc) {
     const Nz = p.Nz, Nr = p.Nr, A = p.A, R = p.D / 2, dz = p.h / Nz, dr = R / Nr;
     const T = p.T, n = Nz * Nr;
+    p.cheeseDrip = 0; // cheese that leaves the slice this step (only happens over a grate)
     const Cn = new Float64Array(n), Kn = new Float64Array(n), Q = new Float64Array(n);
     for (let c = 0; c < n; c++) { Cn[c] = cellHeatCap(p, c); Kn[c] = cellK(p, c); }
     for (let j = 0; j < Nr; j++) { Cn[j] += p.poolB[j] * C.cpW; Cn[(Nz - 1) * Nr + j] += p.poolT[j] * C.cpW + p.fatTop * p.aj[j] * C.cpF; }
@@ -547,7 +586,10 @@
       const flux = new Array(m + 1);
       flux[0] = gc * (1 + cs[0].melt) * (TtopMean - cs[0].T);
       for (let k = 1; k < m; k++) flux[k] = gc * (1 + Math.min(cs[k - 1].melt, cs[k].melt)) * (cs[k - 1].T - cs[k].T);
-      flux[m] = hTop * A * (TairTop - cs[m - 1].T);
+      // under a lid the dome radiates onto the top slice as well as blowing hot air over it —
+      // that is why a kettle lid melts cheese in seconds where open air takes a minute
+      flux[m] = hTop * A * (TairTop - cs[m - 1].T)
+        + (bc.top.rad ? A * 0.9 * C.sigma * bc.top.radView * ((bc.top.radT + 273.15) ** 4 - (cs[m - 1].T + 273.15) ** 4) : 0);
       for (let k = 0; k < m; k++) {
         const ch = cs[k], Cc = ch.mass * 2500;
         ch.T += ((flux[k] - (k < m - 1 ? flux[k + 1] : -flux[m])) * dt) / Cc;
@@ -768,16 +810,16 @@
     if (p.pressT > 0) p.pressT -= dt;
 
     p.peakCenter = Math.max(p.peakCenter, centerT(p));
-    return { qBot: qPan, qBotR, hc, boilBottom: boilBottom / dt, evapTop, fatDrip: fatDrip / dt, fatSide: fatSide / dt, juiceSide: juiceSide / dt, Ts: surfT, qSide };
+    return { qBot: qPan, qBotR, hc, boilBottom: boilBottom / dt, evapTop, fatDrip: fatDrip / dt, fatSide: fatSide / dt, juiceSide: juiceSide / dt, cheeseDrip: p.cheeseDrip / dt, Ts: surfT, qSide };
   }
 
   /** Explicit conduction is only stable for dt < dz²/(2α): sub-cycle when the layers get thin. */
-  function stepPattyStable(s, p, dt, bc) {
+  function stepPattyStable(s, p, dt, bc, subMin) {
     const dz = p.h / p.Nz;
     let frozen = false; for (let c = 0; c < p.T.length; c++) if (p.T[c] < 0) { frozen = true; break; }
     const alphaMax = frozen ? 1.3e-6 : 2.5e-7;
     const dtMax = (0.4 * dz * dz) / alphaMax;
-    const n = Math.max(1, Math.min(64, Math.ceil(dt / dtMax)));
+    const n = Math.max(1, subMin || 1, Math.min(64, Math.ceil(dt / dtMax)));
     if (n === 1) return stepPatty(s, p, dt, bc);
     const h = dt / n; let acc = null;
     for (let k = 0; k < n; k++) {
@@ -787,6 +829,119 @@
     for (const key in acc) if (key !== 'qBotR') acc[key] /= n;
     for (let j = 0; j < acc.qBotR.length; j++) acc.qBotR[j] /= n;
     return acc;
+  }
+
+  // ---------------------------------------------------------------- instability guard
+  /*
+   * An explicit finite-difference grid that gets re-formed under the player's hands — a smash
+   * halves dz, a flip reverses every column, a press changes the area, a 3 mm patty on a 600 °C
+   * bed is a Fourier number on a knife edge — can in principle run away: one cell overshoots, the
+   * next step overshoots further, and a few steps later the arrays hold Infinity or NaN and every
+   * readout downstream (colour, score, the pan it is drawing heat from) is garbage. So instead of
+   * trusting that it never happens, each patty keeps a snapshot of the last good step and the
+   * world rolls back to it.
+   *
+   * A patty grid is small — at most 60 layers × 16 rings = 960 cells, so the 15 arrays are about
+   * 115 kB, and copying that at 40 Hz is a few MB/s of memcpy — so for any patty a cook could
+   * actually form the snapshot is taken every step and a rollback costs one frame of cooking.
+   * SNAP_CELLS is the cutoff: a grid bigger than that is snapshotted every SNAP_EVERY steps and a
+   * rollback costs that many steps instead.
+   */
+  const GUARD_ARRAYS = ['T', 'w', 'w0c', 'fs', 'fl', 'fr', 'fat0c', 'p', 'dM', 'dC', 'dA', 'dG', 'Tpk', 'poolB', 'poolT'];
+  const GUARD_SCALARS = ['h', 'D', 'A', 'dome', 'pressT', 'poolTop', 'poolBottom', 'fatTop', 'peakCenter', 'lostWaterEvap', 'lostWaterDrip', 'lostFat', 'surfT', 'steamRate', 'boilBottom', 'evapTop'];
+  const GUARD_FACE_ARRAYS = ['brownR', 'charR'];
+  const GUARD_FACE_SCALARS = ['brown', 'char', 'torn', 'crisp', 'maxT', 'marks', 'marksChar', 'charRate'];
+  const SNAP_CELLS = 4000, SNAP_EVERY = 20;
+
+  function finiteArray(a) { for (let i = 0; i < a.length; i++) if (!Number.isFinite(a[i])) return false; return true; }
+  /** True when every number the rest of the model reads off this patty is finite. */
+  function pattyFinite(p) {
+    for (const k of GUARD_ARRAYS) if (!finiteArray(p[k])) return false;
+    for (const k of GUARD_SCALARS) if (!Number.isFinite(p[k])) return false;
+    for (const f of [p.faceDown, p.faceUp]) {
+      for (const k of GUARD_FACE_ARRAYS) if (!finiteArray(f[k])) return false;
+      for (const k of GUARD_FACE_SCALARS) if (f[k] != null && !Number.isFinite(f[k])) return false;
+    }
+    return true;
+  }
+  /** The step's returned fluxes feed the pan, so they have to be finite too. */
+  function stepResultFinite(r) {
+    for (const k in r) { const v = r[k]; if (k === 'qBotR') { if (!finiteArray(v)) return false; } else if (!Number.isFinite(v)) return false; }
+    return true;
+  }
+  function guardSnapshot(p, step) {
+    const cells = p.T.length;
+    const due = !p._snap || !p._snap.valid || cells <= SNAP_CELLS || step - p._snap.t >= SNAP_EVERY;
+    if (!due) return;
+    if (!pattyFinite(p)) return; // never overwrite a good snapshot with a state that is already bad
+    const s = p._snap || (p._snap = { arr: {}, sc: {}, faces: [{ arr: {}, sc: {} }, { arr: {}, sc: {} }], side: {} });
+    for (const k of GUARD_ARRAYS) { const a = p[k]; if (!s.arr[k] || s.arr[k].length !== a.length) s.arr[k] = Float64Array.from(a); else s.arr[k].set(a); }
+    for (const k of GUARD_SCALARS) s.sc[k] = p[k];
+    const faces = [p.faceDown, p.faceUp];
+    for (let i = 0; i < 2; i++) {
+      const f = faces[i], d = s.faces[i]; d.id = f.id; // by id, not by reference: a state can be cloned
+      for (const k of GUARD_FACE_ARRAYS) { const a = f[k]; if (!d.arr[k] || d.arr[k].length !== a.length) d.arr[k] = Float64Array.from(a); else d.arr[k].set(a); }
+      for (const k of GUARD_FACE_SCALARS) d.sc[k] = f[k];
+    }
+    s.side.brown = p.faceSide.brown; s.side.char = p.faceSide.char;
+    s.t = step; s.valid = true;
+  }
+  /** Put the patty back the way it was at the last snapshot. */
+  function guardRestore(p) {
+    const s = p._snap; if (!s || !s.valid) return false;
+    for (const k of GUARD_ARRAYS) p[k].set(s.arr[k]);
+    for (const k of GUARD_SCALARS) p[k] = s.sc[k];
+    for (const d of s.faces) { const f = p.faceDown.id === d.id ? p.faceDown : p.faceUp; for (const k of GUARD_FACE_ARRAYS) f[k].set(d.arr[k]); for (const k of GUARD_FACE_SCALARS) if (d.sc[k] != null) f[k] = d.sc[k]; }
+    p.faceSide.brown = s.side.brown; p.faceSide.char = s.side.char;
+    return true;
+  }
+  /**
+   * Last resort when there is no snapshot to go back to (the very first step after a flip or a
+   * smash threw the arrays away): put something physical in every cell that went bad — the mean of
+   * the cells that are still finite for temperature, nothing for a mass, no reaction extent.
+   */
+  function guardSanitise(p) {
+    let sum = 0, n = 0; for (let c = 0; c < p.T.length; c++) if (Number.isFinite(p.T[c])) { sum += p.T[c]; n++; }
+    const Tfill = n ? sum / n : p.T0;
+    for (let c = 0; c < p.T.length; c++) if (!Number.isFinite(p.T[c])) p.T[c] = Tfill;
+    for (const k of ['w', 'w0c', 'fs', 'fl', 'fr', 'fat0c', 'p', 'poolB', 'poolT']) { const a = p[k]; for (let i = 0; i < a.length; i++) if (!Number.isFinite(a[i])) a[i] = 0; }
+    for (const k of ['dM', 'dC', 'dA', 'dG']) { const a = p[k]; for (let i = 0; i < a.length; i++) if (!Number.isFinite(a[i])) a[i] = 0; }
+    for (let i = 0; i < p.Tpk.length; i++) if (!Number.isFinite(p.Tpk[i])) p.Tpk[i] = p.T[i];
+    for (const k of GUARD_SCALARS) if (!Number.isFinite(p[k])) p[k] = 0;
+    if (!(p.h > 0)) p.h = p.h0; if (!(p.D > 0)) p.D = p.D0; if (!(p.A > 0)) p.A = p.A0;
+    for (const f of [p.faceDown, p.faceUp]) {
+      for (const k of GUARD_FACE_ARRAYS) { const a = f[k]; for (let i = 0; i < a.length; i++) if (!Number.isFinite(a[i])) a[i] = 0; }
+      for (const k of GUARD_FACE_SCALARS) if (f[k] != null && !Number.isFinite(f[k])) f[k] = 0;
+    }
+    if (!Number.isFinite(p.faceSide.brown)) p.faceSide.brown = 0;
+    if (!Number.isFinite(p.faceSide.char)) p.faceSide.char = 0;
+  }
+  const ZERO_STEP = (p) => ({ qBot: 0, qBotR: new Float64Array(p.Nr), hc: 0, boilBottom: 0, evapTop: 0, fatDrip: 0, fatSide: 0, juiceSide: 0, cheeseDrip: 0, Ts: p.surfT || 0, qSide: 0 });
+  /**
+   * stepPattyStable with the rollback around it. A blow-up is nearly always a step that was too
+   * long for the cell it hit, so the retry is the same dt cut into eight, which is the fix a human
+   * would apply; if even that comes back non-finite the patty sits this step out (its heat draw on
+   * the pan is zero for one frame) rather than poisoning the rest of the world.
+   */
+  function stepPattyGuarded(s, p, dt, bc) {
+    const step = s._guardStep = (s._guardStep || 0) + 1;
+    guardSnapshot(p, step);
+    let r = stepPattyStable(s, p, dt, bc);
+    if (pattyFinite(p) && stepResultFinite(r)) return r;
+    const g = s.guard || (s.guard = { restores: 0, retries: 0, sanitised: 0, lastLog: -1e9 });
+    const rolled = guardRestore(p);
+    if (!rolled) { guardSanitise(p); g.sanitised++; }
+    g.restores++;
+    r = stepPattyStable(s, p, dt, bc, 8);
+    if (!(pattyFinite(p) && stepResultFinite(r))) {
+      if (!guardRestore(p)) guardSanitise(p);
+      r = ZERO_STEP(p); g.retries++;
+    }
+    if (s.t - g.lastLog > 5) {
+      g.lastLog = s.t;
+      logEvent(s, `Numerical instability in patty ${p.id} (${(p.h * 1000).toFixed(1)} mm thick, ${p.Nz} layers, ${dt.toFixed(3)} s step): the solver rolled the patty back to its last good state and took the step again in smaller pieces.`, 'warn');
+    }
+    return r;
   }
 
   /**
@@ -965,7 +1120,7 @@
             side: { T: Tamb + 0.25 * (Tedge - Tamb), oilDepth: pan.oilDepth, oilT: Tunder },
           };
         }
-        const pr = stepPattyStable(s, p, dt, bc);
+        const pr = stepPattyGuarded(s, p, dt, bc);
         p.cookTime += dt; p.timeDown += dt;
         // heat drawn from the rings under each patty ring
         const dr = p.D / 2 / p.Nr;
@@ -982,6 +1137,9 @@
           p.lostWaterDrip += drip;
           grill.fatOnCoals += (pr.fatDrip + pr.fatSide) * dt;
           grill.juiceOnCoals = (grill.juiceOnCoals || 0) + drip + pr.juiceSide * dt;
+          // cheese that sagged off the slice and fell through the bars: processed American is
+          // ~31 % fat, ~44 % water, so it both spits on the coals and feeds the flames
+          if (pr.cheeseDrip > 0) { const cd = pr.cheeseDrip * dt; grill.fatOnCoals += cd * 0.31; grill.juiceOnCoals += cd * 0.44; grill.cheeseOnCoals = (grill.cheeseOnCoals || 0) + cd; }
         } else {
           pan.water += pr.juiceSide * dt;
           pan.oil += (pr.fatDrip + pr.fatSide) * dt;
@@ -993,7 +1151,7 @@
       } else if (p.where === 'rest') {
         anyResting = true;
         const bc = { bottom: { type: 'air', h: 15, T: Tamb + 8 }, top: { h: C.hAirTop, T: Tamb, RH: s.env.RH }, side: { T: Tamb } };
-        stepPattyStable(s, p, dt, bc);
+        stepPattyGuarded(s, p, dt, bc);
         p.restT = (p.restT || 0) + dt;
       }
     }
@@ -1010,6 +1168,11 @@
 
     // ---- integrate the pan rings (sub-cycled radial conduction)
     {
+      // the same rollback the patties get: the metal is what everything else is measured against,
+      // so a non-finite ring temperature would take the whole kitchen with it
+      const panSnap = s._panSnap && s._panSnap.length === Np ? s._panSnap : (s._panSnap = new Float64Array(Np));
+      const wasGood = finiteArray(Tr);
+      if (wasGood) panSnap.set(Tr);
       const G = new Float64Array(Np - 1);
       for (let j = 0; j < Np - 1; j++) G[j] = (pan.k * pan.thick * 2 * Math.PI * (j + 1) * pan.dr) / pan.dr;
       const oilPer = (pan.oil * C.cpF) / floorA;
@@ -1021,6 +1184,12 @@
         for (let j = 0; j < Np; j++) dT[j] = qRing[j];
         for (let j = 0; j < Np - 1; j++) { const q = G[j] * (Tr[j + 1] - Tr[j]); dT[j] += q; dT[j + 1] -= q; }
         for (let j = 0; j < Np; j++) Tr[j] += (dT[j] * h) / Cr[j];
+      }
+      if (!finiteArray(Tr)) {
+        const g = s.guard || (s.guard = { restores: 0, retries: 0, sanitised: 0, lastLog: -1e9 });
+        if (wasGood) Tr.set(panSnap); else for (let j = 0; j < Np; j++) if (!Number.isFinite(Tr[j])) Tr[j] = Tamb;
+        g.restores++; g.panRestores = (g.panRestores || 0) + 1;
+        if (s.t - g.lastLog > 5) { g.lastLog = s.t; logEvent(s, `Numerical instability in the ${grill ? 'grate' : 'pan'}: the ring temperatures went non-finite and were rolled back to the previous step.`, 'warn'); }
       }
       let mean = 0; for (let j = 0; j < Np; j++) mean += Tr[j] * pan.ringA[j]; pan.T = mean / floorA;
       pan.Tcenter = Tr[0]; pan.Tedge = Tr[Np - 1];
@@ -1091,6 +1260,7 @@
       once(key('cheeseTouch'), sk.length > 0 && !(p.cheeses[0] && p.cheeses[0].submerged), 'Cheese has drooped onto the pan. It will melt, boil dry into a lace, then brown.', 'info');
       once(key('cheeseFry'), p.cheeses.some((c) => c.submerged), 'The cheese is under the fat. It has melted instantly and is frying: it will crisp, brown, then burn.', 'info');
       once(key('cheeseFrico'), sk.some((x) => x.brown > 2), 'The cheese on the pan has gone golden and crisp: frico.', 'good');
+      once(key('cheeseDrip'), s.grill && (s.grill.cheeseOnCoals || 0) > 0.001, 'Melted cheese is sagging through the bars and dropping on the coals: it spits, feeds the flames and smells of burnt milk. On a grate cheese goes on late, with the lid down.', 'warn');
       once(key('cheeseBurn'), sk.some((x) => x.char > 0.3), 'The cheese lace is burning: black, bitter, and smoking.', 'warn');
     }
   }
@@ -1253,6 +1423,6 @@
     C, BLENDS, PANS, FATS, STOVES, GRATE, DONENESS,
     makePatty, createState, step, stepPatty, pattySpots, panTat, selectPatty,
     setKnob, addFat, placePatty, flipPatty, pressPatty, removePatty, addCheese, toggleLid, basteButter, washPan, wipeStove, panDirt, serve,
-    evaluate, evaluateTicket, donenessOf, centerT, cellT, layerMean, gridMean, pattyMass, nodeMass, waterHolding, fmtTime, clamp, lerp, rhoVapSat, logEvent,
+    evaluate, evaluateTicket, donenessOf, centerT, cellT, layerMean, gridMean, pattyMass, layerMass, waterHolding, fmtTime, clamp, lerp, rhoVapSat, logEvent, pattyFinite,
   };
 });

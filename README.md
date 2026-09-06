@@ -19,9 +19,46 @@ or open `index.html` from any static server. (Opening the file directly works in
 Chrome blocks texture canvases on `file://`, so use a server.)
 
 ```
-npm test             # physics regression tests (node --test)
-npm run calibrate    # prints time-series for a dozen cooking scenarios
+npm test             # the physics regression suite (node's test runner, sharded across workers)
+npm run test:serial  # the same tests in one process: node --test test/physics.test.js
+npm run e2e          # end-to-end: plays real tickets in a real browser (see below)
+npm run calibrate    # prints time series for a couple of dozen cooking scenarios, pan and kettle
+npm run player       # sweeps recipes looking for a 100; `npm run player -- grill quick` for the kettle
 ```
+
+`npm test` reads the test names out of `test/physics.test.js`, deals them round-robin into
+`min(4, cores)` worker processes and runs each worker with `--test-name-pattern`, because the suite
+is several hundred simulated minutes of cooking and node runs the tests in a file one at a time. It
+refuses to report a pass unless the shards add up to every test in the file. `TEST_WORKERS=1` makes
+it serial, `TEST_TIMEOUT` (ms, default 600000) is the per-test limit, and `npm test -- <substring>`
+runs the tests whose names contain that substring. `.github/workflows/test.yml` runs the smoke
+import and `npm test` on Node 22 for every push and pull request.
+
+### End-to-end
+
+`test/e2e/` plays whole tickets through the actual page in headless Chromium: it serves the folder
+on a free port, clicks the real buttons, drags the real sliders, screenshots what it sees into
+`test/e2e/out/` (gitignored) and fails on a single uncaught page error. Three scenarios:
+
+| `npm run e2e -- <name>` | what it plays |
+|---|---|
+| `medium-rare` | the README recipe end to end; it has to come out 100/100 |
+| `ticket-of-three` | three burgers in one pan, staggered, each pulled at its own temperature |
+| `charcoal` | swapping the pan for the kettle mid-ticket, lighting it, the lid, and a flare-up |
+
+Playwright is not a dependency of this repo (there is no build step and no `node_modules`); it is
+expected to be installed globally, so run the scenarios with `NODE_PATH` pointing at it:
+
+```
+NODE_PATH=/opt/node22/lib/node_modules npm run e2e            # all three
+NODE_PATH=/opt/node22/lib/node_modules npm run e2e -- charcoal   # just one
+```
+
+(`PLAYWRIGHT_PATH=/somewhere/lib/node_modules` works too.) Chromium is launched with
+`--use-gl=swiftshader --enable-webgl --ignore-gpu-blocklist --enable-unsafe-swiftshader` at
+1400×860, so the WebGL viewport really renders. That software rasterising, not the physics, is what
+makes a scenario take five to fifteen minutes: the simulation is fast-forwarded, but every step the
+runner takes waits on a frame, and a pan with three patties in it is three sets of textures.
 
 ## Controls
 
@@ -115,6 +152,23 @@ the dome's radiation cook and brown the top face while the coals calm down. Gril
 judged with the grill in mind (more juice is lost through the grate, the edge cooks from the
 side), and the bars' marks count as crust.
 
+**Cheese on the kettle** is a different animal from cheese in a pan. There is no metal under the
+overhang, so once the slice is molten the part hanging past the meat sags between the bars and drops
+on the coals in gobs of about a gram — each one a flare of burning milk fat — and the slice pulls
+back over the patty until nothing hangs over any more. That is why cheese goes on late over
+charcoal, and why the lid is the tool for melting it: the dome radiates onto the slice as well as
+blowing hot air over it, and melts it in half the time. Pressing on a grate is only ever a press:
+there is no flat surface to smash against, so the meat squeezes down between the bars and the juice
+and fat you drove out of it land on the fire. And the wash button becomes a wire brush — the
+residue comes off, the bars stay hot, nothing gets wet.
+
+**When the numbers misbehave** the solver notices. Explicit finite differences on a grid that gets
+re-formed under your hands (a smash halves the layer thickness, a flip reverses every column) can
+in principle run away, so every patty keeps a snapshot of its last good step: if any cell comes back
+non-finite the patty is rolled back, the step is taken again in eight pieces, an event goes in the
+log, and the cook carries on. The pan's rings are guarded the same way. On an ordinary cook it never
+fires; `s.guard` counts the times it did.
+
 **Tickets with several burgers** share the pan. Each patty is formed separately (a well-done
 wants a thinner patty than a rare), laid in at its own spot, flipped, pressed, cheesed and pulled
 on its own, and each is scored against its own order. The ticket score is the mean, less a
@@ -145,7 +199,10 @@ heat will all cost you somewhere, and the results screen says where.
 On the charcoal kettle the window is narrower, but it is there: light it on 8, wait for the
 bed to glow and the grate to pass 250 °C, then run the vents on 7 (bed around 630 °C). An 18 mm
 patty flipped every 45 s and pulled at 47 °C lands a medium-rare 100 with bars branded into
-both faces. Vents wide open, a thick patty and lazy flips is a charred one.
+both faces. Vents wide open, a thick patty and lazy flips is a charred one — `node test/player.js
+grill quick medium-rare` sweeps the vents and reports the same window (6 to 7; 8 and above starts
+costing crust), and `node test/calibrate.js grillhot` prints what wide open does to it minute by
+minute. Cheese goes on for the last minute, with the lid down, or it ends up on the coals.
 
 ## Layout
 
@@ -158,5 +215,9 @@ js/audio.js        procedural sizzle, spatter, burner hum
 js/game.js         phases, UI, loop
 js/vendor/three.min.js   r128
 test/physics.test.js     regression tests
-test/calibrate.js        scenario runner used to tune the constants
+test/run.js              npm test: shards the suite across worker processes
+test/calibrate.js        scenario runner used to tune the constants (pan and kettle)
+test/player.js           recipe sweep: `node test/player.js [grill] [quick] [order]`
+test/e2e/                end-to-end scenarios played in a real browser (npm run e2e)
+.github/workflows/test.yml   the smoke import and the suite, on Node 22
 ```

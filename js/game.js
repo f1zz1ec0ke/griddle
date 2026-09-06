@@ -31,7 +31,7 @@
       this.vp = new root.BurgerRender.Viewport($('view'));
       this.audio = new root.KitchenAudio();
       this.speed = 1; this.phase = 'order'; this.hard = false;
-      this.probe = { inserted: false, depth: 0.5, reading: null, settle: 0 };
+      this.probe = { inserted: false, depth: 0.5, reading: null };
       this.forms = [{ ...DEFAULT_FORM, target: 'medium' }]; this.previews = []; this.sel = 0;
       this.patties = []; this.spots = [];
       this.equip = { stove: 'gas', pan: 'castiron', fat: 'canola', fatG: 8 };
@@ -77,7 +77,7 @@
       if (this.phase === 'form') { this.loadForm(); this.rebuildPreview(); }
       else if (this.patty) {
         P.selectPatty(this.state, this.patty);
-        this.probe.reading = null; this.probe.settle = 0;
+        this.probe.reading = null;
         if (this.phase === 'result') { this.showPattyResult(); this.vp.controls.preset('serve'); }
       }
       this.refreshButtons(); this.updateChips();
@@ -151,7 +151,7 @@
       this.patties = this.forms.map((f, i) => this.makeFromForm(f, i));
       this.layoutSpots();
       this.sel = 0; this.vp.setPatty(null);
-      this.probe = { inserted: false, depth: 0.5, reading: null, settle: 0 }; $('btn-probe').textContent = 'Insert probe';
+      this.probe = { inserted: false, depth: 0.5, reading: null }; $('btn-probe').textContent = 'Insert probe';
       $('btn-lid').textContent = 'Lid on';
       this.chart = []; this.logN = -1;
       $('log').innerHTML = '';
@@ -213,7 +213,7 @@
       $('btn-wash').onclick = () => { if (P.washPan(s.state)) { s.audio.hiss(Math.min(1, (s.state.pan.T - 30) / 100)); s.vp.forceTex = true; } };
       $('btn-wipe').onclick = () => { P.wipeStove(s.state); s.vp.clearStains(); };
       $('btn-remove').onclick = () => s.remove();
-      $('btn-probe').onclick = () => { s.probe.inserted = !s.probe.inserted; s.probe.settle = 0; s.probe.reading = null; $('btn-probe').textContent = s.probe.inserted ? 'Pull probe' : 'Insert probe'; };
+      $('btn-probe').onclick = () => { s.probe.inserted = !s.probe.inserted; s.probe.reading = null; $('btn-probe').textContent = s.probe.inserted ? 'Pull probe' : 'Insert probe'; };
       $('probe-depth').addEventListener('input', (e) => { s.probe.depth = Number(e.target.value) / 100; $('probe-depth-v').textContent = e.target.value + ' %'; });
       $('btn-cut').onclick = () => { P.serve(s.state); s.setPhase('result'); };
       $('btn-again').onclick = () => { s.vp.setCutaway(false); s.vp.setPatty(null); s.state.patties = []; s.state.patty = null; s.state.served = false; s.newOrder(); };
@@ -339,7 +339,7 @@
         if (p && where !== 'board') {
           if (this.patties.length > 1) add('Selected patty', `${p.id} of ${this.patties.length} (${this.label(p.target)})`);
           add('Heat flux into meat', fmt(d.panQ, 0) + ' W · h = ' + fmt(d.hc, 0) + ' W/m²K');
-          add('Bottom surface / node 0', fmt(p.surfT, 0) + ' / ' + fmt(p.T[0], 0) + ' °C');
+          add('Bottom surface / bottom cell', fmt(p.surfT, 0) + ' / ' + fmt(p.T[0], 0) + ' °C');
           add('Centre / top', fmt(P.centerT(p), 1) + ' / ' + fmt(P.cellT(p, p.Nz - 1, 0), 1) + ' °C');
           add('Centre / edge at mid-height', fmt(P.centerT(p), 1) + ' / ' + fmt(P.cellT(p, Math.floor(p.Nz / 2), p.Nr - 1), 1) + ' °C');
           add('Peak centre so far', fmt(p.peakCenter, 1) + ' °C → ' + P.donenessOf(p.peakCenter).label);
