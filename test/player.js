@@ -52,5 +52,7 @@ for (const t of targets) {
   const avg = (k) => (top.reduce((x, y) => x + y.r.parts[k], 0) / top.length).toFixed(1);
   console.log(`  top-10 average parts: doneness ${avg('doneness')}/50 crust ${avg('crust')}/20 juiciness ${avg('juiciness')}/15 evenness ${avg('evenness')}/10 structure ${avg('structure')}/5`);
   const bestRet = Math.max(...results.map((x) => x.r.waterRetained)), minGrey = Math.min(...results.filter((x) => x.r.parts.doneness >= 45).map((x) => x.r.overFrac));
+  const n100 = results.filter((x) => x.r.total === 100).length, n95 = results.filter((x) => x.r.total >= 95).length, n90 = results.filter((x) => x.r.total >= 90).length;
+  console.log(`  of ${results.length} probe-driven cooks: ${n100} scored 100, ${n95} scored 95+, ${n90} scored 90+, median ${results.map((x) => x.r.total).sort((a, b) => a - b)[Math.floor(results.length / 2)]}`);
   console.log(`  best water retention seen ${(bestRet * 100).toFixed(0)} %, smallest grey band among on-target cooks ${(minGrey * 100).toFixed(0)} %`);
 }
