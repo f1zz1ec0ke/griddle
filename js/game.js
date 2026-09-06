@@ -34,6 +34,9 @@
     { who: 'Family of three', line: '“Medium-rare, medium-well, and a well-done for the kid. Hot, please.”', items: ['medium-rare', 'medium-well', 'well-done'] },
   ];
   const DEFAULT_FORM = { massG: 150, thicknessMm: 20, blend: '80/20', temp: 'fridge', work: 0.35, dimple: true, salt: 'surface' };
+  const SHIFT_LEN = 6;                  // six tickets is a service
+  const BEST_KEY = 'griddle.bestShift'; // localStorage: the best shift this browser has ever cooked
+  const money = (v) => '$' + (v || 0).toFixed(2);
 
   class Game {
     constructor() {
@@ -46,6 +49,7 @@
       this.equip = { stove: 'gas', pan: 'castiron', fat: 'canola', fatG: 8, wood: 'hickory', coalG: 500 };
       this.state = P.createState({ pan: this.equip.pan, stove: this.equip.stove });
       this.chipsHTML = '';
+      this.shift = this.emptyShift();
       this.bind();
       this.newOrder();
       this.last = performance.now(); this.acc = 0;
@@ -57,8 +61,14 @@
     get patty() { return this.patties[this.sel] || null; }
     label(id) { return P.DONENESS.find((d) => d.id === id).label; }
     newOrder(ticket) {
-      this.ticket = ticket || TICKETS[Math.floor(Math.random() * TICKETS.length)];
+      const planned = this.shift && this.shift.plan[this.shift.n];
+      this.ticket = ticket || planned || TICKETS[Math.floor(Math.random() * TICKETS.length)];
       const items = this.ticket.items;
+      // The room's patience for this order, running from the moment it is accepted. The clock is in
+      // kitchen seconds — the same time base the physics runs on — so speeding the sim up does not
+      // buy service time.
+      this.ticketTarget = P.ticketTargetTime(items);
+      this.ticketClock = 0; this.ticketTiming = false; this.ticketRecorded = false; this.verdicts = null;
       this.forms = items.map((id) => ({ ...DEFAULT_FORM, target: id }));
       this.previews = []; this.patties = []; this.sel = 0; this.result = null; this.ticketResult = null;
       $('order-who').textContent = this.ticket.who;
@@ -68,7 +78,91 @@
       $('ticket-target').textContent = items.map((id) => this.label(id)).join(' + ');
       const hint = items.map((id) => { const d = P.DONENESS.find((x) => x.id === id); return `${d.label}: ${d.lo}–${d.hi} °C`; }).join(' · ') + ' at the centre, measured at its peak after resting';
       $('ticket').dataset.hint = hint; $('ticket').title = hint;
+      this.updateShiftBar(); this.updateTicketClock();
       this.setPhase('order');
+    }
+    // ------------------------------------------------------------ the shift: six tickets and a till
+    emptyShift() { return { n: 0, plan: this.planShift(), tickets: [], points: 0, tips: 0, bill: 0, covers: 0, time: 0 }; }
+    /**
+     * A service builds the way a real one does: singles while the room fills, two-tops in the
+     * middle, and a three-burger table at the peak. Tickets are drawn from TICKETS by how many
+     * burgers they carry, without repeating one until the pool runs out.
+     */
+    planShift() {
+      const used = new Set();
+      const byN = (n) => TICKETS.filter((t) => t.items.length === n);
+      const out = [];
+      for (let i = 0; i < SHIFT_LEN; i++) {
+        const want = i < SHIFT_LEN / 2 ? 1 : i < SHIFT_LEN - 1 ? 2 : 3;
+        let list = byN(want); if (!list.length) list = byN(want - 1); if (!list.length) list = TICKETS;
+        const free = list.filter((t) => !used.has(t)); const pool = free.length ? free : list;
+        const t = pool[Math.floor(Math.random() * pool.length)]; used.add(t); out.push(t);
+      }
+      return out;
+    }
+    newShift() {
+      this.shift = this.emptyShift();
+      $('shiftend').hidden = true;
+      this.vp.setCutaway(false); $('btn-cutaway').classList.remove('on');
+      this.vp.setPatty(null); this.state.patties = []; this.state.patty = null; this.state.served = false;
+      this.newOrder();
+    }
+    updateShiftBar() {
+      const sh = this.shift; if (!sh) return;
+      const n = Math.min(sh.n + 1, SHIFT_LEN);
+      let pips = ''; for (let i = 0; i < SHIFT_LEN; i++) pips += i < sh.n ? '<i>●</i>' : '○';
+      $('order-shift').innerHTML =
+        `<div class="pips">${pips}</div>` +
+        `<div><span>Ticket</span> <b>${n}</b> <span>of ${SHIFT_LEN}</span></div>` +
+        `<div><span>Shift so far</span> <b>${sh.points}</b> <span>pts</span></div>` +
+        `<div><span>Tips</span> <b>${money(sh.tips)}</b></div>` +
+        `<div><span>They expect it in</span> <b>${P.fmtTime(this.ticketTarget || 0)}</b> <span>from “yes chef”</span></div>`;
+    }
+    /** The HUD ticket clock: time on this ticket against the time it was quoted (“7:40 / 12:00”). */
+    updateTicketClock() {
+      const el = $('ticket-clock'); if (!el) return;
+      const t = this.ticketClock || 0, target = this.ticketTarget || 0;
+      el.hidden = !(target > 0);
+      const html = `<b>${P.fmtTime(t)}</b> / ${P.fmtTime(target)}`;
+      if (html !== this.clockHTML) { el.innerHTML = html; this.clockHTML = html; }
+      el.classList.toggle('late', target > 0 && t > target && t <= target * 2);
+      el.classList.toggle('vlate', target > 0 && t > target * 2);
+    }
+    /** Fold a finished ticket into the shift's running totals. */
+    recordTicket(rec) {
+      const sh = this.shift; if (!sh || this.ticketRecorded) return; this.ticketRecorded = true;
+      sh.tickets.push(rec); sh.n = sh.tickets.length;
+      sh.points += rec.points; sh.tips += rec.tips; sh.bill += rec.bill; sh.covers += rec.covers; sh.time += rec.elapsed;
+    }
+    loadBest() { try { const raw = localStorage.getItem(BEST_KEY); return raw ? JSON.parse(raw) : null; } catch (e) { return null; } }
+    saveBest(rec) { try { localStorage.setItem(BEST_KEY, JSON.stringify(rec)); return true; } catch (e) { return false; } }
+    showShiftEnd() {
+      const sh = this.shift, ts = sh.tickets;
+      if (!ts.length) { this.newShift(); return; }
+      const avg = Math.round(sh.points / ts.length);
+      let best = ts[0], worst = ts[0];
+      for (const t of ts) { if (t.points > best.points) best = t; if (t.points <= worst.points) worst = t; }
+      $('se-score').textContent = `${avg}/100`;
+      $('se-line').textContent = avg >= 90 ? 'Six tickets, no complaints. The pass never backed up.'
+        : avg >= 75 ? 'A good service. A couple of them noticed something, nobody minded much.'
+        : avg >= 55 ? 'You got through it. The room ate.'
+        : avg >= 35 ? 'A rough night. Too many plates came back.' : 'That was a disaster. Take the apron off.';
+      const sent = ts.filter((t) => t.sentBack).length;
+      $('se-stats').innerHTML = [
+        ['Covers', `${sh.covers} burger${sh.covers === 1 ? '' : 's'} over ${ts.length} ticket${ts.length === 1 ? '' : 's'}${sent ? `, ${sent} sent back` : ''}`],
+        ['Average ticket', `${avg}/100 · ${sh.points} points on the night`],
+        ['Tips', `${money(sh.tips)} on ${money(sh.bill)} of food (${sh.bill > 0 ? ((sh.tips / sh.bill) * 100).toFixed(1) : '0.0'} %)`],
+        ['Time on the line', `${P.fmtTime(sh.time)} of cooking, ${P.fmtTime(sh.tickets.reduce((a, t) => a + t.target, 0))} of it quoted`],
+        ['Best ticket', `#${best.n} ${best.who} — ${best.points}/100 ${best.quote}`],
+        ['Worst ticket', `#${worst.n} ${worst.who} — ${worst.points}/100 ${worst.quote}`],
+      ].map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+      $('se-tickets').innerHTML = ts.map((t) => `<div class="t${t.sentBack ? ' sent' : t === best ? ' best' : ''}"><em>#${t.n}</em><span>${t.who} · ${t.labels} · ${P.fmtTime(t.elapsed)} of ${P.fmtTime(t.target)}${t.penalty >= 0.5 ? ` (−${t.penalty.toFixed(0)} late)` : ''} · ${money(t.tips)} tip</span><b>${t.sentBack ? 'back' : t.points}</b></div>`).join('');
+      const prev = this.loadBest();
+      const rec = { points: sh.points, avg, tips: Math.round(sh.tips * 100) / 100, covers: sh.covers, tickets: ts.length, time: Math.round(sh.time) };
+      if (!prev || sh.points > prev.points) { $('se-best').textContent = this.saveBest(rec) ? `A new best shift — the old one was ${prev ? `${prev.points} points (${prev.avg}/100) with ${money(prev.tips)} in tips` : 'nothing at all'}.` : `Best shift: ${sh.points} points. (This browser will not remember it.)`; }
+      else $('se-best').textContent = `Your best shift is still ${prev.points} points (${prev.avg}/100, ${money(prev.tips)} in tips).`;
+      $('results').hidden = true;   // setPhase puts it back when the next shift's first order comes up
+      $('shiftend').hidden = false;
     }
     setPhase(ph) {
       this.phase = ph;
@@ -226,7 +320,7 @@
     // ------------------------------------------------------------ binding
     bind() {
       const s = this;
-      $('btn-accept').onclick = () => s.setPhase('form');
+      $('btn-accept').onclick = () => { s.ticketTiming = true; s.setPhase('form'); };  // the ticket clock starts at “yes chef”
       const link = (id, key, fnv, fnd) => { const el = $(id); el.addEventListener('input', () => { s.form[key] = fnv(el.value); fnd && (fnd.textContent = fnd.dataset.fmt.replace('%', s.form[key])); s.rebuildPreview(); }); };
       link('f-mass', 'massG', Number, $('f-mass-v')); link('f-thick', 'thicknessMm', Number, $('f-thick-v')); link('f-work', 'work', (v) => Number(v) / 100, $('f-work-v'));
       $('f-blend').addEventListener('change', (e) => { s.form.blend = e.target.value; s.rebuildPreview(); });
@@ -327,8 +421,9 @@
       $('btn-remove').onclick = () => { if (s.selItem) { if (P.removeItem(s.state, s.selItem)) { s.maybeRest(); s.refreshButtons(); s.updateChips(); } } else s.remove(); };
       $('btn-probe').onclick = () => { s.probe.inserted = !s.probe.inserted; s.probe.settle = 0; s.probe.reading = null; $('btn-probe').textContent = s.probe.inserted ? 'Pull probe' : 'Insert probe'; };
       $('probe-depth').addEventListener('input', (e) => { s.probe.depth = Number(e.target.value) / 100; $('probe-depth-v').textContent = e.target.value + ' %'; });
-      $('btn-cut').onclick = () => { P.serve(s.state); s.setPhase('result'); };
-      $('btn-again').onclick = () => { s.vp.setCutaway(false); s.vp.setPatty(null); s.state.patties = []; s.state.patty = null; s.state.served = false; s.newOrder(); };
+      $('btn-cut').onclick = () => { s.ticketTiming = false; P.serve(s.state); s.setPhase('result'); }; // the clock stops when the plates leave the pass
+      $('btn-again').onclick = () => { s.vp.setCutaway(false); s.vp.setPatty(null); s.state.patties = []; s.state.patty = null; s.state.served = false; if (s.shift && s.shift.n >= SHIFT_LEN) s.showShiftEnd(); else s.newOrder(); };
+      $('btn-new-shift').onclick = () => s.newShift();
       $('btn-cutaway').onclick = () => { s.vp.setCutaway(!s.vp.cutaway); $('btn-cutaway').classList.toggle('on', s.vp.cutaway); };
       $('r-chips').addEventListener('click', (e) => { const b = e.target.closest('[data-chip]'); if (b) s.select(Number(b.dataset.chip)); });
       for (const b of document.querySelectorAll('[data-speed]')) b.onclick = () => s.setSpeed(Number(b.dataset.speed));
@@ -371,7 +466,7 @@
     /** The last thing the cook's eyes, ears, fingers or hand reported, on the HUD as well as the log. */
     note(text) { this.senseNote = text; $('h-sense-v').textContent = text; $('h-sense').hidden = false; }
     /** Test/debug hook: advance the physics by `seconds` without rendering. */
-    fastForward(seconds) { let n = Math.round(seconds / DT); while (n-- > 0) P.step(this.state, DT); this.vp.forceTex = true; }
+    fastForward(seconds) { let n = Math.round(seconds / DT); while (n-- > 0) P.step(this.state, DT); if (this.ticketTiming) { this.ticketClock += seconds; this.updateTicketClock(); } this.vp.forceTex = true; }
     setSpeed(v) { this.speed = v; for (const b of document.querySelectorAll('[data-speed]')) b.classList.toggle('on', Number(b.dataset.speed) === v); }
     anyPlaced() { return this.patties.some((p) => p.where !== 'board'); }
     inPan() { return this.patties.filter((p) => p.where === 'pan'); }
@@ -482,6 +577,9 @@
       const real = Math.min(0.1, (now - this.last) / 1000); this.last = now;
       const st = this.state;
       const active = this.phase === 'cook' || this.phase === 'rest';
+      // The ticket clock runs from “yes chef” to the moment the plates go out, in the same kitchen
+      // seconds the simulation steps in — forming counts, and 8× does not make you faster.
+      if (this.ticketTiming && this.phase !== 'order' && this.phase !== 'result') { this.ticketClock += real * this.speed; this.updateTicketClock(); }
       if (active || this.stoveUsed) {
         // Once the stove has been used it keeps running between tickets, so the pan cools (or
         // keeps heating, if the burner was left on) while the next patty is being formed.
@@ -651,6 +749,31 @@
     showResults() {
       const st = this.state;
       const tk = P.evaluateTicket(st); this.ticketResult = tk;
+      // What the room actually experienced: the wait, then each customer's own words about the
+      // plate in front of them, the bill and what they left on it.
+      const elapsed = this.ticketClock || 0, targetT = this.ticketTarget || 0;
+      tk.service = { elapsed, target: targetT, penalty: P.latePenalty(elapsed, targetT) };
+      this.verdicts = tk.results.map((r) => P.verdict(r, tk));
+      const sentBack = this.verdicts.filter((v) => v.outcome === 'sent back');
+      // A plate that goes back is comped: it is off the bill, and nobody tips on it.
+      const bill = this.verdicts.reduce((a, v) => a + (v.outcome === 'sent back' ? 0 : v.bill), 0);
+      const tips = this.verdicts.reduce((a, v) => a + v.tipAmount, 0);
+      const points = sentBack.length ? 0 : P.clamp(Math.round(tk.total - tk.service.penalty), 0, 100);
+      const worst = this.verdicts.reduce((a, v) => (v.score < a.score ? v : a), this.verdicts[0]);
+      this.recordTicket({
+        n: (this.shift ? this.shift.n : 0) + 1, who: this.ticket.who, labels: this.ticket.items.map((id) => SHORT[id]).join(' + '),
+        points, tips, bill, covers: tk.results.length, elapsed, target: targetT, penalty: tk.service.penalty,
+        sentBack: sentBack.length > 0, quote: worst ? worst.quote : '',
+      });
+      const sh = this.shift;
+      $('r-bill').hidden = false;
+      $('r-bill').innerHTML = `<b>Bill</b> ${this.verdicts.map((v) => `${v.billLines[0].what} ${money(v.bill)}${v.outcome === 'sent back' ? ' <em>comped</em>' : ''}`).join(' · ')} — total <b>${money(bill)}</b>, tip <b>${money(tips)}</b>${bill > 0 ? ` (${((tips / bill) * 100).toFixed(0)} %)` : ''}`;
+      $('r-shift').hidden = false;
+      $('r-shift').innerHTML = `<b>Shift</b> ticket ${sh.n} of ${SHIFT_LEN} · this ticket <b>${points}</b>` +
+        (sentBack.length ? ' <em>(sent back — the ticket scores nothing)</em>' : tk.service.penalty >= 0.5 ? ` (${tk.total} − ${tk.service.penalty.toFixed(0)} for going out ${P.fmtTime(elapsed)} against ${P.fmtTime(targetT)})` : ` in ${P.fmtTime(elapsed)} of ${P.fmtTime(targetT)}`) +
+        ` · running total <b>${sh.points}</b> · tips <b>${money(sh.tips)}</b>`;
+      $('btn-again').textContent = sh.n >= SHIFT_LEN ? 'Finish the shift →' : 'Next ticket';
+      const card = $('results').querySelector('.card'); if (card) card.scrollTop = 0;  // start every ticket's verdict at the top, not where the last one was left
       this.vp.controls.preset('serve'); $('inspector').hidden = true;
       this.vp.setCutaway(true); $('btn-cutaway').classList.add('on');
       $('r-score').textContent = tk.total;
@@ -673,6 +796,19 @@
       const r = tk.results.find((x) => x.patty === this.patty) || tk.results[0]; this.result = r;
       for (const b of $('r-chips').querySelectorAll('[data-chip]')) b.classList.toggle('on', Number(b.dataset.chip) === this.sel);
       const target = r.target;
+      // The customer's own words about this plate, above the kitchen's rubric.
+      const v = this.verdicts && this.verdicts[tk.results.indexOf(r)];
+      const box = $('r-customer'); box.hidden = !v;
+      if (v) {
+        const cls = v.outcome === 'sent back' ? 'sent' : v.outcome;
+        // nobody compliments a plate they are sending back, however juicy the raw middle was
+        const said = v.complaints.slice(0, 4).map((c) => `<li>${c.text}</li>`).concat(v.outcome === 'sent back' ? [] : v.praise.slice(0, 2).map((g) => `<li class="good">${g.text}</li>`));
+        box.innerHTML = `<p class="quote">${v.quote}</p>` +
+          `<span class="outcome ${cls}">${v.outcome}</span> ` +
+          // the ticket's bill is printed below; per plate it is only worth repeating when there are several
+          `<span class="muted">${v.outcome === 'sent back' ? 'comped — no tip' : tk.results.length > 1 ? `their share: tip ${money(v.tipAmount)} on ${money(v.bill)} (${(v.tip * 100).toFixed(0)} %)` : ''}${v.late && v.late.penalty >= 0.5 ? ` · waited ${P.fmtTime(v.late.elapsed)}` : ''}</span>` +
+          `<ul>${said.join('')}</ul>`;
+      }
       const prefix = tk.results.length > 1 ? `Patty ${this.sel + 1}: ` : '';
       $('r-verdict').textContent = prefix + (r.dist === 0 ? `${target.label}. Exactly what they asked for.` : r.peak < target.lo ? `Under: ${r.got.label.toLowerCase()} when they wanted ${target.label.toLowerCase()}.` : `Over: ${r.got.label.toLowerCase()} when they wanted ${target.label.toLowerCase()}.`);
       const parts = r.parts;

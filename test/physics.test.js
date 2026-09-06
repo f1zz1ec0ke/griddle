@@ -1145,3 +1145,241 @@ test('the grill has a roar a pan does not, and the lid is a low-pass filter on a
   const pan = P.createState({}); preheat(pan, 200);
   assert.equal(pan.diag.roar, 0, 'a pan on a burner has no draught through it at all');
 });
+
+// ---------------------------------------------------------------- the customer, the bill, the shift
+const D = (id) => P.DONENESS.find((d) => d.id === id);
+/** A hand-built `evaluate` result: a flawless medium-rare, with whatever is overridden on top. */
+function mkResult(over = {}) {
+  const target = D(over.target || 'medium-rare');
+  const got = D(over.got || over.target || 'medium-rare');
+  const mid = (target.lo + target.hi) / 2;
+  const base = {
+    id: 1, total: 100, target, got, peak: mid, dist: 0, serveT: mid,
+    parts: { doneness: 50, crust: 20, juiciness: 15, evenness: 10, structure: 5 },
+    waterRetained: 0.70, waterEvap: 0.02, waterDrip: 0.002, fatLost: 0.01, stuck: 0, overFrac: 0.3, cheeseSlices: 0,
+    faces: { down: { id: 'A', brown: 3.2, char: 0.08, torn: 0, marks: 0 }, up: { id: 'B', brown: 3.0, char: 0.07, torn: 0, marks: 0 } },
+    cookTime: 340, restTime: 150, flips: 7, notes: [],
+  };
+  const r = { ...base, ...over };
+  r.target = target; r.got = got;
+  return r;
+}
+const kinds = (v) => v.complaints.map((c) => c.kind);
+
+test('verdict: a flawless burger is delighted, praised, and tipped the full 25 %', () => {
+  const v = P.verdict(mkResult());
+  assert.equal(v.outcome, 'delighted');
+  assert.equal(v.complaints.length, 0, JSON.stringify(v.complaints));
+  assert.equal(v.doneness.state, 'right');
+  assert.equal(v.crust.state, 'proper');
+  assert.equal(v.juiciness.state, 'juicy');
+  assert.equal(v.temperature.state, 'hot');
+  assert.ok(Math.abs(v.tip - 0.25) < 1e-9, `tip=${v.tip}`);
+  assert.equal(v.bill, P.MENU.burger);
+  assert.ok(Math.abs(v.tipAmount - P.MENU.burger * 0.25) < 0.005, `tip $${v.tipAmount}`);
+  assert.ok(/[“”]/.test(v.quote) && v.quote.length > 12, v.quote);
+});
+
+test('verdict: dry, no crust, burnt, cold, under and over each get their own complaint', () => {
+  const dry = P.verdict(mkResult({ total: 78, waterRetained: 0.55, parts: { doneness: 50, crust: 20, juiciness: 3, evenness: 10, structure: 5 } }));
+  assert.equal(dry.juiciness.state, 'parched');
+  assert.ok(kinds(dry).includes('dry'), kinds(dry).join(','));
+  assert.ok(/dry|sawdust|chalk|juice/i.test(dry.quote), dry.quote);
+
+  const tight = P.verdict(mkResult({ total: 88, waterRetained: 0.66 }));   // 3 points of water short of a medium-rare
+  assert.equal(tight.juiciness.state, 'tight');
+
+  const nocrust = P.verdict(mkResult({ total: 76, faces: { down: { brown: 0.4, char: 0 }, up: { brown: 0.3, char: 0 } } }));
+  assert.equal(nocrust.crust.state, 'none');
+  assert.ok(kinds(nocrust).includes('crust'));
+  assert.ok(/crust|seared|steamed/i.test(nocrust.quote), nocrust.quote);
+
+  const pale = P.verdict(mkResult({ total: 84, faces: { down: { brown: 1.4, char: 0.02 }, up: { brown: 1.2, char: 0.02 } } }));
+  assert.equal(pale.crust.state, 'pale');
+
+  const burnt = P.verdict(mkResult({ total: 62, faces: { down: { brown: 5, char: 0.6 }, up: { brown: 3, char: 0.2 } } }));
+  assert.equal(burnt.crust.state, 'burnt');
+  assert.ok(/burnt|ash|carbon|cremated|bitter/i.test(burnt.quote), burnt.quote);
+
+  const cold = P.verdict(mkResult({ total: 84, serveT: 34 }));   // peaked at 55.5, served at 34
+  assert.equal(cold.temperature.state, 'cold');
+  assert.ok(kinds(cold).includes('cold'));
+  assert.ok(/cold|sitting|pass/i.test(cold.quote), cold.quote);
+  const warm = P.verdict(mkResult({ total: 90, serveT: 44 }));   // 11.5 °C down: lukewarm, not cold
+  assert.equal(warm.temperature.state, 'lukewarm');
+
+  const under = P.verdict(mkResult({ target: 'medium', got: 'rare', peak: 50.5, dist: 9.5, serveT: 50.5, total: 52 }));
+  assert.equal(under.doneness.state, 'under');
+  assert.ok(/raw|uncooked/i.test(under.quote), under.quote);
+  const overCooked = P.verdict(mkResult({ target: 'medium-rare', got: 'well-done', peak: 74, dist: 17, serveT: 74, total: 50 }));
+  assert.equal(overCooked.doneness.state, 'over');
+  assert.ok(/grey|puck|cooked every/i.test(overCooked.quote), overCooked.quote);
+  const nearly = P.verdict(mkResult({ target: 'medium', got: 'medium-rare', peak: 58, dist: 2, serveT: 58, total: 88 }));
+  assert.equal(nearly.doneness.state, 'under');
+  assert.equal(nearly.complaints.find((c) => c.kind === 'doneness').sev, 0.25);
+});
+
+test('verdict: structure and grill faults are noticed', () => {
+  const torn = P.verdict(mkResult({ total: 70, stuck: 0.004 }));
+  assert.ok(torn.structure.faults.includes('torn'), JSON.stringify(torn.structure));
+  const springy = P.verdict(mkResult({ total: 82, patty: { id: 1, work: 0.95, salt: 'surface' } }));
+  assert.ok(springy.structure.faults.includes('springy'));
+  const domed = P.verdict(mkResult({ total: 80, patty: { id: 1, dome: 0.8 } }));
+  assert.ok(domed.structure.faults.includes('domed'));
+  const grilled = P.verdict(mkResult({ total: 92, grilled: true, waterRetained: 0.60, faces: { down: { brown: 2.4, char: 0.1, marks: 4 }, up: { brown: 2.2, char: 0.1, marks: 3.5 } } }));
+  assert.equal(grilled.grill.grilled, true);
+  assert.ok(grilled.praise.some((g) => /charcoal/i.test(g.text)), JSON.stringify(grilled.praise));
+  assert.equal(grilled.juiciness.state, 'juicy'); // a grilled patty is allowed to lose 10 points more water
+  const sooty = P.verdict(mkResult({ total: 74, grilled: true, flareChar: 0.4 }));
+  assert.ok(kinds(sooty).includes('smoke'));
+});
+
+test('verdict: outcomes and the tip that goes with them', () => {
+  assert.equal(P.verdict(mkResult({ total: 90 })).outcome, 'delighted');
+  assert.equal(P.verdict(mkResult({ total: 89 })).outcome, 'accepted');
+  assert.equal(P.verdict(mkResult({ total: 45 })).outcome, 'accepted');
+  const back = P.verdict(mkResult({ total: 44 }));
+  assert.equal(back.outcome, 'sent back');
+  assert.equal(back.tip, 0);
+  assert.equal(back.tipAmount, 0);
+  assert.ok(/back|can't eat|sorry/i.test(back.quote), back.quote);
+  // a raw or burnt item in the build sends the plate back however well the patty scored
+  const raw = P.verdict(mkResult({ total: 100, build: [{ name: 'bacon', state: 'raw' }] }));
+  assert.equal(raw.outcome, 'sent back');
+  assert.equal(raw.build.ok, false);
+  assert.ok(/bacon/.test(raw.quote), raw.quote);
+  const burntItem = P.verdict(mkResult({ total: 96, build: [{ name: 'bun', state: 'burnt' }] }));
+  assert.equal(burntItem.outcome, 'sent back');
+  const goodBuild = P.verdict(mkResult({ total: 96, build: [{ name: 'cheese', state: 'melted' }] }));
+  assert.equal(goodBuild.outcome, 'delighted');
+  assert.equal(goodBuild.build.ok, true);
+});
+
+test('tips: nothing on a sent-back plate, ~10 % on a mediocre one, 25 % on a perfect one, and it only ever rises', () => {
+  assert.equal(P.tipFraction(30), 0);
+  assert.equal(P.tipFraction(95, 'sent back'), 0);
+  assert.ok(Math.abs(P.tipFraction(100, 'delighted') - 0.25) < 1e-9);
+  assert.ok(P.tipFraction(70, 'accepted') > 0.09 && P.tipFraction(70, 'accepted') < 0.12, P.tipFraction(70, 'accepted'));
+  assert.ok(P.tipFraction(90, 'delighted') > 0.19 && P.tipFraction(90, 'delighted') < 0.21);
+  let prev = -1;
+  for (let s = 45; s <= 100; s++) { const t = P.tipFraction(s, 'accepted'); assert.ok(t >= prev, `tip fell at ${s}`); prev = t; }
+  // the bill is the burger plus what went on it, and the tip is paid on that
+  assert.equal(P.billFor([{ cheeseSlices: 0 }]).total, P.MENU.burger);
+  assert.equal(P.billFor([{ cheeseSlices: 2 }]).total, P.MENU.burger + 2 * P.MENU.cheese);
+  assert.equal(P.billFor([{ cheeseSlices: 0 }, { cheeseSlices: 1 }]).total, 2 * P.MENU.burger + P.MENU.cheese);
+  const cheesy = P.verdict(mkResult({ cheeseSlices: 2 }));
+  assert.equal(cheesy.bill, P.MENU.burger + 2 * P.MENU.cheese);
+  assert.ok(Math.abs(cheesy.tipAmount - cheesy.bill * 0.25) < 0.005);
+});
+
+test('the ticket clock: a rare is quick, three burgers are not, and the quote is ~1.6× the cook', () => {
+  const one = P.ticketTargetTime(['medium-rare']);
+  assert.ok(Math.abs(one - 1.6 * (P.COOK_S['medium-rare'] + 150)) < 10, `${one}`);
+  assert.ok(P.ticketTargetTime(['rare']) < P.ticketTargetTime(['well-done']), 'rare should be quicker than well done');
+  assert.ok(P.ticketTargetTime(['medium-rare', 'medium-rare']) > one, 'a second burger costs time');
+  assert.ok(P.ticketTargetTime(['medium-rare', 'medium-rare']) < 2 * one, 'but they share the pan, so not double');
+  const three = P.ticketTargetTime(['rare', 'medium', 'medium-well']);
+  assert.ok(three > P.ticketTargetTime(['rare', 'medium']), 'three is slower than two');
+  assert.ok(one > 600 && one < 900, `one medium-rare quoted at ${one} s`);
+  assert.equal(P.ticketTargetTime([]), 0);
+});
+
+test('the late penalty: free until the quote, −5 at half again, −10 at double, no worse after', () => {
+  const T = 720;
+  assert.equal(P.latePenalty(0, T), 0);
+  assert.equal(P.latePenalty(T, T), 0);
+  assert.ok(Math.abs(P.latePenalty(T * 1.5, T) - 5) < 1e-9);
+  assert.ok(Math.abs(P.latePenalty(T * 2, T) - 10) < 1e-9);
+  assert.equal(P.latePenalty(T * 5, T), P.SERVICE_MAX);
+  assert.equal(P.latePenalty(9999, 0), 0);
+  // and it lands in the verdict, in minutes, in words
+  const v = P.verdict(mkResult({ total: 92 }), { service: { elapsed: 1200, target: 720, penalty: P.latePenalty(1200, 720) } });
+  assert.ok(kinds(v).includes('service'), kinds(v).join(','));
+  assert.ok(/twenty minutes/.test(v.complaints.find((c) => c.kind === 'service').text), v.quote);
+  assert.equal(P.spellMinutes(1200), 'twenty');
+  assert.equal(P.spellMinutes(1500), 'twenty-five');
+  // late costs them the tip even though the burger itself was fine
+  assert.ok(v.tip < P.verdict(mkResult({ total: 92 })).tip, 'a late plate tips worse');
+});
+
+test('a lukewarm plate is tipped like a worse one', () => {
+  const hot = P.verdict(mkResult({ total: 92 }));
+  const cool = P.verdict(mkResult({ total: 92, serveT: 34 }));   // peaked at 55.5, went out at 34
+  assert.equal(cool.temperature.penalty, 10);
+  assert.ok(cool.tip < hot.tip * 0.85, `${cool.tip} vs ${hot.tip}`);
+  assert.ok(cool.served < cool.score);
+});
+
+test('the same plate always says the same thing, and different plates do not all say the same thing', () => {
+  const a = P.verdict(mkResult({ id: 2, total: 71, waterRetained: 0.6 }));
+  const b = P.verdict(mkResult({ id: 2, total: 71, waterRetained: 0.6 }));
+  assert.equal(a.quote, b.quote);
+  const said = new Set();
+  for (let i = 1; i <= 12; i++) said.add(P.verdict(mkResult({ id: i, total: 70 + (i % 5), waterRetained: 0.6 })).quote);
+  assert.ok(said.size >= 3, `only ${said.size} phrasings across twelve plates`);
+});
+
+test('the README recipe delights the customer and earns the top tip', () => {
+  const r = recipe('medium-rare', 18, 47);
+  assert.equal(r.total, 100);
+  const v = P.verdict(r, { service: { elapsed: 700, target: P.ticketTargetTime(['medium-rare']), penalty: 0 } });
+  assert.equal(v.outcome, 'delighted');
+  assert.equal(v.complaints.length, 0, JSON.stringify(v.complaints));
+  assert.equal(v.crust.state, 'proper');
+  assert.equal(v.juiciness.state, 'juicy');
+  assert.ok(Math.abs(v.tip - 0.25) < 1e-9);
+  assert.ok(Math.abs(v.tipAmount - 3.5) < 0.01, `$${v.tipAmount}`);
+});
+
+test('verdict: the build as `buildOf` returns it — the kitchen\'s send-back line, its praise, and its mild faults', () => {
+  // a raw egg white is −5 on the ticket: the customer sends the plate back and names it
+  const rawEgg = P.verdict(mkResult({ total: 100, build: { items: [{ kind: 'egg', label: 'Egg', state: 'raw white', score: -5 }], penalty: 5, bonus: 0 } }));
+  assert.equal(rawEgg.outcome, 'sent back');
+  assert.equal(rawEgg.build.ok, false);
+  assert.ok(/egg/.test(rawEgg.quote), rawEgg.quote);
+  // limp bacon is −3: the kitchen calls that a send-back too, and so does the table
+  const limp = P.verdict(mkResult({ total: 95, build: { items: [{ kind: 'bacon', label: 'Bacon', state: 'limp', score: -3 }], penalty: 3, bonus: 0 } }));
+  assert.equal(limp.outcome, 'sent back');
+  assert.ok(/bacon/.test(limp.quote) && /limp/.test(limp.quote), limp.quote);
+  // an over-toasted bun (−1) is a remark, not a send-back
+  const dark = P.verdict(mkResult({ total: 95, build: { items: [{ kind: 'bun', label: 'Bottom bun', state: 'over-toasted', score: -1 }], penalty: 1, bonus: 0 } }));
+  assert.equal(dark.outcome, 'delighted');
+  assert.ok(kinds(dark).includes('build'), kinds(dark).join(','));
+  // and crisp bacon, a jammy yolk or a toasted heel are praised
+  const good = P.verdict(mkResult({ total: 96, build: { items: [{ kind: 'bacon', label: 'Bacon', state: 'crisp', score: 2 }, { kind: 'egg', label: 'Egg', state: 'jammy yolk', score: 2.5 }], penalty: 0, bonus: 4.5 } }));
+  assert.equal(good.outcome, 'delighted');
+  assert.equal(good.build.ok, true);
+  assert.equal(good.praise.filter((g) => g.kind === 'build').length, 2, JSON.stringify(good.praise));
+  // no toppings at all is neither
+  const bare = P.verdict(mkResult({ total: 96, build: { items: [], penalty: 0, bonus: 0 } }));
+  assert.equal(bare.build.items.length, 0);
+});
+
+test('verdict: creosote is tasted, clean wood smoke is praised, and a slit from a peek is noticed', () => {
+  const tar = P.verdict(mkResult({ total: 80, grilled: true, waterRetained: 0.6, smokiness: 0.9, creosote: 0.6, smokeWood: 'hickory' }));
+  assert.ok(kinds(tar).includes('smoke'), kinds(tar).join(','));
+  assert.ok(/tar|bonfire|sooty/i.test(tar.quote), tar.quote);
+  const clean = P.verdict(mkResult({ total: 96, grilled: true, waterRetained: 0.6, smokiness: 0.9, creosote: 0.05, smokeWood: 'hickory' }));
+  assert.ok(!kinds(clean).includes('smoke'));
+  assert.ok(clean.praise.some((g) => /smoke/i.test(g.text)), JSON.stringify(clean.praise));
+  const peeked = P.verdict(mkResult({ total: 94, peeks: 1 }));
+  assert.ok(peeked.complaints.some((c) => c.kind === 'structure' && /knife|cut/i.test(c.text)), JSON.stringify(peeked.complaints));
+  assert.equal(P.verdict(mkResult({ total: 94, peeks: 0 })).complaints.some((c) => /knife|cut/i.test(c.text)), false);
+});
+
+test('a real egg that went out with a raw white sends the whole plate back through evaluateTicket', () => {
+  const s = panAt(200, 8);
+  const p = std({ thicknessMm: 14 }); P.placePatty(s, p, { x: 0.06, y: 0 });
+  let since = 0; while (P.centerT(p) < 56) { hold(s, 200); P.step(s, DT); since += DT; if (since >= 45 && !p.faceDown.stuck) { P.flipPatty(s, p); since = 0; } }
+  P.removePatty(s, p);
+  // the egg goes in as the patty comes off and is pulled after twenty seconds: white still clear
+  const [egg] = P.addItem(s, 'egg'); cookItem(s, 20, 200); P.removeItem(s, egg); P.assignTopping(s, egg, p);
+  cookFor(s, 150); P.serve(s);
+  const tk = P.evaluateTicket(s);
+  assert.equal(tk.results[0].build.items[0].state, 'raw white');
+  const v = P.verdict(tk.results[0], tk);
+  assert.equal(v.outcome, 'sent back', JSON.stringify(v.build));
+  assert.equal(v.build.items[0].name, 'egg');
+  assert.ok(/egg/.test(v.quote), v.quote);
+  assert.equal(v.tipAmount, 0);
+});
