@@ -1,0 +1,7 @@
+# end-to-end screenshots and any other run output
+test/e2e/out/
+node_modules/
+.DS_Store
+
+# agent worktrees created by the orchestration harness
+.claude/worktrees/

@@ -9,9 +9,11 @@
   const P = root.BurgerPhysics;
   const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
   const lerp = (a, b, t) => a + (b - a) * t;
+  const smoothstep = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
   const mix3 = (a, b, t) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
   const rgb = (c) => `rgb(${c[0] | 0},${c[1] | 0},${c[2] | 0})`;
   const rand = (a, b) => a + Math.random() * (b - a);
+  let tintedId = 0; // identifies a mask canvas in the tinted-mask cache
 
   // ------------------------------------------------------------ colour model
   const COL = {
@@ -151,6 +153,35 @@
     return sh;
   }
 
+  // ------------------------------------------------------------ giving the GPU its memory back
+  // Three keeps a geometry's buffers, a material's compiled program and every texture on the GPU
+  // until something disposes them; removing a mesh from the scene frees nothing. One patty carries
+  // a 1024² atlas, a 256² roughness map and a 512×256 cut face — about 6 MB of texture with mips —
+  // so a form slider rebuilding its preview thirty times a second would otherwise leak ~180 MB a
+  // second, and every ticket of a six-ticket shift would leave its patties and toppings behind.
+  const MAPS = ['map', 'roughnessMap', 'metalnessMap', 'normalMap', 'bumpMap', 'alphaMap', 'emissiveMap', 'aoMap', 'lightMap', 'specularMap', 'clearcoatMap', 'clearcoatNormalMap', 'clearcoatRoughnessMap', 'displacementMap', 'envMap'];
+  /**
+   * Free every geometry, material and texture under `obj`. Anything in `keep` is shared with
+   * something still on screen (the pan's material outlives the pan mesh it was built for) and is
+   * left alone. Each unique resource is disposed once, so a geometry two meshes share — the
+   * kettle's bowl, drawn again from the inside — is not double-freed.
+   */
+  function disposeTree(obj, keep) {
+    if (!obj) return;
+    const geos = new Set(), mats = new Set();
+    obj.traverse((o) => {
+      if (o.geometry) geos.add(o.geometry);
+      if (o.material) { if (Array.isArray(o.material)) for (const m of o.material) mats.add(m); else mats.add(o.material); }
+      if (o.isInstancedMesh && o.dispose) o.dispose(); // and the instance matrix / colour buffers
+    });
+    for (const g of geos) if (!(keep && keep.has(g))) g.dispose();
+    for (const m of mats) {
+      if (keep && keep.has(m)) continue;
+      for (const k of MAPS) { const t = m[k]; if (t && t.isTexture && !(keep && keep.has(t))) t.dispose(); }
+      m.dispose();
+    }
+  }
+
   // ------------------------------------------------------------ particles
   class Puffs {
     constructor(scene, opts) {
@@ -247,7 +278,9 @@
       this.cutaway = false; this.cutPhi = 0; this.lastGeo = null; this.forceTex = true; this.texClock = 0;
       this.rebuildGeometry(true); this.paintTextures();
     }
-    dispose() { this.vp.scene.remove(this.group); }
+    /** Off the scene and off the GPU: the atlas, the roughness and cut textures, the lathe, the
+     *  cut face, the cheese, the buns and their crumb textures all go back. */
+    dispose() { this.vp.scene.remove(this.group); disposeTree(this.group); }
     setCutaway(on, phi) { this.cutaway = on; if (on) this.cutPhi = phi; this.rebuildGeometry(true); this.forceTex = true; }
     rebuildGeometry(force) {
       const p = this.p, R = p.D / 2, h = p.h, dome = p.dome;
@@ -267,25 +300,33 @@
     }
     buildBuns() {
       const p = this.p, g = this.group, vp = this.vp;
-      if (this.bunGroup) g.remove(this.bunGroup);
+      if (this.bunGroup) { g.remove(this.bunGroup); disposeTree(this.bunGroup); } // the crumb textures are built fresh every time
       const bg = new T.Group(); this.bunGroup = bg; g.add(bg);
       const Rb = Math.max(0.05, (p.D / 2) * 0.96);
       const crust = new T.MeshStandardMaterial({ color: 0xc98a45, roughness: 0.75 });
-      const crumbTex = (soak) => {
+      const crumbTex = (soak, toast, cutAtTop) => {
         const cv = document.createElement('canvas'); cv.width = 256; cv.height = 128; const c = cv.getContext('2d');
         c.fillStyle = '#f3e4c4'; c.fillRect(0, 0, 256, 128);
         c.globalCompositeOperation = 'multiply'; c.globalAlpha = 0.35; c.drawImage(vp.noiseFine, 0, 0, 256, 128); c.globalAlpha = 1; c.globalCompositeOperation = 'source-over';
         for (let i = 0; i < 260; i++) { c.fillStyle = `rgba(200,170,120,${0.3 + Math.random() * 0.4})`; c.beginPath(); c.ellipse(Math.random() * 256, Math.random() * 128, 1 + Math.random() * 3, 1 + Math.random() * 2, Math.random() * 3, 0, Math.PI * 2); c.fill(); }
         if (soak > 0) { const gr = c.createLinearGradient(0, 0, 0, 128); gr.addColorStop(0, `rgba(120,50,40,${clamp(soak / 0.006, 0, 0.75)})`); gr.addColorStop(0.7, 'rgba(120,50,40,0)'); c.fillStyle = gr; c.fillRect(0, 0, 256, 128); }
+        // the toasted cut face: a hard band of crust colour right at the cut, over a few
+        // millimetres of crumb that dried out behind it
+        if (toast && toast.brown > 0.15) {
+          const col = itemFaceColour(toast, ICOL.crumb, 0.5), y0 = cutAtTop ? 0 : 128;
+          const gr = c.createLinearGradient(0, y0, 0, cutAtTop ? 26 : 102);
+          gr.addColorStop(0, rgb(col)); gr.addColorStop(0.45, `rgba(${col[0] | 0},${col[1] | 0},${col[2] | 0},0.55)`); gr.addColorStop(1, `rgba(${col[0] | 0},${col[1] | 0},${col[2] | 0},0)`);
+          c.fillStyle = gr; c.fillRect(0, cutAtTop ? 0 : 102, 256, 26);
+        }
         const t = new T.CanvasTexture(cv); t.wrapS = t.wrapT = T.ClampToEdgeWrapping; return t;
       };
       const phi = this.cutaway ? Math.PI : Math.PI * 2, phiStart = this.cutaway ? this.cutPhi : 0;
-      const half = (prof, y0, soak) => {
+      const half = (prof, y0, soak, toast, cutAtTop) => {
         const hgrp = new T.Group(); hgrp.position.y = y0;
         const m = new T.Mesh(buildLathe(prof, 72, phi, phiStart), crust); m.castShadow = true; m.receiveShadow = true; hgrp.add(m);
         if (this.cutaway) {
           const hh = Math.max(...prof.map((q) => q.y)), rr = Math.max(...prof.map((q) => q.r));
-          const tex = crumbTex(soak); tex.repeat.set(1 / (2 * rr), 1 / hh); tex.offset.set(0.5, 0);
+          const tex = crumbTex(soak, toast, cutAtTop); tex.repeat.set(1 / (2 * rr), 1 / hh); tex.offset.set(0.5, 0);
           const face = new T.Mesh(new T.ShapeGeometry(crossSectionShape(prof), 3), new T.MeshStandardMaterial({ map: tex, roughness: 0.9, side: T.DoubleSide }));
           face.rotation.y = -phiStart; hgrp.add(face);
         }
@@ -294,8 +335,10 @@
       const bottom = [{ r: 0, y: 0, v: 0 }, { r: Rb * 0.92, y: 0, v: 0.2 }, { r: Rb, y: 0.007, v: 0.4 }, { r: Rb * 0.98, y: 0.017, v: 0.6 }, { r: Rb * 0.85, y: 0.022, v: 0.8 }, { r: 0, y: 0.022, v: 1 }];
       const top = [{ r: 0, y: 0, v: 0 }, { r: Rb * 0.97, y: 0, v: 0.15 }, { r: Rb, y: 0.006, v: 0.3 }, { r: Rb * 0.93, y: 0.013, v: 0.5 }, { r: Rb * 0.72, y: 0.02, v: 0.7 }, { r: Rb * 0.4, y: 0.024, v: 0.85 }, { r: 0, y: 0.025, v: 1 }];
       this.bunBottomH = 0.022;
-      half(bottom, -this.bunBottomH, p.bunSoak || 0);
-      this.bunTop = half(top, 0, 0);
+      // a bun the cook actually toasted goes out with its toast on it; anything else is a raw bun
+      const bf = p.bunFaces || {};
+      half(bottom, -this.bunBottomH, p.bunSoak || 0, bf.bottom, true);
+      this.bunTop = half(top, 0, 0, bf.top, false);
       const seedGeo = new T.SphereGeometry(1, 6, 5); const seedMat = new T.MeshStandardMaterial({ color: 0xf6ead2, roughness: 0.6 });
       let sd = 7 + (p.id || 0); const rnd = () => { sd = (sd * 1103515245 + 12345) & 0x7fffffff; return sd / 0x7fffffff; };
       for (let i = 0; i < 70; i++) {
@@ -340,11 +383,15 @@
       c.globalCompositeOperation = 'source-over';
       const fatLeft = (k, j) => { const i = k * Nr + j; return clamp((p.fs[i] + p.fl[i]) / (p.fat0c[i] + 1e-12), 0, 1); };
       const fatLeftLayer = (k) => { let f = 0; for (let j = 0; j < Nr; j++) f += fatLeft(k, j) * p.aj[j]; return f; };
+      // Lay a blob mask over one region of the atlas in a fixed colour. The colours are constants
+      // (fat, melted fat, crust speckle, char, torn meat) and only the opacity follows the state,
+      // so each mask is coloured once and kept (vp.tinted) and a tint is then a single blit of the
+      // region. Nine of these run per repaint, and building a full-atlas colour layer for every
+      // one of them was the most expensive thing the renderer did.
       const tintMask = (mask, colour, alpha, rg) => {
         if (alpha <= 0.002) return;
-        const off = vp._off || (vp._off = document.createElement('canvas')); off.width = W; off.height = H; const oc = off.getContext('2d');
-        oc.clearRect(0, 0, W, H); oc.drawImage(mask, 0, 0, W, H); oc.globalCompositeOperation = 'source-in'; oc.fillStyle = rgb(colour); oc.fillRect(0, 0, W, H); oc.globalCompositeOperation = 'source-over';
-        c.save(); c.beginPath(); c.rect(rg.x0, rg.y0, rg.x1 - rg.x0, rg.y1 - rg.y0); c.clip(); c.globalAlpha = alpha; c.drawImage(off, 0, 0); c.restore();
+        const rw = rg.x1 - rg.x0, rh = rg.y1 - rg.y0;
+        c.globalAlpha = alpha; c.drawImage(vp.tinted(mask, colour, W, H), rg.x0, rg.y0, rw, rh, rg.x0, rg.y0, rw, rh); c.globalAlpha = 1;
       };
       const topC = (Nz - 1) * Nr;
       if (rawTop) tintMask(vp.marble, p.T[topC] > 40 ? COL.fatMelt : COL.fat, 0.9 * fatLeftLayer(Nz - 1) * p.fatFrac * 3, bt);
@@ -353,18 +400,45 @@
         tintMask(vp.spots, [40, 20, 10], clamp(face.brown / 4, 0, 0.6), rg);
         tintMask(vp.blotch, COL.char, clamp(face.char / 0.6, 0, 0.75), rg);
         tintMask(vp.spots, COL.char, clamp(face.char / 0.4, 0, 0.9), rg);
+      };
+      /**
+       * The bars and the torn patches, which do not wait for the rest of the face. On a grate only
+       * a tenth of the face touches metal, so the bar track runs far ahead of the area mean: at the
+       * README's 45 s cadence a face goes up with marks at 0.5 and a mean browning of 0.10, and a
+       * cook looking down at it sees the bars, not raw meat. Torn crust is the same: it is a hole
+       * in the face, visible whether or not the rest of it has coloured.
+       */
+      const paintMarks = (face, rg) => {
         if (face.torn > 0) tintMask(vp.marbleCut, [150, 60, 60], clamp(face.torn * 3, 0, 0.8), rg);
-        // grill marks: dark bars where the grate pressed into the face
         if (face.marks > 0.2) {
           const cx = (rg.x0 + rg.x1) / 2, cy = (rg.y0 + rg.y1) / 2;
           const mc = faceColour({ brown: face.marks, char: face.marksChar || 0 }, [90, 55, 30]);
           c.save(); c.beginPath(); c.arc(cx, cy, capR, 0, Math.PI * 2); c.clip(); c.translate(cx, cy); c.rotate(face.marksAngle || 0.6);
-          c.fillStyle = rgb(mc); c.globalAlpha = clamp(face.marks / 2, 0, 0.9);
+          // the bar is not a veil over the meat: the strip it pressed on really is at that browning
+          // index, so the paint is close to opaque as soon as the mark has any colour in it. What is
+          // left of the transparency is the soft shoulder either side of a 6 mm rod.
+          c.fillStyle = rgb(mc); c.globalAlpha = clamp(face.marks / 0.7, 0, 0.92);
           for (let x = -capR; x < capR; x += capR * 0.28) c.fillRect(x - capR * 0.035, -capR, capR * 0.07, 2 * capR);
           c.restore();
         }
       };
       crustSpots(p.faceDown, bb); if (!rawTop) crustSpots(p.faceUp, bt);
+      paintMarks(p.faceDown, bb); paintMarks(p.faceUp, bt);
+      // the slit a peek leaves: a knife went all the way through, so the line shows on both caps,
+      // dark where the wet inside of the patty is open to the air
+      if (p.slits) {
+        const inner = mix3(nodeColour(p, Math.floor(p.Nz / 2), 0), [40, 16, 16], 0.45);
+        for (const rg of [bb, bt]) {
+          const cx = (rg.x0 + rg.x1) / 2, cy = (rg.y0 + rg.y1) / 2;
+          c.save(); c.beginPath(); c.arc(cx, cy, capR, 0, Math.PI * 2); c.clip(); c.translate(cx, cy); c.rotate(p.slitAngle || 0);
+          for (let n = 0; n < Math.min(3, p.slits); n++) {
+            c.fillStyle = rgb(inner); c.globalAlpha = 0.95;
+            c.fillRect(-capR, -capR * 0.022 + n * capR * 0.14, 2 * capR, capR * 0.044); // a 2 mm gape across a 5 cm cap
+            c.fillStyle = 'rgba(0,0,0,0.62)'; c.fillRect(-capR, -capR * 0.011 + n * capR * 0.14, 2 * capR, capR * 0.022); // and the shadow down inside it
+          }
+          c.globalAlpha = 1; c.restore();
+        }
+      }
       if (p.poolTop > 1e-5) { c.fillStyle = `rgba(200,70,80,${clamp(p.poolTop / 0.002, 0, 0.5)})`; c.fillRect(bt.x0, bt.y0, bt.x1 - bt.x0, bt.y1 - bt.y0); }
       if (p.T[topC] < -2) { c.fillStyle = `rgba(235,240,255,${clamp(-p.T[topC] / 20, 0, 0.6)})`; c.fillRect(0, 0, W, H); }
       this.atlasTex.needsUpdate = true;
@@ -393,9 +467,8 @@
           const y1 = CH - (k / Nz) * CH, y0 = CH - ((k + 1) / Nz) * CH;
           const fl = fatLeftLayer(k); const melted = p.T[k * Nr] > 42;
           if (fl > 0.02) {
-            const off = vp._off2 || (vp._off2 = document.createElement('canvas')); off.width = CW; off.height = CH; const oc = off.getContext('2d');
-            oc.clearRect(0, 0, CW, CH); oc.drawImage(vp.marbleCut, 0, 0, CW, CH); oc.globalCompositeOperation = 'source-in'; oc.fillStyle = rgb(melted ? COL.fatMelt : COL.fat); oc.fillRect(0, 0, CW, CH); oc.globalCompositeOperation = 'source-over';
-            cc.save(); cc.beginPath(); cc.rect(0, y0, CW, y1 - y0); cc.clip(); cc.globalAlpha = 0.9 * fl * p.fatFrac * 3; cc.drawImage(off, 0, 0); cc.restore();
+            const marb = vp.tinted(vp.marbleCut, melted ? COL.fatMelt : COL.fat, CW, CH);
+            cc.globalAlpha = 0.9 * fl * p.fatFrac * 3; cc.drawImage(marb, 0, y0, CW, y1 - y0, 0, y0, CW, y1 - y0); cc.globalAlpha = 1;
           }
         }
         // crust bands, ring by ring, and the browned edge
@@ -413,25 +486,65 @@
         this.cutTex.needsUpdate = true;
       }
     }
+    /**
+     * Everything the canvas textures are painted from, quantised to the smallest step that could
+     * show up on screen: a hundredth of a browning unit (the crust ramp has eight colour stops
+     * across seven units), a fifth of a degree, half a percent of moisture, a twentieth of a
+     * millimetre. Sampled at both faces, both rings and six depths, so any change big enough to
+     * move a pixel of the caps, the side band or the cut face moves one of these numbers.
+     */
+    texSignature(out) {
+      const p = this.p, Nz = p.Nz, Nr = p.Nr, q = (v, step) => Math.round(v / step);
+      let i = 0;
+      for (const f of [p.faceDown, p.faceUp]) {
+        out[i++] = q(f.brown, 0.01); out[i++] = q(f.char, 0.004); out[i++] = q(f.torn, 0.01); out[i++] = q(f.marks || 0, 0.01);
+        out[i++] = q(f.brownR[0], 0.01); out[i++] = q(f.brownR[Nr >> 1], 0.01); out[i++] = q(f.brownR[Nr - 1], 0.01); out[i++] = q(f.charR[Nr - 1], 0.004);
+      }
+      out[i++] = q(p.faceSide.brown, 0.01); out[i++] = q(p.faceSide.char, 0.004);
+      out[i++] = q(p.dome, 0.01); out[i++] = q(p.D, 5e-5); out[i++] = q(p.h, 5e-5);
+      out[i++] = q(p.poolTop, 2e-6); out[i++] = q(p.fatTop, 2e-6); out[i++] = q(p.cheeses.length, 1); out[i++] = q(p.slits || 0, 1);
+      for (let n = 0; n < 6; n++) {
+        const k = Math.min(Nz - 1, Math.round((n * (Nz - 1)) / 5));
+        for (const j of [0, Nr - 1]) {
+          const c = k * Nr + j;
+          out[i++] = q(p.T[c], 0.2); out[i++] = q(p.dG[c], 0.004); out[i++] = q(p.dM[c], 0.004);
+          out[i++] = q(p.w[c] / p.w0c[c], 0.004); out[i++] = q((p.fs[c] + p.fl[c]) / (p.fat0c[c] + 1e-12), 0.01);
+        }
+      }
+      return i;
+    }
+    /** True when anything the textures are painted from has moved a visible amount. */
+    texDirty() {
+      const cur = this._sigA || (this._sigA = new Float64Array(128)); // 84 numbers today, room to add more
+      const n = this._sigN = this.texSignature(cur), prev = this._sigB;
+      if (!prev) return true;
+      for (let i = 0; i < n; i++) if (cur[i] !== prev[i]) return true;
+      return false;
+    }
+    /** Remember what the atlas was last painted from (only after it really was repainted). */
+    texCommit() { const cur = this._sigA; this._sigB = this._sigB || new Float64Array(cur.length); this._sigB.set(cur); }
     /** Per-frame: position, geometry, textures, cheese, buns. */
     update(state, dt, where, position, mode) {
       const p = this.p, g = this.group;
       this.texClock += dt;
-      if (where === 'pan') g.position.set(position.x, this.vp.panFloorY + 0.0012 * p.cheeseUnder.length, position.z);
+      if (where === 'pan') g.position.set(position.x, this.vp.panFloorY + 0.0012 * p.cheeseUnder.length + (position.lift || 0), position.z);
       else if (where === 'board') g.position.set(position.x, 0, position.z);
       else {
         const served = where === 'cut';
-        if (served !== this.served) { this.served = served; if (served) this.buildBuns(); else if (this.bunGroup) { g.remove(this.bunGroup); this.bunGroup = null; } }
+        if (served !== this.served) { this.served = served; if (served) this.buildBuns(); else if (this.bunGroup) { g.remove(this.bunGroup); disposeTree(this.bunGroup); this.bunGroup = null; } }
         g.position.set(position.x, position.y + (served ? this.bunBottomH : 0), position.z);
-        if (this.bunTop) this.bunTop.position.y = p.h * (1 + 0.28 * p.dome) + p.cheeses.length * 0.0015 + 0.001;
+        if (this.bunTop) this.bunTop.position.y = p.h * (1 + 0.28 * p.dome) + p.cheeses.length * 0.0015 + (this.stackH || 0) + 0.001;
       }
       this.rebuildGeometry(false);
-      if (this.texClock > 0.1 || this.forceTex) { this.texClock = 0; this.forceTex = false; this.paintTextures(); }
+      // Repaint at most ten times a second, and only when the meat actually looks different:
+      // resting, plated or paused, nothing moves and the atlas is left alone entirely.
+      if (this.forceTex) { this.texClock = 0; this.forceTex = false; this.texDirty(); this.texCommit(); this.paintTextures(); }
+      else if (this.texClock > 0.1 && this.texDirty() && this.vp.claimTexBudget()) { this.texClock = 0; this.texCommit(); this.paintTextures(); }
       this.updateCheese();
     }
     updateCheese() {
       const p = this.p, g = this.group;
-      while (this.cheeseMeshes.length > p.cheeses.length) g.remove(this.cheeseMeshes.pop());
+      while (this.cheeseMeshes.length > p.cheeses.length) { const m = this.cheeseMeshes.pop(); g.remove(m); disposeTree(m); }
       while (this.cheeseMeshes.length < p.cheeses.length) {
         const k = this.cheeseMeshes.length;
         const geo = new T.PlaneGeometry(0.095, 0.095, 14, 14); geo.rotateX(-Math.PI / 2);
@@ -441,7 +554,7 @@
       }
       const yellow = [0.95, 0.70, 0.24], melted = [0.99, 0.74, 0.20], golden = [0.72, 0.42, 0.10], dark = [0.28, 0.13, 0.05];
       const skirtColour = (sk, onTop) => { if (!sk) return onTop; let c = mix3(onTop, golden, clamp(sk.brown / 2.5, 0, 1)); c = mix3(c, dark, clamp((sk.brown - 2.5) / 3, 0, 1)); return mix3(c, [0.06, 0.05, 0.04], clamp(sk.char / 0.8, 0, 1)); };
-      while (this.underMeshes.length > p.cheeseUnder.length) g.remove(this.underMeshes.pop());
+      while (this.underMeshes.length > p.cheeseUnder.length) { const m = this.underMeshes.pop(); g.remove(m); disposeTree(m); }
       while (this.underMeshes.length < p.cheeseUnder.length) {
         const geo = new T.PlaneGeometry(0.095, 0.095, 2, 2); geo.rotateX(-Math.PI / 2);
         const m = new T.Mesh(geo, new T.MeshPhysicalMaterial({ color: 0xf2b23c, roughness: 0.5, clearcoat: 0.2, side: T.DoubleSide }));
@@ -487,6 +600,298 @@
     }
   }
 
+  // ------------------------------------------------------------ pan items (the toppings)
+  // Every colour here is read off the same state the physics scores: a bun's cut face follows its
+  // browning index through the crust ramp and then to carbon, bacon runs from raw pink through
+  // rendered gold to black while it shortens and curls by its own shrink and curl numbers, the
+  // egg's white goes from translucent to opaque on its set index, and the onion heap darkens and
+  // shrinks on caramelisation and water lost. Nothing here is on a timer.
+  const ICOL = {
+    crumb: [238, 222, 190], crust: [201, 138, 69],
+    baconLean: [188, 92, 92], baconFat: [242, 228, 214], baconDone: [150, 74, 38], baconCrisp: [104, 48, 22],
+    whiteRaw: [232, 236, 232], whiteSet: [252, 250, 245],
+    yolkRaw: [232, 146, 28], yolkSet: [236, 188, 96],
+    onionRaw: [238, 232, 216], onionGold: [206, 154, 78], onionBrown: [128, 72, 30], onionDark: [58, 34, 16],
+    char: [16, 14, 12],
+  };
+  /**
+   * The renderer writes sRGB out, but vertex and instance colours go into the shader as they are —
+   * i.e. as linear values. A colour picked by eye in 0–255 sRGB has to be de-gamma'd on the way in
+   * or it comes out washed out and pale (bacon the colour of ham).
+   */
+  function lin(c) { return [Math.pow(c[0] / 255, 2.2), Math.pow(c[1] / 255, 2.2), Math.pow(c[2] / 255, 2.2)]; }
+  function setLin(mat, c) { const l = lin(c); mat.color.setRGB(l[0], l[1], l[2]); }
+  /** Colour of a browning face: the crust ramp the meat uses, over whatever the raw colour was. */
+  function itemFaceColour(face, base, charAt) {
+    const b = clamp(face.brown, 0, 7), i = Math.floor(b), t = b - i;
+    let c = mix3(COL.brown[i], COL.brown[Math.min(7, i + 1)], t);
+    c = mix3(base, c, clamp(b / 0.8, 0, 1));
+    return mix3(c, ICOL.char, clamp(face.char / (charAt || 0.6), 0, 1));
+  }
+
+  class ItemView {
+    constructor(vp, it) {
+      this.vp = vp; this.it = it;
+      this.group = new T.Group(); vp.scene.add(this.group);
+      this.group.userData.item = it;
+      this.thickness = { bun: 0.024, bacon: 0.006, egg: 0.013, onions: 0.009 }[it.kind] || 0.006;
+      ({ bun: () => this.buildBun(), bacon: () => this.buildBacon(), egg: () => this.buildEgg(), onions: () => this.buildOnions() }[it.kind] || (() => {}))();
+      this.group.traverse((o) => { o.userData.item = it; }); // so a click anywhere on it selects it
+    }
+    dispose() { this.vp.scene.remove(this.group); disposeTree(this.group); }
+    /**
+     * How tall this topping actually stands on the burger, so whatever goes on top of it rests on
+     * it: every mesh in here is built with its underside at the group's origin. `thickness` is the
+     * slab it occupies lying flat on the metal; this is the same number with the shape the thing
+     * has taken — a set yolk stands ~22 mm proud of the pan while a runny one that has slumped
+     * stands ~12, an onion heap cooks down to about half, and a curled rasher holds the layer above
+     * it up: not by the 15 mm its free ends reach, but by about a third of that, because the egg
+     * and the crown press them back down.
+     */
+    layerH() {
+      const it = this.it;
+      if (it.kind === 'egg') { const set = clamp(it.yolkSet, 0, 1); return 0.0035 + 0.004 * set + 0.021 * (0.42 + 0.28 * set) + 0.0005; } // yolk centre + its own half-height
+      if (it.kind === 'bacon') return this.thickness + 0.006 * Math.abs(clamp(it.curl, -1, 1));
+      if (it.kind === 'onions') return 0.0016 + 0.009 * (0.55 + 0.45 * clamp((it.bot.w + it.top.w) / it.w0, 0, 1));
+      return this.thickness;
+    }
+    /**
+     * In the cutaway the burger is sliced along the plane facing the camera; a topping sitting on
+     * it has to be sliced the same way or it hides the cross-section it is supposed to sit on.
+     * The patty does it by building half a lathe; these are cut with a real clipping plane.
+     *
+     * The plane moves with the camera, so each view keeps its own and the values are written into
+     * it: only the on/off transitions reach setClip, which bumps every material's version and makes
+     * three re-initialise its program on the next draw.
+     */
+    setClipAt(nx, nz, px, pz) {
+      const pl = this.clipPlane || (this.clipPlane = new T.Plane(new T.Vector3(0, 1, 0), 0));
+      pl.normal.set(nx, 0, nz); pl.constant = -(nx * px + nz * pz);
+      if (this.clip !== pl) this.setClip(pl);
+    }
+    setClip(plane) {
+      if (plane === this.clip) return; this.clip = plane;
+      this.group.traverse((o) => { if (o.isMesh && o.material) { o.material.clippingPlanes = plane ? [plane] : null; o.material.clipShadows = !!plane; o.material.needsUpdate = true; } });
+    }
+    // ---- bun half: a domed crown over a flat cut face, and the cut face is the one that toasts
+    buildBun() {
+      const R = this.it.D / 2;
+      const prof = this.it.half === 'top'
+        ? [{ r: 0, y: 0, v: 0 }, { r: R * 0.97, y: 0, v: 0.15 }, { r: R, y: 0.006, v: 0.3 }, { r: R * 0.93, y: 0.013, v: 0.5 }, { r: R * 0.72, y: 0.02, v: 0.7 }, { r: R * 0.4, y: 0.024, v: 0.85 }, { r: 0, y: 0.025, v: 1 }]
+        : [{ r: 0, y: 0, v: 0 }, { r: R * 0.92, y: 0, v: 0.2 }, { r: R, y: 0.007, v: 0.4 }, { r: R * 0.98, y: 0.017, v: 0.6 }, { r: R * 0.85, y: 0.022, v: 0.8 }, { r: 0, y: 0.022, v: 1 }];
+      this.crustMat = new T.MeshStandardMaterial({ color: 0xc98a45, roughness: 0.78 });
+      const dome = new T.Mesh(buildLathe(prof, 48, Math.PI * 2), this.crustMat); dome.castShadow = true; dome.receiveShadow = true;
+      this.group.add(dome);
+      this.faceMat = new T.MeshStandardMaterial({ color: 0xeedebe, roughness: 0.85, side: T.DoubleSide });
+      const face = new T.Mesh(new T.CircleGeometry(R * 0.985, 40), this.faceMat);
+      face.rotation.x = Math.PI / 2; face.position.y = 0.0004; // the cut plane, facing down
+      this.group.add(face); this.faceMesh = face;
+      if (this.it.half === 'top') {
+        const seedGeo = new T.SphereGeometry(1, 6, 5), seedMat = new T.MeshStandardMaterial({ color: 0xf6ead2, roughness: 0.6 });
+        let sd = 13 + this.it.id; const rnd = () => { sd = (sd * 1103515245 + 12345) & 0x7fffffff; return sd / 0x7fffffff; };
+        for (let i = 0; i < 40; i++) {
+          const a = rnd() * Math.PI * 2, rr = Math.sqrt(rnd()) * R * 0.85;
+          const sm = new T.Mesh(seedGeo, seedMat);
+          sm.position.set(Math.cos(a) * rr, 0.024 * (1 - (rr / R) ** 2) + 0.0005, Math.sin(a) * rr);
+          sm.scale.set(0.0016, 0.0009, 0.0011); sm.rotation.y = rnd() * 3; this.group.add(sm);
+        }
+      }
+    }
+    // ---- a rasher: a ribbon that shortens and curls, striped lean and fat along its length
+    buildBacon() {
+      const NL = 20, NW = 4;
+      const pos = new Float32Array(NL * NW * 3), col = new Float32Array(NL * NW * 3), nor = new Float32Array(NL * NW * 3);
+      const idx = [];
+      for (let i = 0; i < NL - 1; i++) for (let j = 0; j < NW - 1; j++) { const a = i * NW + j; idx.push(a, a + NW, a + 1, a + 1, a + NW, a + NW + 1); }
+      const g = new T.BufferGeometry();
+      g.setAttribute('position', new T.BufferAttribute(pos, 3));
+      g.setAttribute('color', new T.BufferAttribute(col, 3));
+      g.setAttribute('normal', new T.BufferAttribute(nor, 3));
+      g.setIndex(idx);
+      this.baconGeo = g; this.NL = NL; this.NW = NW;
+      const m = new T.Mesh(g, new T.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.45, clearcoat: 0.5, clearcoatRoughness: 0.3, side: T.DoubleSide }));
+      m.castShadow = true; m.frustumCulled = false; // its vertices move every frame; the bounding sphere would be a stale point at the origin
+      this.baconMesh = m; this.group.add(m);
+    }
+    // ---- a fried egg: a lumpy sheet of white with a lace rim and a yolk dome
+    buildEgg() {
+      const R = this.it.D / 2, N = 48;
+      const shape = [];
+      let sd = 5 + this.it.id; const rnd = () => { sd = (sd * 1103515245 + 12345) & 0x7fffffff; return sd / 0x7fffffff; };
+      // the white never runs out in a circle: a few low-frequency lobes where it ran, not a saw edge
+      const p1 = rnd() * 6.3, p2 = rnd() * 6.3;
+      for (let i = 0; i < N; i++) { const a = (i / N) * Math.PI * 2; shape.push(0.90 + 0.07 * Math.sin(3 * a + p1) + 0.05 * Math.sin(5 * a + p2) + 0.02 * rnd()); }
+      this.eggShape = shape;
+      const pos = new Float32Array((N + 1) * 2 * 3), idx = [];
+      for (let i = 0; i < N; i++) { const a = 1 + i * 2, b = a + 1, c = a + 2, d = a + 3; idx.push(0, a, c, a, b, d, a, d, c); }
+      const g = new T.BufferGeometry(); g.setAttribute('position', new T.BufferAttribute(pos, 3)); g.setIndex(idx);
+      this.whiteGeo = g; this.eggN = N; this.eggR = R;
+      this.whiteMat = new T.MeshPhysicalMaterial({ color: 0xf6f6f2, roughness: 0.35, clearcoat: 0.6, transparent: true, opacity: 0.75, side: T.DoubleSide });
+      const w = new T.Mesh(g, this.whiteMat); w.castShadow = true; w.frustumCulled = false; // the white spreads as it sets, so its bounds move
+      this.whiteMesh = w; this.group.add(w);
+      // the lace is the last few millimetres of the white, so it follows exactly the same wobbly
+      // outline: a ribbon laid on the rim, not a ring drawn around it
+      this.laceMat = new T.MeshStandardMaterial({ color: 0xd9a066, roughness: 0.5, side: T.DoubleSide });
+      const lpos = new Float32Array(N * 2 * 3), lidx = [];
+      for (let i = 0; i < N; i++) {
+        const a = (i / N) * Math.PI * 2, w = shape[i], k = i * 6;
+        lpos[k] = Math.cos(a) * R * w * 0.80; lpos[k + 1] = 0.0011; lpos[k + 2] = Math.sin(a) * R * w * 0.80;
+        lpos[k + 3] = Math.cos(a) * R * w * 1.004; lpos[k + 4] = 0.0009; lpos[k + 5] = Math.sin(a) * R * w * 1.004;
+        const j = ((i + 1) % N) * 2, v = i * 2;
+        lidx.push(v, v + 1, j, j, v + 1, j + 1);
+      }
+      const lg = new T.BufferGeometry(); lg.setAttribute('position', new T.BufferAttribute(lpos, 3)); lg.setIndex(lidx); lg.computeVertexNormals();
+      const lace = new T.Mesh(lg, this.laceMat);
+      this.laceMesh = lace; this.group.add(lace);
+      this.yolkMat = new T.MeshPhysicalMaterial({ color: 0xe8921c, roughness: 0.25, clearcoat: 0.8, clearcoatRoughness: 0.15 });
+      const y = new T.Mesh(new T.SphereGeometry(0.021, 24, 16), this.yolkMat);
+      y.scale.set(1, 0.55, 1); y.castShadow = true; this.yolkMesh = y; this.group.add(y);
+    }
+    // ---- sliced onion: a heap of curved slivers that shrink, slump and darken. Each one is a
+    // ribbon cut from a ring — which is what a slice of onion is — lying flat in the pile.
+    buildOnions() {
+      const N = 110, NA = 9;
+      const pos = new Float32Array(NA * 2 * 3), idx = [];
+      for (let i = 0; i < NA; i++) {
+        const a = (i / (NA - 1) - 0.5) * 2.3, c = Math.cos(a), s = Math.sin(a);
+        const k = i * 6, sag = 0.10 * (1 - ((i / (NA - 1) - 0.5) * 2) ** 2); // the sliver lifts a little in the middle
+        pos[k] = c * 0.72; pos[k + 1] = sag * 0.5; pos[k + 2] = s * 0.72;
+        pos[k + 3] = c; pos[k + 4] = sag; pos[k + 5] = s;
+        if (i < NA - 1) { const v = i * 2; idx.push(v, v + 2, v + 1, v + 1, v + 2, v + 3); }
+      }
+      const geo = new T.BufferGeometry();
+      geo.setAttribute('position', new T.BufferAttribute(pos, 3)); geo.setIndex(idx); geo.computeVertexNormals();
+      this.onionMat = new T.MeshPhysicalMaterial({ color: 0xece5d4, roughness: 0.4, clearcoat: 0.5, side: T.DoubleSide, transparent: true, opacity: 0.94 });
+      const inst = new T.InstancedMesh(geo, this.onionMat, N);
+      inst.castShadow = true; inst.receiveShadow = true;
+      inst.instanceColor = new T.InstancedBufferAttribute(new Float32Array(N * 3).fill(1), 3);
+      const dm = new T.Object3D(); const R = this.it.D / 2;
+      let sd = 21 + this.it.id; const rnd = () => { sd = (sd * 1103515245 + 12345) & 0x7fffffff; return sd / 0x7fffffff; };
+      this.onionSpec = [];
+      for (let i = 0; i < N; i++) {
+        const a = rnd() * Math.PI * 2, rr = Math.sqrt(rnd()) * R * 0.8;
+        const lvl = rnd(); // how high in the heap: the low ones are the layer against the metal
+        this.onionSpec.push({ a, rr, lvl, len: 0.008 + rnd() * 0.016, rot: rnd() * 6.3, tilt: (rnd() - 0.5) * 0.5, low: lvl < 0.4 });
+      }
+      this.onionInst = inst; this.onionDummy = dm; this.group.add(inst);
+    }
+    /** Per-frame: where it is, and what it looks like now. */
+    update(state, dt, where, pos, opts) {
+      const it = this.it, g = this.group;
+      g.position.set(pos.x, pos.y, pos.z);
+      g.visible = !(it.kind === 'bun' && where === 'cut'); // a served bun is drawn as part of the burger
+      if (!g.visible) return;
+      ({ bun: () => this.paintBun(where), bacon: () => this.paintBacon(where), egg: () => this.paintEgg(where), onions: () => this.paintOnions(where) }[it.kind] || (() => {}))();
+    }
+    paintBun(where) {
+      const it = this.it, g = this.group;
+      // cut side down while it is toasting; turned over, the crown is on the metal
+      const cutDown = it.faceIsCut && where === 'pan';
+      g.rotation.x = cutDown ? 0 : Math.PI;
+      g.position.y += cutDown ? 0 : this.thickness;
+      const f = it.cutFace;
+      setLin(this.faceMat, itemFaceColour(f, ICOL.crumb, 0.5));
+      this.faceMat.roughness = clamp(0.85 - 0.25 * f.crisp, 0.4, 1) - 0.2 * clamp(it.fatSoaked / 0.003, 0, 1);
+      // the crown scorches too if it is put face up on the metal, but it never browns: no sugars left
+      const other = it.cutFace === it.faceDown ? it.faceUp : it.faceDown;
+      setLin(this.crustMat, mix3(ICOL.crust, ICOL.char, clamp(other.char / 0.5, 0, 1)));
+    }
+    paintBacon(where) {
+      const it = this.it, NL = this.NL, NW = this.NW;
+      const pos = this.baconGeo.attributes.position.array, col = this.baconGeo.attributes.color.array;
+      const L = 0.20 * (1 - it.shrink), W = 0.030 * (1 - 0.35 * it.shrink);
+      const curl = clamp(it.curl, -1, 1);
+      const fatLeft = clamp((it.fs + it.fl + it.fr) / it.fat0, 0, 1);
+      const brown = Math.max(it.faceDown.brown, it.faceUp.brown); // both sides colour a rasher
+      const lean = mix3(mix3(ICOL.baconLean, ICOL.baconDone, clamp(brown / 2.5, 0, 1)), ICOL.baconCrisp, clamp(it.crisp * 0.8, 0, 1));
+      const fat = mix3(ICOL.baconFat, ICOL.baconDone, clamp((1 - fatLeft) * 0.75 + brown / 8, 0, 1));
+      const charF = clamp((it.faceDown.char + it.faceUp.char) / 0.7, 0, 1);
+      // a 20 cm rasher does not lie straight in a 30 cm pan: it goes in as a horseshoe, which is why
+      // its footprint is an 11 cm disc and not a 20 cm line. The arc keeps its angle and tightens
+      // its radius as the strip shortens.
+      const arcTot = 2.6, arcR = L / arcTot;
+      for (let i = 0; i < NL; i++) {
+        const u = i / (NL - 1);
+        const th = (u - 0.5) * arcTot, ct = Math.cos(th), stq = Math.sin(th);
+        // it curls up at the ends, away from whichever face has dried and contracted more, and
+        // ripples along its length where the fat bands have pulled
+        const lift = curl * (0.011 * (2 * u - 1) ** 2 + 0.004 * Math.sin(u * 9 + it.id));
+        const wave = 0.0015 * Math.sin(u * 6.3 + it.id * 1.7) * (0.3 + 0.7 * Math.abs(curl));
+        for (let j = 0; j < NW; j++) {
+          const v = j / (NW - 1), k = (i * NW + j) * 3;
+          const stripe = 0.5 + 0.5 * Math.sin(v * 7.5 + u * 2.2 + it.id); // lean and fat bands run the length of a rasher
+          const rad = arcR + (v - 0.5) * W;
+          pos[k] = stq * rad; pos[k + 1] = Math.abs(lift) * (0.5 + 0.5 * (1 - Math.abs(v - 0.5) * 2)) + wave; pos[k + 2] = ct * rad;
+          const base = mix3(fat, lean, stripe);
+          const c = lin(mix3(base, ICOL.char, charF * (0.5 + 0.5 * stripe)));
+          col[k] = c[0]; col[k + 1] = c[1]; col[k + 2] = c[2];
+        }
+      }
+      this.baconGeo.attributes.position.needsUpdate = true;
+      this.baconGeo.attributes.color.needsUpdate = true;
+      this.baconGeo.computeVertexNormals();
+      this.baconMesh.material.roughness = clamp(0.25 + 0.5 * it.crisp - 0.2 * fatLeft, 0.15, 0.9);
+      this.baconMesh.material.clearcoat = clamp(0.8 * fatLeft + 0.3 * (1 - it.crisp), 0, 1); // wet with its own fat until it is crisp
+      this.group.rotation.y = 0.5 + 0.2 * it.id;
+    }
+    paintEgg(where) {
+      const it = this.it, N = this.eggN, R = this.eggR;
+      const pos = this.whiteGeo.attributes.position.array;
+      const spread = it.spread, set = it.setTop;
+      for (let i = 0; i < N; i++) {
+        const a = (i / N) * Math.PI * 2, w = this.eggShape[i];
+        const rr = R * w * (0.62 + 0.38 * spread);
+        const inner = (1 + i * 2) * 3, outer = inner + 3;
+        pos[inner] = Math.cos(a) * rr * 0.55; pos[inner + 1] = 0.0028 * (1 - 0.3 * set); pos[inner + 2] = Math.sin(a) * rr * 0.55;
+        pos[outer] = Math.cos(a) * rr; pos[outer + 1] = 0.0008; pos[outer + 2] = Math.sin(a) * rr;
+      }
+      pos[0] = 0; pos[1] = 0.0032 * (1 - 0.3 * set); pos[2] = 0;
+      this.whiteGeo.attributes.position.needsUpdate = true;
+      this.whiteGeo.computeVertexNormals();
+      const wc = mix3(ICOL.whiteRaw, ICOL.whiteSet, set);
+      const under = itemFaceColour(it.faceDown, wc, 0.5);
+      setLin(this.whiteMat, mix3(wc, under, 0.35)); // some of the browned underside shows through at the edges
+      this.whiteMat.opacity = lerp(0.6, 1, clamp(set * 1.4, 0, 1)); // raw white is translucent, set white is not
+      this.whiteMat.roughness = clamp(0.5 - 0.25 * (1 - set), 0.1, 0.8);
+      setLin(this.laceMat, itemFaceColour(it.lace, mix3(ICOL.whiteSet, ICOL.onionGold, 0.2), 0.5));
+      this.laceMesh.visible = it.lace.brown > 0.05;
+      this.laceMesh.scale.setScalar(0.62 + 0.38 * spread);
+      setLin(this.yolkMat, mix3(ICOL.yolkRaw, ICOL.yolkSet, clamp(it.yolkSet, 0, 1)));
+      this.yolkMat.roughness = lerp(0.18, 0.75, clamp(it.yolkSet, 0, 1)); // a raw yolk is wet and glossy, a set one is matte
+      this.yolkMat.clearcoat = 0.9 * (1 - clamp(it.yolkSet, 0, 1));
+      // a runny yolk sits proud; as it sets it stiffens and stops slumping
+      this.yolkMesh.scale.set(1 + 0.08 * (1 - it.yolkSet), 0.42 + 0.28 * it.yolkSet, 1 + 0.08 * (1 - it.yolkSet));
+      this.yolkMesh.position.y = 0.0035 + 0.004 * it.yolkSet;
+      this.yolkMesh.visible = true;
+    }
+    paintOnions(where) {
+      const it = this.it, inst = this.onionInst, dm = this.onionDummy;
+      const wet = clamp((it.bot.w + it.top.w) / it.w0, 0, 1);
+      const shrink = 0.55 + 0.45 * wet;           // they cook down to about half
+      const colTop = mix3(mix3(ICOL.onionRaw, ICOL.onionGold, clamp(it.carm / 0.9, 0, 1)), ICOL.onionBrown, clamp((it.carm - 0.9) / 1.3, 0, 1));
+      const topC = mix3(colTop, ICOL.char, clamp(it.char / 0.35, 0, 1));
+      const colBot = mix3(mix3(ICOL.onionRaw, ICOL.onionGold, clamp(it.carmBot / 0.9, 0, 1)), ICOL.onionDark, clamp((it.carmBot - 0.9) / 2, 0, 1));
+      const botC = mix3(colBot, ICOL.char, clamp(it.charBot / 0.6, 0, 1));
+      const c = new T.Color();
+      for (let i = 0; i < this.onionSpec.length; i++) {
+        const o = this.onionSpec[i];
+        const rr = o.rr * (0.72 + 0.28 * wet);
+        // as they cook down the heap slumps: the slivers flatten out and lie closer together
+        dm.position.set(Math.cos(o.a) * rr, 0.0006 + o.lvl * 0.009 * shrink, Math.sin(o.a) * rr);
+        dm.rotation.set(o.tilt * (0.3 + 0.7 * wet), o.rot, o.tilt * 0.4 * wet);
+        const len = o.len * shrink;
+        dm.scale.set(len, len * (0.35 + 0.35 * wet), len);
+        dm.updateMatrix(); inst.setMatrixAt(i, dm.matrix);
+        const col = lin(o.low ? botC : topC); // the pieces that were against the metal carry its colour
+        inst.setColorAt(i, c.setRGB(col[0], col[1], col[2]));
+      }
+      inst.instanceMatrix.needsUpdate = true; if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
+      this.onionMat.roughness = clamp(0.25 + 0.5 * (1 - wet), 0.2, 0.85);
+      this.onionMat.clearcoat = 0.6 * wet;
+      this.onionMat.opacity = lerp(0.98, 0.88, wet); // raw slices are glassy; cooked ones are not
+    }
+  }
+
   // ------------------------------------------------------------ the viewport
   class Viewport {
     constructor(canvas) {
@@ -494,16 +899,18 @@
       this.renderer = new T.WebGLRenderer({ canvas, antialias: true, alpha: false });
       this.renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
       this.renderer.shadowMap.enabled = true; this.renderer.shadowMap.type = T.PCFSoftShadowMap;
+      this.renderer.localClippingEnabled = true; // the toppings on a served burger are cut with the same plane the patty is
       this.renderer.outputEncoding = T.sRGBEncoding; this.renderer.toneMapping = T.ACESFilmicToneMapping; this.renderer.toneMappingExposure = 0.95;
       this.scene = new T.Scene(); this.scene.background = new T.Color(0x1a1714);
       this.scene.fog = new T.Fog(0x1a1714, 1.2, 3.5);
       this.camera = new T.PerspectiveCamera(42, 1, 0.005, 20);
-      this.clock = 0; this.texClock = 0;
+      this.clock = 0; this.texBudget = 0;
       this.mode = 'board'; // 'board' | 'stove'
       this.cutaway = false;
       this._buildLights(); this._buildKitchen(); this._buildStove(); this._buildBoard(); this._buildParticles(); this._buildProbe();
       this._buildTextures();
-      this.views = new Map(); this.selected = null; this.previewPatty = null;
+      this.views = new Map(); this.itemViews = new Map(); this.selected = null; this.selectedItem = null; this.previewPatty = null;
+      this.peeks = new Map(); // patty → when the cut the cook made in it closes again (wall clock, ms)
       this.controls = new Orbit(this);
       this.resize();
       window.addEventListener('resize', () => this.resize());
@@ -540,6 +947,7 @@
       // pan
       this.panGroup = new T.Group(); g.add(this.panGroup);
       this.panMat = new T.MeshStandardMaterial({ color: 0x2b2725, roughness: 0.55, metalness: 0.7 });
+      this.sharedRes = new Set([this.panMat]); // materials the viewport keeps across a pan or stove swap
       this.oilMat = new T.MeshPhysicalMaterial({ color: 0xb07a20, transparent: true, opacity: 0.3, roughness: 0.04, metalness: 0.15, clearcoat: 1, clearcoatRoughness: 0.03, depthWrite: false });
       this.oil = new T.Mesh(new T.CircleGeometry(1, 64), this.oilMat); this.oil.rotation.x = -Math.PI / 2; this.oil.position.y = 0.0007; this.oil.receiveShadow = true; this.panGroup.add(this.oil);
       // residue on the pan floor: a canvas texture of fond blotches, burnt specks, welded cheese
@@ -548,7 +956,9 @@
       this.dirtCv = document.createElement('canvas'); this.dirtCv.width = this.dirtCv.height = 512;
       this.dirtTex = new T.CanvasTexture(this.dirtCv);
       this.fondMat = new T.MeshStandardMaterial({ map: this.dirtTex, transparent: true, opacity: 1, roughness: 0.85, depthWrite: false });
-      this.fond = new T.Mesh(new T.CircleGeometry(1, 64), this.fondMat); this.fond.rotation.x = -Math.PI / 2; this.fond.position.y = 0.0004; this.panGroup.add(this.fond);
+      // it hangs off the stove group, not the pan: a kettle has no pan, and the residue baked onto
+      // its bars is exactly what the wire brush is for
+      this.fond = new T.Mesh(new T.CircleGeometry(1, 64), this.fondMat); this.fond.rotation.x = -Math.PI / 2; this.fond.position.y = 0.0004; g.add(this.fond);
       let seed = 12345; const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
       this.dirtSpots = []; for (let i = 0; i < 1400; i++) { const a = rnd() * Math.PI * 2, rr = Math.sqrt(rnd()); this.dirtSpots.push({ x: 256 + 236 * rr * Math.cos(a), y: 256 + 236 * rr * Math.sin(a), s: 0.5 + rnd(), e: 0.6 + rnd() * 0.8, rot: rnd() * 3 }); }
       this.dirtSig = ''; this.dirtClock = 0;
@@ -562,6 +972,14 @@
       for (let i = 0; i < 30; i++) { const f = new T.Mesh(flareGeo, flareMat.clone()); f.userData.a = (i / 30) * Math.PI * 2 + (Math.random() - 0.5) * 0.1; f.visible = false; g.add(f); this.flareFlames.push(f); }
       const plate = new T.Mesh(new T.CylinderGeometry(0.11, 0.09, 0.008, 48), new T.MeshStandardMaterial({ color: 0xe9e4da, roughness: 0.35 }));
       plate.position.set(0.42, 0.004, 0.12); plate.receiveShadow = true; plate.castShadow = true; g.add(plate); this.plate = plate;
+      // where a dragged patty will land: a ring on the metal, green if it fits, red if it does not
+      this.ghostMat = new T.MeshBasicMaterial({ color: 0x7fe08a, transparent: true, opacity: 0.65, depthWrite: false, side: T.DoubleSide });
+      this.ghost = new T.Mesh(new T.RingGeometry(1.0, 1.2, 64), this.ghostMat); // just outside the footprint, so the patty being dragged never hides it
+      this.ghost.rotation.x = -Math.PI / 2; this.ghost.visible = false; g.add(this.ghost);
+      // the spatula: a thin offset blade on a handle, shown while a scrape is actually happening
+      this.spatula = this._buildSpatula(); this.spatula.visible = false; g.add(this.spatula);
+      // and a finger, for the press test
+      this.finger = this._buildFinger(); this.finger.visible = false; g.add(this.finger);
       this.stainGroup = new T.Group(); g.add(this.stainGroup); this.stains = [];
       this.stainMat = new T.MeshStandardMaterial({ color: 0x6b4a1e, transparent: true, opacity: 0.6, roughness: 0.3, depthWrite: false });
       this.stainGeo = new T.CircleGeometry(1, 10);
@@ -573,7 +991,7 @@
      *  flush on the glass. */
     setStove(id) {
       this.stoveType = id;
-      if (this.burnerGroup) this.stove.remove(this.burnerGroup);
+      if (this.burnerGroup) { this.stove.remove(this.burnerGroup); disposeTree(this.burnerGroup); } // a swap is a whole new burner: give the old one's meshes back
       const g = new T.Group(); this.burnerGroup = g; this.stove.add(g);
       this.flames = []; this.coilMat = null; this.indLed = null;
       if (id === 'electric') {
@@ -618,18 +1036,41 @@
         for (let i = 0; i < 3; i++) { const a = Math.PI / 2 + (i * 2 * Math.PI) / 3; const leg = new T.Mesh(new T.CylinderGeometry(0.008, 0.008, bowlBottom + 0.09, 10), steel); leg.position.set(Math.cos(a) * 0.19, (bowlBottom + 0.09) / 2 - 0.0, Math.sin(a) * 0.19); leg.rotation.z = -Math.cos(a) * 0.35; leg.rotation.x = Math.sin(a) * 0.35; leg.castShadow = true; g.add(leg); }
         // ash pan and the coal bed: lumps of charcoal, glowing from inside as the bed heats
         const bedY = bowlBottom + 0.075;
-        const ash = new T.Mesh(new T.CircleGeometry(0.2, 48), new T.MeshStandardMaterial({ color: 0x4d4944, roughness: 1 })); ash.rotation.x = -Math.PI / 2; ash.position.y = bedY - 0.012; g.add(ash);
+        // the ash that has fallen through the bed: a disc on the bowl floor that rises and goes pale
+        // as it builds. Wood ash is ~250 kg/m³ loose, so a kilo of it over the 0.126 m² floor of a
+        // 57 cm kettle is about 3 cm deep — which is when it starts burying the bottom vent.
+        this.ashMat = new T.MeshStandardMaterial({ color: 0x4d4944, roughness: 1 });
+        const ash = new T.Mesh(new T.CircleGeometry(0.2, 48), this.ashMat); ash.rotation.x = -Math.PI / 2; ash.position.y = bedY - 0.012; g.add(ash);
+        this.ashDisc = ash; this.ashY0 = bedY - 0.012;
         this.coalMat = new T.MeshStandardMaterial({ color: 0x0f0e0d, roughness: 0.95, emissive: new T.Color(0xff3a08), emissiveIntensity: 0 });
         const lumpGeo = new T.DodecahedronGeometry(0.019, 0);
         const lumps = new T.InstancedMesh(lumpGeo, this.coalMat, 160); lumps.castShadow = true; lumps.receiveShadow = true;
         let sd = 99; const rnd = () => { sd = (sd * 1103515245 + 12345) & 0x7fffffff; return sd / 0x7fffffff; };
-        const dm = new T.Object3D();
         const lc = new T.Color();
-        for (let i = 0; i < 160; i++) { const a = rnd() * Math.PI * 2, rr = Math.sqrt(rnd()) * 0.185; const sc = 0.6 + rnd() * 0.9; dm.position.set(Math.cos(a) * rr, bedY + (rnd() - 0.5) * 0.02 + 0.004 * sc, Math.sin(a) * rr); dm.rotation.set(rnd() * 3, rnd() * 3, rnd() * 3); dm.scale.set(sc, sc * (0.6 + rnd() * 0.6), sc); dm.updateMatrix(); lumps.setMatrixAt(i, dm.matrix); const k = 0.35 + rnd() * 0.9; lumps.setColorAt(i, lc.setRGB(k, k * (0.85 + 0.15 * rnd()), k * 0.8)); }
+        this.coalSeeds = [];
+        for (let i = 0; i < 160; i++) {
+          const a = rnd() * Math.PI * 2, rr = Math.sqrt(rnd()) * 0.185, sc = 0.6 + rnd() * 0.9;
+          this.coalSeeds.push({ x: Math.cos(a) * rr, z: Math.sin(a) * rr, jy: (rnd() - 0.5) * 0.02, sc, sy: sc * (0.6 + rnd() * 0.6), rx: rnd() * 3, ry: rnd() * 3, rz: rnd() * 3 });
+          const k = 0.35 + rnd() * 0.9; lumps.setColorAt(i, lc.setRGB(k, k * (0.85 + 0.15 * rnd()), k * 0.8));
+        }
         lumps.instanceColor.needsUpdate = true;
-        g.add(lumps); this.coals = lumps; this.coalY = bedY;
+        g.add(lumps); this.coals = lumps; this.coalY = bedY; this.coalBank = -1;
+        this.setBank(0);
+        // chunks of wood sitting on the coals: split hardwood, so a rough block rather than a lump.
+        // Each one shrinks as it is consumed (side ∝ m^⅓) and goes from bark-brown through charcoal
+        // black, glowing at its edges once it is hot enough to be smouldering.
+        this.woodMats = []; this.woodMeshes = [];
+        for (let i = 0; i < 6; i++) {
+          const m = new T.MeshStandardMaterial({ color: 0x9e7342, roughness: 0.95, emissive: new T.Color(0xff3c08), emissiveIntensity: 0 });
+          const box = new T.Mesh(new T.BoxGeometry(1, 1, 1), m); // unit cube, scaled to the chunk's side
+          const a = (i * 2.4) + 0.7, rr = 0.055 + 0.035 * (i % 3);
+          box.userData.home = { x: Math.cos(a) * rr, z: Math.sin(a) * rr, ry: a * 1.7 };
+          box.castShadow = true; box.visible = false;
+          g.add(box); this.woodMeshes.push(box); this.woodMats.push(m);
+        }
         // the grate: a ring with rods across it
         const Rg = Rk * 0.93, rodR = 0.003, gy = this.PAN_Y - rodR;
+        this.grateBars = { x0: -Rg + 0.012, dx: 0.024, w: 2 * rodR }; // where the rods are, for the residue mask
         const ringG = new T.Mesh(new T.TorusGeometry(Rg, rodR * 1.2, 8, 96), steel); ringG.rotation.x = Math.PI / 2; ringG.position.y = gy; ringG.castShadow = true; g.add(ringG);
         for (let x = -Rg + 0.012; x < Rg; x += 0.024) { const L = 2 * Math.sqrt(Math.max(0, Rg * Rg - x * x)); if (L < 0.02) continue; const rod = new T.Mesh(new T.CylinderGeometry(rodR, rodR, L, 8), steel); rod.rotation.x = Math.PI / 2; rod.position.set(x, gy, 0); rod.castShadow = true; g.add(rod); }
         for (const z of [-0.14, 0.14]) { const brace = new T.Mesh(new T.CylinderGeometry(rodR, rodR, 2 * Math.sqrt(Rg * Rg - z * z), 8), steel); brace.rotation.z = Math.PI / 2; brace.position.set(0, gy - rodR, z); g.add(brace); }
@@ -643,7 +1084,32 @@
         const wood = new T.MeshStandardMaterial({ color: 0x6b4a2a, roughness: 0.7 });
         const handle = new T.Mesh(new T.CylinderGeometry(0.012, 0.012, 0.11, 12), wood); handle.rotation.z = Math.PI / 2; handle.position.y = lidH + 0.035; lid.add(handle);
         for (const x of [-0.045, 0.045]) { const post = new T.Mesh(new T.CylinderGeometry(0.004, 0.004, 0.03, 8), steel); post.position.set(x, lidH + 0.018, 0); lid.add(post); }
-        const vent = new T.Mesh(new T.CylinderGeometry(0.03, 0.03, 0.004, 24), steel); vent.position.set(0.12, lidH * 0.55, 0.05); vent.rotation.z = 0.5; lid.add(vent);
+        // The top vent, on the shoulder of the dome where a kettle's actually is (clear of the
+        // handle, and where you can put a hand near it without reaching over the fire): a collar
+        // with four openings in it and a damper wheel of four steel petals sitting over them. The
+        // wheel turns 45° from shut (petals over the holes) to wide (petals over the metal between
+        // them), which is the throw a kettle damper has, and it is the same 0..1 the physics reads.
+        const holeR = 0.030, tilt = -0.62;                       // ~35° off vertical: the dome's own slope there
+        const vg = new T.Group(); vg.position.set(0.16, 0.081, 0); vg.rotation.z = tilt; lid.add(vg);
+        const collar = new T.Mesh(new T.CylinderGeometry(holeR, holeR + 0.003, 0.012, 24), steel); collar.position.y = -0.002; vg.add(collar);
+        const dark = new T.MeshStandardMaterial({ color: 0x090909, roughness: 1 });
+        const plate = new T.Mesh(new T.CircleGeometry(holeR * 0.96, 24), steel); plate.rotation.x = -Math.PI / 2; plate.position.y = 0.0045; vg.add(plate);
+        for (let i = 0; i < 4; i++) { // four 45° openings, with 45° of metal between them
+          const hole = new T.Mesh(new T.CircleGeometry(holeR * 0.93, 16, (i * Math.PI) / 2 - 0.39, 0.78), dark);
+          hole.rotation.x = -Math.PI / 2; hole.position.y = 0.0052; vg.add(hole);
+        }
+        const wheel = new T.Group(); wheel.position.y = 0.0072; vg.add(wheel);
+        for (let i = 0; i < 4; i++) {
+          // four blades the size of the openings: over them at 0°, over the metal between them at 45°
+          const petal = new T.Mesh(new T.CircleGeometry(holeR * 0.94, 16, (i * Math.PI) / 2 - 0.42, 0.84), steel);
+          petal.rotation.x = -Math.PI / 2; wheel.add(petal);
+        }
+        const tab = new T.Mesh(new T.BoxGeometry(0.018, 0.004, 0.007), steel); tab.position.set(holeR * 0.85, 0.002, 0); wheel.add(tab); // the tab you push it round with
+        const knobV = new T.Mesh(new T.CylinderGeometry(0.0045, 0.0045, 0.009, 10), steel); knobV.position.y = 0.004; wheel.add(knobV);
+        this.ventWheel = wheel;
+        // where the smoke comes out, in world coordinates: the mouth of the vent, a little way out
+        // along its own axis
+        this.ventPos = { x: 0.16 + 0.020 * -Math.sin(tilt), y: bowlTop + 0.081 + 0.020 * Math.cos(tilt), z: 0 };
         g.add(lid); this.kettleLid = lid;
         this.flameBaseY = bedY + 0.01; this.flameMaxLen = this.PAN_Y - this.flameBaseY + 0.05;
       } else {
@@ -676,17 +1142,18 @@
         }
       }
       this.flameLight.position.y = id === 'charcoal' ? this.coalY + 0.03 : this.PAN_Y - 0.01;
-      if (id !== 'charcoal') { this.coals = null; this.coalMat = null; this.kettleLid = null; }
+      if (id !== 'charcoal') { this.coals = null; this.coalMat = null; this.kettleLid = null; this.coalSeeds = null; this.woodMeshes = null; this.ashDisc = null; this.ventWheel = null; this.ventPos = null; this.grateBars = null; }
       if (this.panSpec) this.setPan(this.panSpec.id);
       if (this.panGroup) this.panGroup.visible = id !== 'charcoal';
       if (id === 'charcoal') { this.panFloorY = this.PAN_Y; this.panR = 0.26; }
+      if (this.fond) this.fond.position.y = this.panFloorY + 0.0004; // the pan floor, or the crowns of the bars
       if (this.controls && this.mode === 'stove') this.controls.reset('stove'); // the grate sits far higher than a pan
     }
     setPan(id) {
       const pan = P.PANS[id] || P.PANS.castiron; this.panSpec = pan;
       if (this.stoveType === 'charcoal') { this.panGroup.visible = false; this.panFloorY = this.PAN_Y; this.panR = 0.26; return; }
       this.panGroup.visible = true;
-      if (this.panMesh) this.panGroup.remove(this.panMesh);
+      if (this.panMesh) { this.panGroup.remove(this.panMesh); disposeTree(this.panMesh, this.sharedRes); } // panMat is shared with the next pan; its geometry is not
       const R = pan.diam / 2, wall = 0.045;
       const prof = [{ r: 0, y: 0, v: 0, hard: false }, { r: R * 0.97, y: 0, v: 0.3, hard: true }, { r: R * 1.02, y: wall * 0.5, v: 0.6, hard: false }, { r: R * 1.06, y: wall, v: 0.8, hard: true }, { r: R * 1.06, y: wall - 0.004, v: 0.85, hard: true }, { r: R * 1.0, y: wall - 0.004, v: 0.9, hard: true }, { r: R * 0.95, y: 0.004, v: 0.95, hard: true }, { r: 0, y: 0.004, v: 1, hard: false }];
       const geo = buildLathe(prof, 96, Math.PI * 2);
@@ -706,7 +1173,7 @@
       class Loop extends T.Curve { getPoint(t, target) { const a = -Math.PI / 2 + t * Math.PI; return (target || new T.Vector3()).set(rimR - 0.004 + 0.028 * Math.cos(a), hy, 0.03 * Math.sin(a)); } }
       const loop = new T.Mesh(new T.TubeGeometry(new Loop(), 24, 0.006, 8, false), this.panMat); loop.castShadow = true; m.add(loop);
       // lid: glass dome with a steel rim and knob, shown when the lid is on; fogs with steam
-      if (this.lid) this.panGroup.remove(this.lid);
+      if (this.lid) { this.panGroup.remove(this.lid); disposeTree(this.lid, this.sharedRes); }
       const lid = new T.Group(); this.lid = lid; lid.position.y = this.PAN_Y + wall; lid.visible = false;
       this.lidGlass = new T.MeshPhysicalMaterial({ color: 0xd6e4ec, transparent: true, opacity: 0.2, roughness: 0.04, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.03, side: T.DoubleSide, depthWrite: false });
       const domeH = 0.075, nd = 14, lp = [];
@@ -761,6 +1228,23 @@
       this.beads = new Droplets(this.scene, 200, 0.0017, { color: 0xc8626a, roughness: 0.05, clearcoat: 1, transparent: true, opacity: 0.85 });
       this.drips = new Droplets(this.scene, 120, 0.0013, { color: 0xf0c060, roughness: 0.05, clearcoat: 1, transparent: true, opacity: 0.9 });
     }
+    /**
+     * A blob mask filled with one flat colour at one size, built once and kept. The masks never
+     * change and the colours are constants, so every repaint after the first is a plain blit.
+     */
+    tinted(mask, colour, w, h) {
+      const cache = this._tinted || (this._tinted = new Map());
+      const key = `${mask.__id || (mask.__id = ++tintedId)}|${colour[0]},${colour[1]},${colour[2]}|${w}x${h}`;
+      let cv = cache.get(key);
+      if (!cv) {
+        cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+        const cx = cv.getContext('2d');
+        cx.drawImage(mask, 0, 0, w, h);
+        cx.globalCompositeOperation = 'source-in'; cx.fillStyle = rgb(colour); cx.fillRect(0, 0, w, h);
+        cache.set(key, cv);
+      }
+      return cv;
+    }
     _buildTextures() {
       this.noise = makeNoise(512, 5, true);
       this.noiseFine = makeNoise(512, 6, false);
@@ -775,8 +1259,106 @@
     /** Keep one PattyView per patty in `list`. */
     syncViews(list) {
       const keep = new Set(list);
-      for (const [p, v] of this.views) if (!keep.has(p)) { v.dispose(); this.views.delete(p); }
+      for (const [p, v] of this.views) if (!keep.has(p)) { v.dispose(); this.views.delete(p); this.peeks.delete(p); }
       for (const p of list) if (!this.views.has(p)) this.views.set(p, new PattyView(this, p));
+    }
+    /** A fingertip and the joint behind it, for the press test. It comes in from the cook's side. */
+    _buildFinger() {
+      const g = new T.Group();
+      const skin = new T.MeshStandardMaterial({ roughness: 0.9 }); setLin(skin, [176, 118, 92]); // sRGB skin, converted like every other colour in here
+      const tip = new T.Mesh(new T.SphereGeometry(0.0092, 14, 10), skin); tip.scale.set(1, 0.8, 1); tip.castShadow = true; g.add(tip);
+      const seg = new T.Mesh(new T.CylinderGeometry(0.0086, 0.0094, 0.038, 12), skin);
+      seg.rotation.z = Math.PI / 2 - 0.55; seg.position.set(0.016, 0.011, 0); seg.castShadow = true; g.add(seg); // angled up and back toward the hand
+      const knuckle = new T.Mesh(new T.SphereGeometry(0.0098, 12, 9), skin); knuckle.position.set(0.032, 0.021, 0); knuckle.castShadow = true; g.add(knuckle);
+      const nailMat = new T.MeshStandardMaterial({ roughness: 0.35 }); setLin(nailMat, [217, 182, 164]);
+      const nail = new T.Mesh(new T.SphereGeometry(0.0062, 10, 8), nailMat);
+      nail.position.set(0.003, 0.0062, 0); nail.scale.set(0.9, 0.45, 0.75); g.add(nail);
+      return g;
+    }
+    /** A 10 cm offset spatula: a thin steel blade, a cranked neck and a wooden handle. */
+    _buildSpatula() {
+      const g = new T.Group();
+      const steel = new T.MeshStandardMaterial({ color: 0xb9bcc0, metalness: 0.9, roughness: 0.3 });
+      const wood = new T.MeshStandardMaterial({ color: 0x6b4a2a, roughness: 0.8 });
+      const blade = new T.Mesh(new T.BoxGeometry(0.075, 0.0012, 0.095), steel); // 7.5 × 9.5 cm, 1.2 mm
+      blade.position.set(0, 0.0006, -0.02); blade.castShadow = true; g.add(blade);
+      const bevel = new T.Mesh(new T.BoxGeometry(0.075, 0.0006, 0.012), steel); bevel.position.set(0, 0.0003, -0.0715); g.add(bevel); // the thin leading edge
+      const neck = new T.Mesh(new T.BoxGeometry(0.016, 0.0025, 0.05), steel); neck.position.set(0, 0.008, 0.045); neck.rotation.x = -0.5; g.add(neck);
+      const handle = new T.Mesh(new T.CylinderGeometry(0.008, 0.009, 0.1, 12), wood);
+      handle.rotation.x = Math.PI / 2 - 0.15; handle.position.set(0, 0.022, 0.115); handle.castShadow = true; g.add(handle);
+      return g;
+    }
+    /**
+     * Rake the coal bed. The lumps are the same lumps — banking moves charcoal, it does not make or
+     * burn any — so each one keeps its identity and is pushed toward the hot half, with the ones
+     * that came from the far side ending up on top of the pile: twice as deep over half the bed.
+     */
+    setBank(bank) {
+      if (!this.coals || !this.coalSeeds) return;
+      const b = clamp(bank || 0, 0, 1);
+      if (Math.abs(b - this.coalBank) < 0.01) return;
+      this.coalBank = b;
+      const dm = new T.Object3D(), R = 0.185;
+      for (let i = 0; i < this.coalSeeds.length; i++) {
+        const c = this.coalSeeds[i];
+        const x = lerp(c.x, c.x * 0.5 + R * 0.42, b);      // the whole bed squeezed into the +x half
+        const z = lerp(c.z, c.z * 0.85, b);
+        const layer = smoothstep(0.15, -0.15, c.x / R);     // lumps raked in from the far side ride on top
+        const y = this.coalY + c.jy * (1 - 0.4 * b) + 0.004 * c.sc + b * layer * 0.024;
+        dm.position.set(x, y, z); dm.rotation.set(c.rx, c.ry + b * 0.6, c.rz); dm.scale.set(c.sc, c.sy, c.sc);
+        dm.updateMatrix(); this.coals.setMatrixAt(i, dm.matrix);
+      }
+      this.coals.instanceMatrix.needsUpdate = true;
+    }
+    // ---- dragging things around the pan
+    /** Where a screen point lands on the pan floor (the plane the meat sits on). */
+    floorPoint(clientX, clientY) {
+      const rect = this.canvas.getBoundingClientRect();
+      const ndc = new T.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+      const ray = new T.Raycaster(); ray.setFromCamera(ndc, this.camera);
+      const plane = new T.Plane(new T.Vector3(0, 1, 0), -this.panFloorY);
+      const hit = new T.Vector3();
+      return ray.ray.intersectPlane(plane, hit) ? hit : null;
+    }
+    /**
+     * Start dragging whatever is under the cursor. Returns false if there is nothing draggable
+     * there, which is how the orbit control knows this was a look-around and not a move.
+     */
+    startDrag(clientX, clientY) {
+      if (this.mode !== 'stove' || !this.canDrag) return false;
+      const o = this.pickPatty(clientX, clientY);
+      if (!o || !this.canDrag(o)) return false;
+      const pt = this.floorPoint(clientX, clientY); if (!pt) return false;
+      this.dragging = { o, gx: pt.x - o.pos.x, gy: pt.z - o.pos.y, pos: { x: o.pos.x, y: o.pos.y }, land: { x: o.pos.x, y: o.pos.y }, ok: true, moved: 0 };
+      this.moveDrag(clientX, clientY);
+      return true;
+    }
+    moveDrag(clientX, clientY) {
+      const d = this.dragging; if (!d) return;
+      const pt = this.floorPoint(clientX, clientY); if (!pt) return;
+      const want = { x: pt.x - d.gx, y: pt.z - d.gy };
+      d.moved += Math.abs(want.x - d.pos.x) + Math.abs(want.y - d.pos.y);
+      d.pos = want;
+      const r = this.dropSpot ? this.dropSpot(d.o, want) : { pos: want, ok: true };
+      d.land = r.pos; d.ok = r.ok;
+      const rad = (d.o.D != null ? d.o.D : d.o.Dcov) / 2;
+      this.ghost.visible = true;
+      this.ghost.position.set(d.land.x, this.panFloorY + 0.0015, d.land.y);
+      this.ghost.scale.set(rad, rad, 1);
+      this.ghostMat.color.setHex(d.ok ? 0x7fe08a : 0xe06a5a);
+    }
+    /** Let go: the object lands on the legal spot, and the physics decides what that cost. */
+    endDrag() {
+      const d = this.dragging; this.dragging = null; this.ghost.visible = false;
+      if (!d) return null;
+      if (this.onDrop) this.onDrop(d.o, d.land, d.moved);
+      return d;
+    }
+    /** Keep one ItemView per topping in `list`. */
+    syncItems(list) {
+      const keep = new Set(list);
+      for (const [it, v] of this.itemViews) if (!keep.has(it)) { v.dispose(); this.itemViews.delete(it); }
+      for (const it of list) if (!this.itemViews.has(it)) this.itemViews.set(it, new ItemView(this, it));
     }
     viewOf(p) { return p ? this.views.get(p) : null; }
     get pattyGroup() { const v = this.viewOf(this.selected); return v ? v.group : null; }
@@ -787,13 +1369,31 @@
       const phi = this.controls.goal.azimuth + Math.PI / 2;
       for (const [p, v] of this.views) { const want = on && p === this.selected; if (v.cutaway !== want || (want && on)) v.setCutaway(want, phi); }
     }
+    /**
+     * A peek: the cook has just cut the patty open, so show the cut. The knife went in at some
+     * angle nobody chose deliberately, so the slice is at a random azimuth — and it closes again
+     * after a few seconds, back to whatever the cutaway button was set to.
+     */
+    peekCutaway(patty, seconds) {
+      const v = this.viewOf(patty); if (!v) return;
+      // wall-clock, not the frame's dt: this is how long the cook is looking at it, and it should
+      // last the same few seconds whether the machine is drawing at 60 fps or at 4
+      // one entry per patty, each on its own clock: cutting into a second burger must not leave the
+      // first one lying open on the pan, and two peeks a second apart close a second apart
+      this.peeks.set(patty, (root.performance ? performance.now() : Date.now()) + seconds * 1000);
+      v.setCutaway(true, Math.random() * Math.PI * 2);
+    }
+    /** What is under the cursor: a patty, or one of the toppings sharing the pan. */
     pickPatty(clientX, clientY) {
       const rect = this.canvas.getBoundingClientRect();
       const ndc = new T.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
       const ray = new T.Raycaster(); ray.setFromCamera(ndc, this.camera);
       const targets = []; for (const v of this.views.values()) { targets.push(v.mesh); if (v.cutMesh.visible) targets.push(v.cutMesh); }
+      for (const v of this.itemViews.values()) if (v.group.visible) v.group.traverse((o) => { if (o.isMesh) targets.push(o); });
       const hits = ray.intersectObjects(targets, false);
-      return hits.length ? hits[0].object.userData.patty : null;
+      if (!hits.length) return null;
+      const d = hits[0].object.userData;
+      return d.patty || d.item || null;
     }
     // ---- per-frame update from the physics state
     setMode(mode) {
@@ -802,9 +1402,24 @@
       this.scene.background.setHex(mode === 'stove' ? 0x1a1714 : 0x2a2622); this.scene.fog.color.copy(this.scene.background);
       this.controls.reset(mode);
     }
+    /**
+     * One patty's atlas may be repainted per frame. Three burgers on a ticket would otherwise all
+     * come due on the same frame and paint three megapixel canvases back to back; staggered, each
+     * still gets its ten repaints a second and no single frame carries more than one.
+     */
+    claimTexBudget() { if (this.texBudget <= 0) return false; this.texBudget--; return true; }
     update(state, dt) {
-      this.clock += dt; this.texClock += dt;
+      this.clock += dt; this.texBudget = 1;
       const pan = state.pan, p = state.patty;
+      if (this.peeks.size) {
+        const now = root.performance ? performance.now() : Date.now();
+        for (const [q, until] of this.peeks) {
+          if (now < until) continue;
+          const v = this.viewOf(q);
+          if (v) v.setCutaway(this.cutaway && q === this.selected, this.controls.goal.azimuth + Math.PI / 2);
+          this.peeks.delete(q);
+        }
+      }
       // stove: gas flames, electric coil glow (follows delivered power, so it lags), induction LED
       const knob = state.stove.knob / 10, stv = state.stove;
       if (this.stoveType === 'gas') {
@@ -829,6 +1444,37 @@
         this.flameLight.color.setHex(0xff6a1a);
         this.flameLight.intensity = 1.4 * glow * flick + 2.5 * clamp(gr.flare, 0, 1.5);
         if (this.kettleLid) this.kettleLid.visible = !!state.lid;
+        this.setBank(gr.bank || 0);
+        // the ash on the bowl floor: loose wood/charcoal ash at ~250 kg/m³ over the 0.126 m² floor,
+        // so it rises about 3 cm per kilogram, and it goes from dark grey to pale as it deepens
+        if (this.ashDisc) {
+          const m = (gr.ash || 0) + (gr.ashBowl || 0), depth = m / (250 * 0.126);
+          this.ashDisc.position.y = this.ashY0 + depth;
+          const pale = clamp(m / 0.15, 0, 1);
+          this.ashMat.color.setRGB(0.30 + 0.32 * pale, 0.29 + 0.31 * pale, 0.26 + 0.29 * pale);
+          this.ashDisc.scale.setScalar(1 + 0.15 * pale);
+        }
+        // the damper: 45° of throw from shut to wide, which is where the airflow number comes from
+        if (this.ventWheel) this.ventWheel.rotation.y = (Math.PI / 4) * clamp(gr.topVent == null ? 1 : gr.topVent, 0, 1);
+        // wood on the coals
+        if (this.woodMeshes) {
+          const woods = gr.woods || [];
+          for (let i = 0; i < this.woodMeshes.length; i++) {
+            const box = this.woodMeshes[i], wd = woods[woods.length - 1 - i]; // the newest chunk first
+            if (!wd || wd.m <= 1e-6) { box.visible = false; continue; }
+            box.visible = true;
+            const side = Math.cbrt(wd.m / 700); // the chunk's own dimension, straight off its mass
+            const h = box.userData.home;
+            box.scale.set(side, side * 0.75, side * 0.9); // a split billet is wider than it is deep
+            box.position.set(h.x, this.coalY + 0.020 + side * 0.375, h.z); // sitting proud on top of the lumps
+            box.rotation.set(0.12, h.ry, 0.06);
+            // bark brown → charcoal: the chunk chars from the outside in as it gives up its volatiles
+            const burnt = clamp(1 - wd.m / wd.m0, 0, 1), hot = clamp((wd.T - 260) / 200, 0, 1);
+            const mat = this.woodMats[i];
+            mat.color.setRGB(lerp(0.62, 0.07, burnt), lerp(0.45, 0.06, burnt), lerp(0.26, 0.05, burnt));
+            mat.emissiveIntensity = 0.5 * hot * hot * (0.8 + 0.2 * Math.sin(this.clock * 6 + i));
+          }
+        }
       } else if (this.stoveType === 'electric' && this.coilMat) {
         const glow = clamp((stv.pDelivered || 0) / (stv.pMax * stv.eff), 0, 1);
         this.coilMat.emissiveIntensity = 2.4 * glow * glow;
@@ -862,9 +1508,19 @@
       const spillR = Math.min(0.45, Math.sqrt((pan.overflow || 0) / 920 / (Math.PI * 0.0015)));
       this.spill.visible = spillR > 0.01; this.spill.scale.set(spillR * 1.15, spillR, 1); this.spill.position.y = (this.stainY || 0.0012) + 0.0003;
       // grease fire around a pan, or flare-ups coming up through the grate under the meat
-      const grillFlare = this.stoveType === 'charcoal' && state.grill ? state.grill.flare : 0;
+      const grill = this.stoveType === 'charcoal' && state.grill ? state.grill : null;
+      const grillFlare = grill ? grill.flare : 0;
       const flare = this.stoveType === 'charcoal' ? (grillFlare > 0.04 ? grillFlare : 0) : (pan.flare || 0);
-      const onGrate = this.stoveType === 'charcoal' ? (state.patties || []).filter((q) => q.where === 'pan') : [];
+      // Fat burns where it lands, and it lands on the coals — so on a banked bed the bare half only
+      // smokes (physics: BANK.flare = 0.15) and there are no flames over it. Meat dragged across to
+      // finish leaves its flare behind it over the pile, which is the whole point of the two-zone
+      // fire. `coalAt` is the same coal fraction the heat transfer uses, so the flames sit exactly
+      // where the model says there is fuel.
+      const floorR = (pan && pan.floorR) || this.panR;
+      const coalFrac = (x) => (grill && grill.bank > 0.01 ? P.coalAt(grill, clamp(x / floorR, -1, 1)) : 1);
+      const onGrate = grill ? (state.patties || []).filter((q) => q.where === 'pan' && coalFrac(q.pos.x) > 0.2) : [];
+      // with nothing over the coals the flames burn on the pile itself, wherever it has been raked to
+      const bedX = grill && grill.bank > 0.01 ? 0.45 * floorR : 0;
       for (let i = 0; i < this.flareFlames.length; i++) {
         const f = this.flareFlames[i];
         f.visible = flare > 0;
@@ -874,10 +1530,13 @@
           // tongues of flame under and around whichever patties are dripping, licking up their sides
           const q = onGrate.length ? onGrate[i % onGrate.length] : null;
           const rr = q ? (q.D / 2) * (0.5 + 0.7 * ((i * 7919) % 100) / 100) : 0.12 * fl;
-          const cx = q ? q.pos.x : 0, cz = q ? q.pos.y : 0;
-          f.position.set(cx + Math.cos(f.userData.a) * rr, this.PAN_Y - 0.03, cz + Math.sin(f.userData.a) * rr);
+          const cx = q ? q.pos.x : bedX, cz = q ? q.pos.y : 0;
+          const fx = cx + Math.cos(f.userData.a) * rr, fz = cz + Math.sin(f.userData.a) * rr;
+          const cf = coalFrac(fx);
+          if (cf < 0.15) { f.visible = false; continue; }  // ash under this tongue: nothing to burn
+          f.position.set(fx, this.PAN_Y - 0.03, fz);
           f.rotation.order = 'YXZ'; f.rotation.y = -f.userData.a; f.rotation.z = -0.12 * fl;
-          const len = 0.02 + 0.15 * Math.min(1, flare) * fl;
+          const len = (0.02 + 0.15 * Math.min(1, flare) * fl) * cf;
           f.scale.set(0.5 + 0.7 * fl, len, 0.5 + 0.7 * fl);
           f.material.color.setRGB(1, 0.45 + 0.3 * Math.random(), 0.08);
           f.material.opacity = 0.18 + 0.3 * fl * Math.min(1, flare + 0.3);
@@ -904,19 +1563,105 @@
       const plateBase = stoveOn ? { x: 0.42, y: 0.009, z: 0.12 } : { x: 0, y: 0, z: 0 };
       const offPan = list.filter((q) => q.where !== 'pan' && q.where !== 'board');
       if (this.plate) { this.plate.scale.set(1 + 0.55 * Math.max(0, offPan.length - 1), 1, 1); }
+      // ---- the toppings: on the pan where they were put down, waiting on the pass once they are
+      // off the heat, and stacked on the burger they were built onto once it is served
+      const items = this.mode === 'stove' && state.items ? state.items : []; // toppings only exist once there is a stove under them
+      this.syncItems(items);
+      this.selectedItem = state.item || null;
+      const waiting = items.filter((q) => q.where === 'rest' || (q.where === 'cut' && q.burger == null));
+      const stackOf = new Map();
+      for (const q of list) {
+        if (q.where !== 'cut') continue;
+        let extra = 0;
+        for (const it of items) {
+          if (it.burger !== q.id || it.where !== 'cut' || it.kind === 'bun') continue;
+          const v = this.itemViews.get(it); if (!v) continue;
+          // every topping mesh is built with its underside at its own origin, so a layer starts
+          // where the one under it ended: no air between the cheese and the bacon
+          stackOf.set(it, extra);
+          extra += v.layerH();
+        }
+        stackOf.set(q, extra);
+      }
+      const drag = this.dragging;
+      let scraping = null;
       for (const q of list) {
         const v = this.views.get(q);
         const where = state.patties && state.patties.length ? q.where : 'board';
         let pos;
-        if (where === 'pan') pos = { x: q.pos.x, y: 0, z: q.pos.y };
+        if (where === 'pan') {
+          // a patty being dragged follows the cursor; one on the blade is lifted off the metal
+          const at = drag && drag.o === q ? drag.pos : q.pos;
+          const u = q.scrapeT > 0 ? 1 - q.scrapeT : 0, lift = q.scrapeT > 0 ? 0.005 * Math.sin(Math.PI * u) : 0;
+          if (q.scrapeT > 0) scraping = { p: q, at, u };
+          pos = { x: at.x, y: 0, z: at.y, lift };
+        }
         else if (where === 'board') pos = { x: 0, y: 0, z: 0 };
         else { const i = offPan.indexOf(q); pos = { x: plateBase.x + (i - (offPan.length - 1) / 2) * 0.115, y: plateBase.y, z: plateBase.z }; }
         if (this.forceTex) v.forceTex = true;
+        v.stackH = stackOf.get(q) || 0;
         v.update(state, dt, where, pos, this.mode);
+        q._viewPos = pos;
+      }
+      for (const it of items) {
+        const v = this.itemViews.get(it); if (!v) continue;
+        let pos;
+        if (it.where === 'pan') { const at = drag && drag.o === it ? drag.pos : it.pos; pos = { x: at.x, y: this.panFloorY, z: at.y }; }
+        else if (it.where === 'cut' && it.burger != null) {
+          // on the burger: between the patty (and its cheese) and the top bun
+          const host = list.find((q) => q.id === it.burger);
+          const hv = host && this.views.get(host);
+          if (hv) {
+            const base = hv.group.position.y + host.h * (1 + 0.28 * host.dome) + host.cheeses.length * 0.0015;
+            pos = { x: hv.group.position.x, y: base + (stackOf.get(it) || 0), z: hv.group.position.z };
+            if (this.cutaway && host === this.selected) { const phi = hv.cutPhi || 0; v.setClipAt(-Math.sin(phi), Math.cos(phi), pos.x, pos.z); }
+            else v.setClip(null);
+          } else pos = { x: plateBase.x, y: plateBase.y, z: plateBase.z };
+        } else {
+          // waiting at the pass: a row along the front of the stovetop, in front of the plate
+          const i = waiting.indexOf(it);
+          pos = { x: 0.16 + (i >= 0 ? i : 0) * 0.1, y: (this.stainY || 0.0012) + 0.0006, z: 0.26 };
+          v.setClip(null);
+        }
+        v.update(state, dt, it.where, pos, this.mode);
       }
       this.forceTex = false;
+      // the spatula: it slides in under the patty and back out over the second the scrape takes,
+      // from whichever side the camera is on, because that is the side the cook is standing
+      if (this.spatula) {
+        this.spatula.visible = !!scraping && stoveOn;
+        if (scraping) {
+          const R = scraping.p.D / 2, depth = Math.sin(Math.PI * scraping.u);
+          const az = this.controls.azimuth, cx = scraping.at.x, cz = scraping.at.y;
+          const out = R + 0.075 - depth * (R + 0.09);
+          this.spatula.position.set(cx + Math.cos(az) * out, this.panFloorY + 0.0022, cz + Math.sin(az) * out);
+          this.spatula.rotation.set(0, -az + Math.PI / 2, 0);
+          this.spatula.rotation.x = 0; // set below, in the blade's own frame
+          this.spatula.children[0].rotation.x = this.spatula.children[1].rotation.x = -0.06; // the blade rides tip-down under the crust
+        }
+      }
+      // the finger, while a press test is running: down onto the middle of the patty from the
+      // cook's side of the pan, and off again. Same second and a bit the physics charges for it.
+      if (this.finger) {
+        let pressing = null;
+        for (const q of list) if (q.where === 'pan' && q.pressTestT > 0) { pressing = q; break; }
+        this.finger.visible = !!pressing && stoveOn;
+        if (pressing) {
+          const u = clamp(1 - pressing.pressTestT / (P.TOUCH ? P.TOUCH.dwell : 1.2), 0, 1);
+          const dip = Math.sin(Math.PI * u), az = this.controls.azimuth;
+          const top = this.panFloorY + pressing.h * (1 + 0.28 * pressing.dome);
+          this.finger.position.set(pressing.pos.x, top + 0.038 - 0.036 * dip, pressing.pos.y);
+          this.finger.rotation.set(0, -az, 0);
+        }
+      }
 
-      // ---- particles: sizzle, steam, smoke, spatter, beads and drips around every patty on the pan
+      this._updateParticles(state, dt, list, stoveOn);
+
+      this.controls.update(dt);
+      this.renderer.render(this.scene, this.camera);
+    }
+    /** Sizzle, steam, smoke, spatter, juice beads and fat drips around every patty on the pan. */
+    _updateParticles(state, dt, list, stoveOn) {
       const d = state.diag;
       const onPan = list.filter((q) => q.where === 'pan');
       const gy = this.panFloorY, oilDepth = this.stoveType === 'charcoal' ? 0 : (state.pan.oilDepth || 0);
@@ -929,7 +1674,24 @@
       let evapTopAll = 0; for (const q of onPan) evapTopAll += q.evapTop || 0;
       const steamRate = stoveOn ? (any ? d.evapBottom * 6000 + evapTopAll * 3000 : 0) + d.evapPan * 5000 : 0;
       this.steam.update(dt, Math.min(steamRate, 160), () => (Math.random() < 0.7 && any ? edge() : any && Math.random() < 0.5 ? anywhereTop() : panSpot()), 0.01);
-      this.smoke.update(dt, stoveOn ? clamp(d.smoke, 0, 2) * 45 : 0, () => (Math.random() < 0.6 && any ? edge() : panSpot()), 0.02);
+      // Smoke: its colour and body are the fire's, not a constant. Thin blue smoke is volatiles
+      // burning as they leave the wood; thick white smoke is volatiles that never found any air.
+      // With the lid on, all of it leaves through the top vent, so that is where it is drawn from —
+      // in a jet, because it is being pushed through a 6 cm hole rather than drifting off a bed.
+      const kettle = this.stoveType === 'charcoal';
+      const lidOn = kettle && !!state.lid && !!this.ventPos;
+      if (kettle) {
+        const kind = clamp(d.smokeKind || 0, 0, 1), dens = clamp(d.smokeDens || 0, 0, 3);
+        this.smoke.mat.uniforms.color.value.setRGB(lerp(0.34, 0.87, kind), lerp(0.37, 0.86, kind), lerp(0.47, 0.83, kind));
+        this.smoke.opts.alpha = 0.20 + 0.30 * kind + 0.18 * Math.min(1, dens);
+        this.smoke.opts.size = 0.05 + 0.05 * kind + 0.04 * Math.min(1.5, dens);
+        this.smoke.opts.rise = lidOn ? 0.34 : 0.11; // out of the vent under pressure, or drifting off the bed
+        this.smoke.opts.spread = lidOn ? 0.012 : 0.03;
+      } else { this.smoke.mat.uniforms.color.value.setHex(0x5a5a62); this.smoke.opts.alpha = 0.3; this.smoke.opts.size = 0.07; this.smoke.opts.rise = 0.11; this.smoke.opts.spread = 0.03; }
+      const ventSpot = () => { const a = Math.random() * Math.PI * 2, rr = Math.sqrt(Math.random()) * 0.022; return [this.ventPos.x + Math.cos(a) * rr, this.ventPos.y, this.ventPos.z + Math.sin(a) * rr]; };
+      // a lid with the vent shut lets almost nothing out: the smoke stays in there, on the meat
+      const smokeRate = stoveOn ? clamp(d.smoke, 0, 2) * 45 * (lidOn ? clamp(d.ventOut, 0, 1) : 1) : 0;
+      this.smoke.update(dt, smokeRate, () => (lidOn ? ventSpot() : Math.random() < 0.6 && any ? edge() : panSpot()), lidOn ? 0.005 : 0.02);
       const bubbleRate = stoveOn ? (any ? d.evapBottom * 9000 : 0) + d.evapPan * 6000 + d.oilBubble * 40 : 0;
       this.bubbles.acc += Math.min(bubbleRate, 250) * dt;
       while (this.bubbles.acc >= 1) { this.bubbles.acc -= 1; const e = any && Math.random() < 0.8 ? edge() : panSpot(); this.bubbles.spawn({ x: e[0], y: e[1], z: e[2], age: 0, life: rand(0.08, 0.3), s: rand(0.4, 1.0) }); }
@@ -949,9 +1711,12 @@
         for (const q of onPan) {
           if (oilDepth > q.h) { for (let i = parts.length - 1; i >= 0; i--) if (parts[i].q === q) parts.splice(i, 1); continue; }
           const want = clamp(Math.round(q.poolTop / 0.00001), 0, 120); let have = 0; for (const b of parts) if (b.q === q) have++;
-          while (have < want) { const a = Math.random() * Math.PI * 2, rr = Math.sqrt(Math.random()) * (q.D / 2) * 0.9; parts.push({ q, x: q.pos.x + Math.cos(a) * rr, y: 0, z: q.pos.y + Math.sin(a) * rr, s: rand(0.5, 1.5), sy: 0.6 }); have++; }
+          // a bead sits at a fixed place on the meat, not at a fixed place on the pan: keep its
+          // offset from the patty's centre so it rides along when the spatula slides the patty
+          while (have < want) { const a = Math.random() * Math.PI * 2, rr = Math.sqrt(Math.random()) * (q.D / 2) * 0.9; parts.push({ q, dx: Math.cos(a) * rr, dz: Math.sin(a) * rr, x: q.pos.x + Math.cos(a) * rr, y: 0, z: q.pos.y + Math.sin(a) * rr, s: rand(0.5, 1.5), sy: 0.6 }); have++; }
           for (let i = parts.length - 1; i >= 0 && have > want; i--) if (parts[i].q === q) { parts.splice(i, 1); have--; }
-          const R = q.D / 2, topY = gy + q.h; for (const b of parts) if (b.q === q) { const rr = Math.hypot(b.x - q.pos.x, b.z - q.pos.y); b.y = topY + 0.28 * q.dome * q.h * (1 - (rr / R) ** 2) + 0.0005; }
+          const R = q.D / 2, topY = gy + q.h;
+          for (const b of parts) if (b.q === q) { const rr = Math.hypot(b.dx, b.dz); b.x = q.pos.x + b.dx; b.z = q.pos.y + b.dz; b.y = topY + 0.28 * q.dome * q.h * (1 - (rr / R) ** 2) + 0.0005; }
         }
         for (let i = parts.length - 1; i >= 0; i--) if (!onPan.includes(parts[i].q)) parts.splice(i, 1);
         this.beads.update(dt, () => true);
@@ -960,15 +1725,14 @@
       while (this.drips.acc >= 1) { this.drips.acc -= 1; const q = pick(); const a = Math.random() * Math.PI * 2; this.drips.spawn({ q, x: q.pos.x + Math.cos(a) * (q.D / 2) * 1.01, y: gy + q.h * rand(0.3, 0.9), z: q.pos.y + Math.sin(a) * (q.D / 2) * 1.01, a, age: 0, s: rand(0.6, 1.2), sy: 1.8 }); }
       const dripFloor = this.stoveType === 'charcoal' ? this.coalY + 0.012 : gy + 0.001;
       this.drips.update(dt, (b, dt) => { const q = b.q; if (q.where !== 'pan') return false; const free = b.y < gy - 0.002; b.vy = free ? (b.vy || 0) + 9.81 * dt : 0; b.y -= (free ? b.vy : 0.008) * dt; if (!free) { b.x = q.pos.x + Math.cos(b.a) * (q.D / 2) * 1.02; b.z = q.pos.y + Math.sin(b.a) * (q.D / 2) * 1.02; } b.age += dt; return b.y > dripFloor && b.age < 6; });
-
-      this.controls.update(dt);
-      this.renderer.render(this.scene, this.camera);
     }
     _paintDirt(pan, dt) {
       this.dirtClock += dt;
       const n = (v, u) => Math.min(this.dirtSpots.length, Math.round(v / u));
-      const counts = [n(pan.fond, 0.00002), n(pan.fondBurnt, 0.000015), n(pan.cheeseBits || 0, 0.00015), n(pan.meatBits || 0, 0.0001), clamp((pan.carbon || 0) / 0.004, 0, 1)];
-      const sig = counts.map((c) => c.toFixed(2)).join('|') + (pan.T > 180 ? 'h' : 'c');
+      // the first four are blob counts, the fifth the depth of the carbon film; the signature is
+      // built without allocating (this runs every frame, the repaint below almost never does)
+      const counts = [n(pan.fond, 0.00002), n(pan.fondBurnt, 0.000015), n(pan.cheeseBits || 0, 0.00015), n(pan.meatBits || 0, 0.0001), Math.round(clamp((pan.carbon || 0) / 0.004, 0, 1) * 100) / 100];
+      const sig = counts[0] + '|' + counts[1] + '|' + counts[2] + '|' + counts[3] + '|' + counts[4] + (pan.T > 180 ? 'h' : 'c') + (this.stoveType === 'charcoal' ? 'g' : 'p');
       const any = counts[0] + counts[1] + counts[2] + counts[3] > 0 || counts[4] > 0.01;
       this.fond.visible = any; this.fond.scale.set(this.panR, this.panR, 1);
       if (!any || sig === this.dirtSig || this.dirtClock < 0.5) return;
@@ -991,6 +1755,17 @@
       for (let i = 0; i < counts[3]; i++) blob(this.dirtSpots[(i * 11 + 3) % this.dirtSpots.length], 3.5, 'rgba(70,32,18,0.9)');
       // a little grain so nothing reads as a clean disc
       c.globalCompositeOperation = 'multiply'; c.globalAlpha = 0.25; c.drawImage(this.noiseFine, 0, 0, 512, 512); c.globalAlpha = 1; c.globalCompositeOperation = 'source-over';
+      // On a grate there is no floor for residue to lie on: it is baked onto the bars. Mask the dirt
+      // down to the rods' own footprints — 6 mm rods on 24 mm centres, the grate built in setStove —
+      // so the gaps between the bars stay empty and the brush has something real to take off.
+      if (this.stoveType === 'charcoal' && this.grateBars) {
+        const px = 256 / this.panR, bars = this.grateBars; // canvas pixels per metre: the disc is panR in radius, 256 px
+        // one path, one fill: destination-in keeps only what the source covers, so a rectangle at a
+        // time would rub out every bar but the last
+        c.globalCompositeOperation = 'destination-in'; c.fillStyle = '#000'; c.beginPath();
+        for (let x = bars.x0; x < this.panR; x += bars.dx) c.rect(256 + (x - bars.w / 2) * px, 0, bars.w * px, 512);
+        c.fill(); c.globalCompositeOperation = 'source-over';
+      }
       this.dirtTex.needsUpdate = true;
     }
     _addStain(x, z, s) {
@@ -1047,11 +1822,14 @@
     dolly(f) { this.goal.dist = clamp(this.goal.dist * f, 0.06, 2.5); }
     onDown(e) {
       this.el.setPointerCapture && this.el.setPointerCapture(e.pointerId);
-      this.drag = { b: e.button, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, moved: 0, shift: e.shiftKey };
+      // a left-drag that starts on a patty or a topping moves it; anywhere else it orbits
+      const moving = e.button === 0 && !e.shiftKey && this.vp.startDrag(e.clientX, e.clientY);
+      this.drag = { b: e.button, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, moved: 0, shift: e.shiftKey, moving };
     }
     onMove(e) {
       const d = this.drag; if (!d) return;
       const dx = e.clientX - d.x, dy = e.clientY - d.y; d.x = e.clientX; d.y = e.clientY; d.moved += Math.abs(dx) + Math.abs(dy);
+      if (d.moving) { this.vp.moveDrag(e.clientX, e.clientY); return; }
       if (d.b === 0 && !d.shift) { this.goal.azimuth -= dx * 0.006; this.goal.polar = clamp(this.goal.polar - dy * 0.006, 0.05, 1.52); }
       else if (d.b === 2) { this.dolly(Math.exp(dy * 0.006)); }
       else { // pan (middle, or shift+left)
@@ -1063,6 +1841,12 @@
     }
     onUp(e) {
       const d = this.drag; if (!d) return; this.drag = null;
+      if (d.moving) {
+        const drop = this.vp.endDrag();
+        // a click that never went anywhere is a click: it selects, it does not move anything
+        if (d.moved < 6 && drop && this.vp.onPick) this.vp.onPick(drop.o);
+        return;
+      }
       if (d.b === 2 && d.moved < 6) this.zoomToPoint(e.clientX, e.clientY);
       if (d.b === 0 && d.moved < 6 && this.vp.onPick) { const p = this.vp.pickPatty(e.clientX, e.clientY); if (p) this.vp.onPick(p); }
     }
@@ -1091,5 +1875,5 @@
     }
   }
 
-  root.BurgerRender = { Viewport, nodeColour, faceColour, COL };
+  root.BurgerRender = { Viewport, PattyView, ItemView, nodeColour, faceColour, COL, ICOL };
 })(window);

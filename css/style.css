@@ -12,6 +12,7 @@ button:hover { background: #352c22; }
 button:disabled { opacity: 0.4; cursor: default; }
 button.primary { background: var(--accent); color: #1a1208; border-color: #f0c070; font-weight: 600; }
 button.primary:hover { background: #f0b45a; }
+button.primary:disabled { background: #3a2e1c; color: var(--muted); border-color: var(--line); opacity: 1; } /* a dimmed call-to-action still reads as one; a disabled one should not */
 button.danger { border-color: #7a3a2a; }
 button.on { background: var(--accent); color: #1a1208; border-color: #f0c070; }
 select, input[type=range] { width: 100%; font: inherit; }
@@ -23,7 +24,8 @@ label.check { display: flex; gap: 8px; align-items: center; color: var(--ink); f
 label.check input { width: auto; }
 
 /* HUD */
-#hud { position: fixed; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 16px; padding: 8px 14px; background: linear-gradient(rgba(10,8,6,0.85), rgba(10,8,6,0)); pointer-events: none; z-index: 5; }
+/* the HUD stops where the side panel starts, and wraps rather than running under it */
+#hud { position: fixed; top: 0; left: 0; right: 364px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding: 8px 14px; background: linear-gradient(rgba(10,8,6,0.85), rgba(10,8,6,0)); pointer-events: none; z-index: 5; }
 #hud > * { pointer-events: auto; }
 .brand { font-weight: 800; letter-spacing: 0.12em; color: var(--accent); }
 .brand small { display: block; letter-spacing: 0; font-weight: 400; color: var(--muted); font-size: 11px; }
@@ -32,14 +34,24 @@ label.check input { width: auto; }
 .ticket { position: relative; cursor: help; }
 .ticket[data-hint]::after { content: attr(data-hint); position: absolute; left: 0; top: calc(100% + 6px); white-space: nowrap; background: #1e1914; color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; font-size: 12px; box-shadow: 0 6px 18px rgba(0,0,0,0.5); opacity: 0; pointer-events: none; transform: translateY(-3px); transition: opacity 0.12s, transform 0.12s; }
 .ticket[data-hint]:hover::after, .ticket[data-hint]:focus::after { opacity: 1; transform: translateY(0); }
-.readouts { display: flex; gap: 12px; }
+.readouts { display: flex; flex-wrap: wrap; gap: 8px 12px; }
 .ro { background: rgba(0,0,0,0.45); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; min-width: 84px; }
-.ro label { margin: 0; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; }
-.ro span { font-variant-numeric: tabular-nums; font-size: 18px; }
-.ro.small { min-width: 0; display: flex; align-items: center; }
-.ro.small span { font-size: 12px; color: var(--muted); }
+.ro label { margin: 0; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; white-space: nowrap; }
+.ro span { font-variant-numeric: tabular-nums; font-size: 18px; white-space: nowrap; }
+/* the fire's readout is a sentence, not a number: give it room and let it wrap */
+#ro-fire { min-width: 200px; max-width: 360px; }
+#ro-fire span { font-size: 13px; line-height: 1.25; display: block; white-space: normal; }
+.ro.small { min-width: 0; max-width: 220px; display: flex; align-items: center; }
+.ro.small span { font-size: 12px; color: var(--muted); white-space: normal; }
 .ro.warn { color: var(--warn); display: flex; align-items: center; }
 body.hard .ro span#h-pan, body.hard .ro span#h-probe { color: var(--muted); }
+/* hard mode: the thermometers are gone, so the cook's own senses take the space they leave */
+body.hard #ro-pan, body.hard #ro-probe, body.hard .row.probe, body.hard #btn-probe-rest { display: none; }
+/* and the results card's two traces are thermometers with a °C axis on them */
+body.hard .charts { display: none; }
+body.hard #senses button { border-color: var(--accent); }
+.ro.note { min-width: 200px; max-width: 300px; }
+.ro.note span { font-size: 12px; color: var(--good); line-height: 1.25; display: block; white-space: normal; }
 .tools { margin-left: auto; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 .tools button { padding: 5px 9px; font-size: 12.5px; }
 .speed button, .views button { border-radius: 0; }
@@ -47,7 +59,11 @@ body.hard .ro span#h-pan, body.hard .ro span#h-probe { color: var(--muted); }
 .speed button:last-child, .views button:last-child { border-radius: 0 6px 6px 0; }
 
 /* side panel */
-#panel { position: fixed; top: 64px; right: 12px; width: 340px; max-height: calc(100% - 76px); overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; z-index: 4; backdrop-filter: blur(6px); }
+/* The panel starts under the HUD — but only down to a point. A busy kettle ticket wraps the HUD onto
+   three or four rows (260 px at 1400×860, 320 px at 1100×700), and following it that far leaves the
+   cook 357 px of viewport for 1400 px of controls. The HUD stops 364 px short of the right edge, so
+   the rows past the cap hang over the 3-D view instead, which is what a real pass looks like. */
+#panel { position: fixed; top: calc(min(var(--hud-h, 56px), 180px) + 8px); right: 12px; width: 340px; max-height: calc(100% - min(var(--hud-h, 56px), 180px) - 20px); overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; z-index: 4; backdrop-filter: blur(6px); }
 #panel h2 { margin: 0 0 10px; font-size: 15px; letter-spacing: 0.04em; color: var(--accent); }
 .row { margin: 8px 0; }
 .row.two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -57,6 +73,27 @@ body.hard .ro span#h-pan, body.hard .ro span#h-probe { color: var(--muted); }
 .derived dd { margin: 0; }
 p.warn { color: var(--warn); font-size: 12.5px; min-height: 1em; }
 .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 10px 0; }
+.row.four { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin: 4px 0; }
+.row.four button { padding: 6px 4px; font-size: 12.5px; }
+.row.three { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin: 4px 0; }
+.row.three button { padding: 6px 4px; font-size: 12.5px; }
+.row.move label small { display: block; color: var(--muted); font-size: 11px; }
+.row.knob label small { display: block; color: var(--muted); font-size: 11px; font-weight: 400; }
+.row.fire { border-top: 1px solid var(--line); padding-top: 8px; }
+.row.fire > label small { display: block; color: var(--muted); font-size: 11px; font-weight: 400; }
+.row.fire .row.two label { font-size: 12px; }
+.row.extras { border-top: 1px solid var(--line); padding-top: 8px; }
+.row.extras label small { display: block; color: var(--muted); font-size: 11px; }
+.row.assign { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+.row.assign label { margin: 0; white-space: nowrap; }
+.row.assign button { padding: 4px 9px; font-size: 12px; }
+/* the burger a topping goes to if the cook says nothing: the default build, shown before it is made */
+.row.assign button.plan { border-style: dashed; border-color: var(--accent); color: var(--accent); }
+.row.assign small { color: var(--muted); font-size: 11px; }
+.chip.item b { color: var(--good); }
+.chip i { font-style: normal; color: var(--good); font-size: 11px; }
+table.stats .pen { color: var(--bad); }
+table.stats .bon { color: var(--good); }
 .actions .primary, .actions .danger { grid-column: 1 / -1; }
 .probe { display: grid; grid-template-columns: auto 1fr; gap: 8px; align-items: center; }
 .big { display: inline-block; margin: 6px 14px 6px 0; }
@@ -68,6 +105,8 @@ p.warn { color: var(--warn); font-size: 12.5px; min-height: 1em; }
 .ev.warn { color: var(--warn); }
 .ev.good { color: var(--good); }
 .ev.action { color: var(--ink); }
+/* what the cook's own eyes, ears, fingers and hands report */
+.ev.note { color: var(--good); border-left: 2px solid var(--good); padding-left: 6px; }
 
 /* inspector */
 #inspector { position: fixed; left: 12px; bottom: 12px; width: 440px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; z-index: 4; font-size: 12px; }
@@ -80,8 +119,9 @@ p.warn { color: var(--warn); font-size: 12.5px; min-height: 1em; }
 
 /* modals */
 .modal { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(8,6,4,0.55); z-index: 10; }
-.modal.right { justify-content: flex-end; padding-right: 20px; background: transparent; pointer-events: none; }
-.modal.right .card { pointer-events: auto; }
+/* the results card sits to the right, under the HUD rather than behind it */
+.modal.right { justify-content: flex-end; align-items: flex-start; padding: calc(min(var(--hud-h, 56px), 180px) + 8px) 20px 0; background: transparent; pointer-events: none; }
+.modal.right .card { pointer-events: auto; max-height: calc(100vh - min(var(--hud-h, 56px), 180px) - 24px); }
 .card { width: min(560px, 92vw); max-height: 92vh; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 24px; box-shadow: 0 20px 60px rgba(0,0,0,0.6); }
 .card.wide { width: min(600px, 95vw); }
 .eyebrow { text-transform: uppercase; letter-spacing: 0.2em; font-size: 11px; color: var(--muted); }
@@ -104,7 +144,26 @@ table.stats td:first-child { color: var(--muted); width: 42%; }
 #r-notes { font-size: 13px; line-height: 1.4; padding-left: 18px; }
 .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .charts canvas { width: 100%; height: auto; border-radius: 6px; }
+/* Under 1200 px the HUD's own rows are the problem, not just where the panel starts: three patty
+   chips, five topping chips, the two-zone IR readout and the fire's sentence wrap onto four lines
+   (320 px of a 700 px window). The chips lose their status line — it is in the panel and in the log
+   — the readout boxes tighten up and stop stretching to the tallest one in the row, and the wordy
+   ones (the fire, the cook's note, the side note) are clamped to two lines. */
+@media (max-width: 1200px) {
+  #hud { gap: 4px 10px; padding: 6px 10px; }
+  .chip small { display: none; }
+  .readouts { gap: 5px 8px; align-items: flex-start; }  /* not stretch: one wordy box must not make the rest of the row as tall */
+  .ro { min-width: 62px; padding: 3px 8px; }
+  .ro span { font-size: 15px; }
+  #ro-fire { min-width: 150px; max-width: 210px; }
+  .ro.note { min-width: 150px; max-width: 210px; }
+  .ro.small { max-width: 150px; }
+  /* the sentences say the same thing in their first clause; the rest is in the log */
+  #ro-fire span, .ro.note span, .ro.small span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .tools button { padding: 4px 7px; font-size: 12px; }
+}
 @media (max-width: 900px) {
+  #hud { right: 0; }
   #panel { width: min(340px, 92vw); top: auto; bottom: 8px; right: 8px; max-height: 55vh; }
   #inspector { width: min(440px, 92vw); bottom: auto; top: 70px; }
   .readouts { display: none; }
@@ -119,5 +178,34 @@ table.stats td:first-child { color: var(--muted); width: 42%; }
 .chip.on { border-color: var(--accent); background: #3a2e1c; }
 .chip.on small { color: var(--ink); }
 #r-chips { margin: 8px 0; }
+
+/* the shift: ticket clock, the customer's verdict, the bill and the end-of-shift card */
+.tclock { font-variant-numeric: tabular-nums; color: var(--muted); }
+.tclock b { color: var(--ink); }
+.tclock.late b { color: var(--warn); }
+.tclock.vlate b { color: var(--bad); }
+.shiftbar { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12.5px; background: #1e1914; border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin: 10px 0; }
+.shiftbar span { color: var(--muted); }
+.shiftbar b { color: var(--ink); }
+.shiftbar .pips { letter-spacing: 2px; color: #5d5245; }
+.shiftbar .pips i { font-style: normal; color: var(--accent); }
+.customer { border-left: 3px solid var(--accent); padding: 2px 0 2px 12px; margin: 10px 0; }
+.customer .quote { font-size: 16px; line-height: 1.4; margin: 0 0 6px; }
+.customer .outcome { display: inline-block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--line); }
+.customer .outcome.delighted { color: var(--good); border-color: #3f6b3d; }
+.customer .outcome.accepted { color: var(--warn); border-color: #6b5726; }
+.customer .outcome.sent { color: var(--bad); border-color: #7a3a2a; background: #33201c; }
+.customer ul { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; color: #cfc4b2; }
+.customer ul li.good { color: var(--good); }
+p.bill, p.shiftrun { font-size: 12.5px; margin: 6px 0; font-variant-numeric: tabular-nums; }
+p.bill b, p.shiftrun b { color: var(--ink); }
+p.bill { color: var(--muted); }
+p.shiftrun { color: var(--muted); border-top: 1px dotted #2a241d; padding-top: 6px; }
+#se-tickets { font-size: 12.5px; margin: 8px 0; }
+#se-tickets .t { display: grid; grid-template-columns: 30px 1fr 42px; gap: 8px; padding: 4px 0; border-bottom: 1px dotted #2a241d; align-items: baseline; }
+#se-tickets .t em { font-style: normal; color: var(--muted); }
+#se-tickets .t b { text-align: right; font-variant-numeric: tabular-nums; }
+#se-tickets .t.sent b { color: var(--bad); }
+#se-tickets .t.best b { color: var(--good); }
 .ticket-sum { font-size: 13px; background: #1e1914; border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
 .ticket-sum ul { margin: 6px 0 0; padding-left: 18px; }
