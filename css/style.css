@@ -12,6 +12,7 @@ button:hover { background: #352c22; }
 button:disabled { opacity: 0.4; cursor: default; }
 button.primary { background: var(--accent); color: #1a1208; border-color: #f0c070; font-weight: 600; }
 button.primary:hover { background: #f0b45a; }
+button.primary:disabled { background: #3a2e1c; color: var(--muted); border-color: var(--line); opacity: 1; } /* a dimmed call-to-action still reads as one; a disabled one should not */
 button.danger { border-color: #7a3a2a; }
 button.on { background: var(--accent); color: #1a1208; border-color: #f0c070; }
 select, input[type=range] { width: 100%; font: inherit; }

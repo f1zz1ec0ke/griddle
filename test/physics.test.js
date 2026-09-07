@@ -2069,3 +2069,19 @@ test('the crowded-pan warning is proportionate: a few millimetres of touch is no
   assert.ok(heap3.overlap > 0.35, `overlap=${heap3.overlap}`);
   assert.ok(/lying half on top/.test(said3), said3);
 });
+
+test('on a banked bed, fat that drips onto bare ash does not flare', () => {
+  // the same fatty patty pressed over the pile and over the ash half: only the pile lights
+  const flareAt = (x) => {
+    const s = litGrill(9, 650); cookFor(s, 120); P.setBank(s, 1); cookFor(s, 240);
+    const p = std({ thicknessMm: 16, massG: 160, fatFrac: 0.3 }); P.placePatty(s, p, { x, y: 0 });
+    cookFor(s, 90); P.flipPatty(s); cookFor(s, 60);
+    P.pressPatty(s, false); cookFor(s, 3); P.pressPatty(s, false); cookFor(s, 2);
+    return s.grill.flare;
+  };
+  const R = 0.257;
+  const onCoals = flareAt(0.62 * R), onAsh = flareAt(-0.62 * R);
+  console.log(`   flare over the pile ${onCoals.toFixed(2)}, over the ash ${onAsh.toFixed(2)}`);
+  assert.ok(onCoals > 0.3, `pressing a 30 % patty over the pile flares: ${onCoals}`);
+  assert.ok(onAsh < 0.25 * onCoals, `over the ash it should barely light: ${onAsh} vs ${onCoals}`);
+});

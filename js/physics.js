@@ -436,6 +436,9 @@
   }
   /** How much of the bed under `u` (x as a fraction of the bed radius) is glowing coal, 0..1. */
   function coalAt(g, u) { return g.bank > 0 ? 1 - g.bank * (1 - smooth(BANK.edge0, BANK.edge1, u)) : 1; }
+  /** Fat that falls from x lands on coals or on bare ash: only the share over the pile can light. The rest soaks into the ash. */
+  function coalUnder(s, x) { return s.grill && s.grill.bank > 0 ? coalAt(s.grill, clamp(x / s.pan.floorR, -1, 1)) : 1; }
+  function dripOnBed(s, x, fat) { const f = coalUnder(s, x); s.grill.fatOnCoals += fat * f; s.grill.fatOnAsh = (s.grill.fatOnAsh || 0) + fat * (1 - f); }
   /**
    * The fire as seen from a point on the bank axis: the coal fraction under it, its view factor of
    * the fire as a fraction of the pile's, the temperature of what it sees, and the gas coming up
@@ -777,7 +780,7 @@
       if (p.dM[c] > 0.3) out += p.w[c] * (hard ? 0.16 : 0.10) * p.dM[c] * (0.5 + 0.5 * p.dA[c] + 0.5 * p.dC[c]);
       out = Math.min(out, p.w[c]);
       p.w[c] -= out; expelled += out;
-      const fatOut = p.fr[c] * 0.7; p.fr[c] -= fatOut; p.lostFat += fatOut; if (s.grill) s.grill.fatOnCoals += fatOut; else s.pan.oil += fatOut;
+      const fatOut = p.fr[c] * 0.7; p.fr[c] -= fatOut; p.lostFat += fatOut; if (s.grill) dripOnBed(s, p.pos.x, fatOut); else s.pan.oil += fatOut;
     }
     p.lostWaterDrip += expelled; if (s.grill) s.grill.juiceOnCoals = (s.grill.juiceOnCoals || 0) + expelled; else s.pan.water += expelled;
     p.dome = 0;
@@ -3049,11 +3052,11 @@
           // enough fat lands on a hot bed at once
           let drip = 0; for (let j = 0; j < p.Nr; j++) { drip += p.poolB[j]; p.poolB[j] = 0; } p.poolBottom = 0;
           p.lostWaterDrip += drip;
-          grill.fatOnCoals += (pr.fatDrip + pr.fatSide) * dt;
+          dripOnBed(s, p.pos.x, (pr.fatDrip + pr.fatSide) * dt); // on a banked bed only the fat over the pile can flare
           grill.juiceOnCoals = (grill.juiceOnCoals || 0) + drip + pr.juiceSide * dt;
           // cheese that sagged off the slice and fell through the bars: processed American is
           // ~31 % fat, ~44 % water, so it both spits on the coals and feeds the flames
-          if (pr.cheeseDrip > 0) { const cd = pr.cheeseDrip * dt; grill.fatOnCoals += cd * 0.31; grill.juiceOnCoals += cd * 0.44; grill.cheeseOnCoals = (grill.cheeseOnCoals || 0) + cd; }
+          if (pr.cheeseDrip > 0) { const cd = pr.cheeseDrip * dt; dripOnBed(s, p.pos.x, cd * 0.31); grill.juiceOnCoals += cd * 0.44; grill.cheeseOnCoals = (grill.cheeseOnCoals || 0) + cd; }
         } else {
           pan.water += pr.juiceSide * dt;
           pan.oil += (pr.fatDrip + pr.fatSide) * dt;
@@ -3112,7 +3115,7 @@
           const o = it.rings[k], q = it.qBot * o.w * share;
           if (o.t) { qRing[o.j0] -= q * (1 - o.t); qRing[o.j0 + 1] -= q * o.t; } else qRing[o.j0] -= q;
         }
-        if (grill) { grill.fatOnCoals += it.dFat; grill.juiceOnCoals = (grill.juiceOnCoals || 0) + it.dJuice; }
+        if (grill) { dripOnBed(s, it.pos.x, it.dFat); grill.juiceOnCoals = (grill.juiceOnCoals || 0) + it.dJuice; }
         else { pan.oil += it.dFat; pan.water += it.dJuice; }
         itemBoil += it.steam; itemSizzle += it.sizzle; itemSmoke += it.smoke;
         // a topping is something against the metal too: it counts in the sizzle's contact and

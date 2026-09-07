@@ -466,6 +466,7 @@
       const hud = $('hud'), fit = () => document.documentElement.style.setProperty('--hud-h', `${hud.offsetHeight}px`);
       if (root.ResizeObserver) new ResizeObserver(fit).observe(hud);
       root.addEventListener('resize', fit); fit();
+      window.addEventListener('beforeunload', (e) => { if (s.shift && s.shift.n > 0 && s.shift.n < SHIFT_LEN) { e.preventDefault(); e.returnValue = ''; } }); // a reload loses the shift; the browser asks first
       window.addEventListener('keydown', (e) => {
         if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
         if (e.key === 'Tab' && s.phase !== 'order' && (s.forms.length > 1 || s.items.length)) {
@@ -631,6 +632,7 @@
           this.updateHUD();
           this.updateLog();
           this.updateChips();
+          this.btnClock = (this.btnClock || 0) + real; if (this.btnClock > 0.5) { this.btnClock = 0; this.refreshButtons(); } // smash/empty-ash follow the physics, not only clicks
           if (this.phase === 'rest') { const p = this.patty; $('rest-t').textContent = P.fmtTime(p ? p.restT || 0 : st.rest.t); $('rest-c').textContent = this.hard || !p ? '—' : fmt(P.centerT(p), 1) + ' °C'; }
         }
       } else {
