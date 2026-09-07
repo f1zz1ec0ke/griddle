@@ -75,7 +75,7 @@ function cookGrill(o) {
 
 function searchGrill(target, quick) {
   const grid = [];
-  const ventsL = quick ? [6, 8] : [5, 6, 7, 8, 10];
+  const ventsL = quick ? [6, 7, 8] : [5, 6, 7, 8, 10]; // 7 is the README's setting and the only one that scores 100: a quick sweep that skips it cannot report the window
   const thicks = quick ? [14, 18] : [14, 18, 22];
   const flips = quick ? [45, 60] : ['single', 45, 60, 90];
   const pulls = quick ? [-8, -6, -4, -2] : [-8, -5, -2];

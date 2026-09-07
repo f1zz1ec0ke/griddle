@@ -112,9 +112,10 @@
   /**
    * Wood on the coals. A chunk (not chips, not a log) is ~60 g of split hardwood: 700 kg/m³ air-dried
    * to about 12 % moisture, so roughly a 4 cm cube with 0.012 m² of surface. It does nothing at all
-   * for a minute or two — the bed has to boil the water out of it and take it to pyrolysis
+   * for the first three minutes — the bed has to boil the water out of it and take it to pyrolysis
    * temperature, around 300 °C, where the hemicellulose and cellulose start cracking — and then it
-   * smoulders for ten to fifteen minutes. The smoke rate peaks once the whole chunk is up to
+   * smoulders for fifteen to seventeen minutes. Measured on this bed: it catches at 3:11 over
+   * 610 °C coals (2:32 over 680 °C), peaks a minute later, and is spent at 20:10. The smoke rate peaks once the whole chunk is up to
    * temperature and decays as the chunk is eaten away, because a smouldering front lives on the
    * surface and the surface goes as m^⅔.
    *
@@ -483,7 +484,7 @@
     s.grill.bank = b;
     if (Math.abs(b - was) < 0.05) return;
     if (b < 0.05) logEvent(s, 'Raked the coals back out flat under the grate. One temperature everywhere again.', 'action');
-    else logEvent(s, `Banked the coals ${b > 0.75 ? 'hard' : 'partly'} to one side with the tongs (${(b * 100).toFixed(0)} %). The bed is deeper over there and bare ash on the other side: sear over the coals, then slide it across to finish. The bars take a minute or two to settle into two zones.`, 'action');
+    else logEvent(s, `Banked the coals ${b > 0.75 ? 'hard' : 'partly'} to one side with the tongs (${(b * 100).toFixed(0)} %). The bed is deeper over there and bare ash on the other side: sear over the coals, then slide it across to finish. The bars are half of the way to two zones in a couple of minutes and take eight to ten to settle — sear over the pile while they do.`, 'action');
   }
 
   /**
@@ -502,8 +503,8 @@
       : `Top vent ${(t * 100).toFixed(0)} % open. That and the bottom vent are in series — the smaller one sets the draught${t < 0.35 ? ', and the smoke is going to hang under the dome' : '.'}`, t < 0.05 ? 'warn' : 'action');
   }
   /**
-   * A chunk of wood on the coals. It sits there heating for a minute or two, then smoulders for
-   * ten to fifteen minutes; what a chunk is worth is in WOOD/SMOKE above.
+   * A chunk of wood on the coals. It sits there heating for about three minutes, then smoulders for
+   * a quarter of an hour; what a chunk is worth is in WOOD/SMOKE above.
    */
   function addWood(s, kind) {
     if (!s.grill) { logEvent(s, 'Wood goes on a fire, and there is no fire under a pan.', 'info'); return null; }
@@ -517,7 +518,7 @@
     };
     s.grill.woods.push(wd);
     if (s.grill.woods.length > 6) s.grill.woods.shift(); // a kettle only holds so many; the oldest is ash by now anyway
-    logEvent(s, `A ${(m0 * 1000).toFixed(0)} g chunk of ${spec.name.toLowerCase()} on the coals — ${spec.note}. It has to dry and reach ~300 °C before it gives you anything, and then it smoulders for a quarter of an hour.`
+    logEvent(s, `A ${(m0 * 1000).toFixed(0)} g chunk of ${spec.name.toLowerCase()} on the coals — ${spec.note}. It has to dry and reach ~300 °C before it gives you anything — about three minutes on a hot bed — and then it smoulders for a quarter of an hour.`
       + (s.grill.Tfire < 250 ? ' On a bed this cool it will just sit there.' : ''), 'action');
     return wd;
   }
@@ -1775,7 +1776,8 @@
    * (the knob) and nothing else. With the lid on the bottom and top vents are two orifices in
    * series, so the flows add as 1/A² = 1/A₁² + 1/A₂², i.e. A = A₁A₂/√(A₁²+A₂²): a smooth minimum.
    * Shutting either one shuts the fire down; opening one wide does not rescue the other. Both wide
-   * gives 0.71 of an open kettle, which is about what a lid costs. COAL.leak is the flow past a lid
+   * gives 0.77 of an open kettle: 0.71 for the two orifices in series, plus the 6 % that goes past
+   * the lid whatever the vents are doing. That is about what a lid costs. COAL.leak is that leak past a lid
    * that never quite seats, and it is the reason a smothered kettle takes minutes to go out and not
    * seconds.
    */
@@ -1984,10 +1986,13 @@
    * the rings still see the bed's average, the departure adds the asymmetry, and nothing is counted
    * twice. Each strip is a thin bar in balance with the fire under it, radiation in and out, hot gas
    * up through it and room air (or the dome) above; 4 mm of steel at the grate's 1.6 kg over 0.21 m²
-   * of bed is ~13 kJ/(m²K), so a strip settles in a couple of minutes — which is how long a real
-   * kettle takes to set two zones up. Conduction along the bars (50 W/mK through 4 mm of steel over
-   * a 6 cm strip, ~60 W/(m²K)) pulls neighbours together on a ~100 s time constant, so the zones
-   * blur at the boundary but survive.
+   * of bed is ~13 kJ/(m²K), so a strip on its own would settle in a couple of minutes. It is not on
+   * its own: conduction along the bars (50 W/mK through 4 mm of steel over a 6 cm strip,
+   * ~60 W/(m²K)) pulls neighbours together on a ~100 s time constant, so the zones blur at the
+   * boundary but survive — and the split takes far longer to arrive than one bar would. Measured
+   * after banking at vents 7: 53, 92, 121, 142 K apart at one-minute marks, 188 K settled at eight
+   * to ten minutes (228 K at vents 9), which is about how long a real kettle takes to set two zones
+   * up once the bars over the bare half have had time to give their heat back.
    */
   function stepBed(s, dt) {
     const g = s.grill, pan = s.pan, Tamb = s.env.Tamb, N = BANK.N;

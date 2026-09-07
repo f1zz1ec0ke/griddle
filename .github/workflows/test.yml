@@ -30,7 +30,11 @@ jobs:
 
       - name: run the suite
         # test/run.js shards test/physics.test.js across min(4, cores) workers and fails if the
-        # shards do not add up to every test in the file. TEST_TIMEOUT is the per-test limit in ms.
+        # shards do not add up to every test in the file. TEST_TIMEOUT (ms) is what one worker may
+        # spend on its whole shard — node has no per-test limit to offer here (it applies
+        # --test-timeout to the file, and no timer can interrupt a synchronous test), so this is a
+        # cap on the shard, checked between tests. A shard is ~30-45 s on this runner's cores; ten
+        # minutes is the belt, the job's timeout-minutes above is the braces.
         run: npm test
         env:
           TEST_TIMEOUT: 600000

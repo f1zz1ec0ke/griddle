@@ -1,8 +1,11 @@
-// node --test test/
-const test = require('node:test');
+// node --test test/physics.test.js   (or `npm test`, which shards this file across workers)
+const nodeTest = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const P = require('../js/physics.js');
 const DT = 0.025;
+
+const test = nodeTest.test;
 
 function preheat(s, target) { P.setKnob(s, 8); let g = 0; while (s.pan.T < target && g++ < 80000) P.step(s, DT); return s.t; }
 function cookFor(s, seconds) { const until = s.t + seconds; while (s.t < until) P.step(s, DT); }
@@ -278,6 +281,9 @@ test('careless technique is still punished', () => {
   const noRest = recipe('medium-rare', 18, 46, { rest: 0 });                 // cut straight off the heat
   for (const [name, r] of Object.entries({ thickOneFlip, pressed, nuclear, noCarry, noRest })) console.log(`   ${name}: ${r.total} ${JSON.stringify(r.parts)}`);
   assert.ok(thickOneFlip.total < 90, 'thick single flip'); assert.ok(pressed.total < 92, 'pressed'); assert.ok(nuclear.total < 85, 'nuclear'); assert.ok(noCarry.total < 80, 'no carry-over allowance');
+  // and the rest is not decoration: cut straight off the heat the centre is 6 °C short of the band
+  // it would have carried into, and the doneness mark collapses (56/100 measured, 6 of 50 for it)
+  assert.ok(noRest.total < 80, `cut straight off the heat: ${noRest.total}`);
 });
 
 // ---------------------------------------------------------------- charcoal grill
@@ -668,6 +674,32 @@ test('the benchmark harness measures a sane cost per simulated second', () => {
   assert.ok(Number.isFinite(r.perSim) && r.perSim > 0, `perSim=${r.perSim}`);
   assert.ok(r.perSim < 200, `2 sim-seconds should not cost ${r.perSim} ms each`);
   assert.equal(r.all.length, 4);
+});
+
+test('three patties in a pan still fit the frame the game gives them', () => {
+  // The harness test above is a smoke test — 200 ms per simulated second would be a 15× regression
+  // and it would still pass. This is the guard with a number on it. The case is the browser's worst
+  // one: three patties in one pan, which is what a three-top ticket is, and the budget is the frame
+  // it has to fit in. At 8× speed a 60 Hz frame advances 8/60 = 0.133 simulated seconds, so the
+  // physics costs perSim × 0.133 ms of a 16.7 ms frame.
+  //
+  // Measured on the box this was written on (4-core Xeon at 2.8 GHz, node 22): 13.2–14.7 ms/sim-s,
+  // and 13.2–14.7 again with four of these running at once, which is how `npm test` runs it — the
+  // model is a tight loop over Float64Arrays, so it does not lose much to a busy machine. The bar
+  // is 3× the slowest of those, 44 ms/sim-s: a real regression trips it, a slow CI runner does not.
+  const perf = require('./perf.js');
+  const r = perf.bench('three patties, 20 s', 20, () => {
+    const s = P.createState({ pan: 'castiron', stove: 'gas' }); preheat(s, 230); P.addFat(s, 'canola', 8);
+    const ps = [std(), std({ thicknessMm: 14 }), std({ thicknessMm: 18 })];
+    const spots = P.pattySpots(3, s.pan.floorR, Math.max(...ps.map((q) => q.D / 2)));
+    ps.forEach((q, i) => P.placePatty(s, q, spots[i]));
+    return { s, ps };
+  }, ({ s }) => cookHeld(s, 20, 230));
+  const perFrame = (r.perSim * 8) / 60;
+  console.log(`   three patties: ${r.perSim.toFixed(2)} ms per simulated second, ${perFrame.toFixed(2)} ms of an 16.7 ms frame at 8×`);
+  assert.ok(r.perSim < 44, `three patties cost ${r.perSim.toFixed(1)} ms per simulated second (13–15 measured, 44 is the line)`);
+  // and the thing that number is for: at 8× the model has to leave the renderer most of the frame
+  assert.ok(perFrame < 6, `${perFrame.toFixed(2)} ms of physics in a 16.7 ms frame leaves the renderer nothing`);
 });
 
 // ---------------------------------------------------------------- pan items (the toppings)
@@ -1107,7 +1139,9 @@ test('scraping frees a stuck patty, costs it a second of contact, and says so wh
   cookFor(s, 1.2);
   assert.equal(p.scrapeT, 0, 'and the second runs out in simulated time');
   const after = s.diag.panQ;
-  assert.ok(after > s.diag.panQ * 0.5 && after > 100, `and the heat comes back once it is down: ${after.toFixed(0)} W`);
+  // against `before`, not against itself: the face is back on the metal, so the draw is what it was
+  // before the blade went under it (measured 385 W before, 133 W on the blade, 392 W after)
+  assert.ok(after > before * 0.8 && after > 100, `and the heat comes back once it is down: ${before.toFixed(0)} → ${after.toFixed(0)} W`);
   // a released patty just slides
   cookFor(s, 200);
   assert.ok(!p.faceDown.stuck);
@@ -1890,4 +1924,63 @@ test('a hand over the meat reads the meat, not the metal hidden under it', () =>
   assert.ok(overMeat.seconds > bare.seconds * 1.5, `over a 20 mm patty the hand lasts longer than over bare 250 °C iron: ${overMeat.seconds.toFixed(1)} vs ${bare.seconds.toFixed(1)} s`);
   const beside = P.handTest(s, { x: 0.11, y: 0 });
   assert.ok(beside.seconds < overMeat.seconds, 'beside the patty the metal is in view again');
+});
+
+// ---------------------------------------------------------------- the runner over this file
+// `npm test` deals these tests out to workers by name. Everything it can see it runs; anything it
+// cannot see it silently does not — so the scan that reads this file is worth a test of its own.
+test('the runner sees every test in this file, whatever the indentation, and refuses a name it cannot match', () => {
+  const runner = require('./run.js');
+  const src = fs.readFileSync(__filename, 'utf8');
+  const names = runner.testNames(src);
+  // two independent scans: if they ever disagree, the name scan has stopped seeing a declaration,
+  // which is the one failure the runner cannot notice on its own — a test it never deals out is a
+  // test it never misses, and the shard still adds up
+  assert.equal(names.length, runner.countTests(src), `the runner reads ${names.length} names out of ${runner.countTests(src)} declarations`);
+  assert.ok(names.includes('patty geometry: 150 g at 20 mm is a ~10 cm patty'), 'the first test in the file');
+  assert.ok(names.includes('the README recipe scores 100 on every ticket'), 'the one that must never break');
+  // flat, indented, in a block, `.only`, and a name with an escaped quote in it: all still tests.
+  // `test` is spelled out below so this fixture is not counted as a declaration in this file.
+  const T = 'test';
+  const sample = [`${T}('flat', () => {});`, `  ${T}('indented', () => {});`, `\t${T}.only(\`inside a loop\`, () => {});`, `  ${T}("say \\"ah\\"", () => {});`].join('\n');
+  assert.deepEqual(runner.testNames(sample), ['flat', 'indented', 'inside a loop', 'say "ah"']);
+  assert.equal(runner.countTests(sample), 4);
+  // one tucked onto a line with other code is not read — and is not lost either: the two scans
+  // disagree, which is what makes the runner refuse the run instead of dealing out a suite with a
+  // hole in it
+  const hidden = `${sample}\nif (x) { ${T}('tucked away', () => {}); }`;
+  assert.equal(runner.testNames(hidden).length, 4);
+  assert.equal(runner.countTests(hidden), 5);
+  // a name only known at run time can never be matched by --test-name-pattern, so it is refused
+  // out loud instead of being dealt to nobody
+  assert.throws(() => runner.testNames(`${T}(\`per wood: \${wood}\`, () => {});`), /template/);
+});
+
+test('the shard timeout is a cap on the worker, which is what run.js and the README say it is', () => {
+  // `npm test` gives each worker `--test-timeout`, and the number is documented as the budget for
+  // that worker's whole shard rather than for one test. This is why: node applies the option to the
+  // test that wraps the file, and it cannot interrupt a synchronous test at all. If a node upgrade
+  // ever changes either half of that, this fails and the docs get another look.
+  const os = require('node:os'), path = require('node:path'), { spawnSync } = require('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'griddle-timeout-'));
+  const T = 'test';  // spelled out so test/run.js's scan of this file does not count the fixtures
+  // NODE_TEST_CONTEXT has to go: a child that thinks it is already inside a test run refuses to
+  // run any files ("run() is being called recursively") and hands back an empty report
+  const env = { ...process.env }; delete env.NODE_TEST_CONTEXT;
+  const run = (name, body, args) => {
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, body);
+    return spawnSync(process.execPath, ['--test', ...args, '--test-reporter=spec', file], { encoding: 'utf8', env });
+  };
+  // three tests of 120 ms under a 300 ms cap: every test is well inside it, the file is not
+  const each = run('each.test.js', `const { ${T} } = require('node:test');\nconst sleep = (ms) => new Promise((r) => setTimeout(r, ms));\n`
+    + [1, 2, 3].map((n) => `${T}('t${n}', async () => { await sleep(120); });`).join('\n'), ['--test-timeout=300']);
+  assert.match(each.stdout, /✔ t1/, each.stdout);
+  assert.match(each.stdout, /cancelled 1/, `the file itself is what times out, not a test:\n${each.stdout}`);
+  assert.match(each.stdout, /each\.test\.js.*timed out/s, each.stdout);
+  // and a synchronous test cannot be cancelled by its own timeout: the timer never gets a turn
+  const spin = run('spin.test.js', `const { ${T} } = require('node:test');\n${T}('spin', { timeout: 100 }, () => { const t0 = Date.now(); while (Date.now() - t0 < 400); });\n`, []);
+  assert.match(spin.stdout, /✔ spin/, spin.stdout);
+  assert.match(spin.stdout, /cancelled 0/, `a 400 ms synchronous test under a 100 ms timeout still passes:\n${spin.stdout}`);
+  fs.rmSync(dir, { recursive: true, force: true });
 });

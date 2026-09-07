@@ -31,28 +31,43 @@ npm run player       # sweeps recipes looking for a 100; `npm run player -- gril
 `npm test` reads the test names out of `test/physics.test.js`, deals them round-robin into
 `min(4, cores)` worker processes and runs each worker with `--test-name-pattern`, because the suite
 is several hundred simulated minutes of cooking and node runs the tests in a file one at a time. It
-refuses to report a pass unless the shards add up to every test in the file. `TEST_WORKERS=1` makes
-it serial, `TEST_TIMEOUT` (ms, default 600000) is the per-test limit, and `npm test -- <substring>`
-runs the tests whose names contain that substring. `.github/workflows/test.yml` runs the smoke
+refuses to report a pass unless the shards add up to every test in the file — it reads them at any
+indentation, and refuses to run at all if it finds a test whose name is a template it could never
+match, or if its two independent scans of the file disagree. `TEST_WORKERS=1` makes it serial and
+`npm test -- <substring>` runs the tests whose names contain that substring.
+
+`TEST_TIMEOUT` (ms, default 600000) is **one worker's budget for its whole shard**, not a per-test
+limit, because a per-test limit is not on offer: node applies `--test-timeout` to the test that
+wraps the file (four 150 ms tests under `--test-timeout=400` all pass and the *file* is cancelled at
+401 ms), and a `{ timeout }` on a test cannot interrupt a synchronous one anyway — the timer is a
+task on the event loop and every test here is one long synchronous grind through the model. So the
+number caps the shard, a shard that runs over is cancelled where it stands, and the runner says
+which worker ran out of time and which test it had last finished. Measured here (4 cores, node 22):
+a shard on four workers is 58–83 s, the whole file in one worker is 227 s, and the slowest single
+test in it is 17 s — so ten minutes is seven times the worst shard and two and a half times the
+serial run. Two tests in the suite pin all of that. `.github/workflows/test.yml` runs the smoke
 import and `npm test` on Node 22 for every push and pull request.
 
 ### End-to-end
 
 `test/e2e/` plays whole tickets through the actual page in headless Chromium: it serves the folder
 on a free port, clicks the real buttons, drags the real sliders, screenshots what it sees into
-`test/e2e/out/` (gitignored) and fails on a single uncaught page error. Three scenarios:
+`test/e2e/out/` (gitignored) and fails on a single uncaught page error. Six scenarios:
 
 | `npm run e2e -- <name>` | what it plays |
 |---|---|
 | `medium-rare` | the README recipe end to end; it has to come out 100/100 |
 | `ticket-of-three` | three burgers in one pan, staggered, each pulled at its own temperature |
 | `charcoal` | swapping the pan for the kettle mid-ticket, lighting it, the lid, and a flare-up |
+| `shift` | six tickets on one pan, one of them sent back, and the end-of-shift card that has to add up |
+| `viewport` | the renderer gives its memory back and draws what the model says is there |
+| `interface` | hard mode keeps its promise, the keys work, and the panel survives a small window |
 
 Playwright is not a dependency of this repo (there is no build step and no `node_modules`); it is
 expected to be installed globally, so run the scenarios with `NODE_PATH` pointing at it:
 
 ```
-NODE_PATH=/opt/node22/lib/node_modules npm run e2e            # all three
+NODE_PATH=/opt/node22/lib/node_modules npm run e2e            # all of them
 NODE_PATH=/opt/node22/lib/node_modules npm run e2e -- charcoal   # just one
 ```
 
@@ -246,12 +261,14 @@ more, and only goes crisp once the lean is dry *and* the fat it is going to give
 minutes at 180 °C (that is the metal under the rasher; the centre of a pan preheated wide open runs
 40 K over the IR gun's area mean), or black in three at 260. An **egg** is a bottom white, a top white and a yolk: the white sets at 62–65 °C from the pan up (the
 top of it is still soft at a minute and set by two), the yolk thickens from 65 and is solid by 70,
-and because the yolk sets from the skin inward, sunny side up leaves it runny for four or five
-minutes. A gelled white is not a puddle any more — it blisters and rides off the metal, so the
+and because the yolk sets from the skin inward, sunny side up leaves it runny for about three
+minutes (measured on a 160–200 °C pan: jammy at 3:15, hard ten seconds later). A gelled white is not a puddle any more — it blisters and rides off the metal, so the
 contact collapses to under a third of the raw white's and the water left in it is held in the
-protein: a fried egg loses 10–15 % of its mass, not a third of it. A lid changes that in ninety seconds — saturated air
+protein: a fried egg loses 10–15 % of its mass, not a third of it. A lid changes that in about eighty seconds — saturated air
 condensing on a cold yolk is worth far more than the convection — and turning the egg over puts the
-yolk a millimetre of white off the metal, which is over-easy in under a minute and over-hard in two.
+yolk a millimetre of white off the metal, which is over-easy at once and jammy half a minute later.
+The jammy window is narrow either way: the yolk goes from thickened to crumbly in four to seven
+seconds, so it is a thing you watch, not a thing you time.
 The rim that ran out into the fat dries and browns into a lace. **Onions** are 89 % water and the
 whole model is that water: the layer against the metal boils, the pile above re-wets it as fast as
 juice can drain down through a heap of slices, and until that stops the onions sweat at 100 °C and
@@ -301,8 +318,11 @@ about a third of the view factor, with gas that has crossed the kettle and mixed
 the way. The bars answer accordingly: the grate is still solved as rings (that is where its heat
 capacity and everything the meat draws out of it live), with the two-zone difference carried as a
 zero-mean departure across the bank axis, each strip a thin bar in balance with the fire under it
-and conducting along the bars to its neighbours. 4 mm of steel is about 13 kJ/(m²K), so a strip
-takes a couple of minutes to settle and the zones then hold: **150–250 °C between the two sides**,
+and conducting along the bars to its neighbours. 4 mm of steel is about 13 kJ/(m²K), so a strip on
+its own would settle in a couple of minutes — but it is conducting into its neighbours on a ~100 s
+time constant and the bed under it is still moving, so the split is only about half there at two
+minutes and takes eight to ten to stop: 53, 92, 121, 142 K at one-minute marks and 188 K in the end
+at vents 7; 228 K at vents 9. Settled, that is **180–230 °C between the two sides**,
 and about a sixth of the radiant load (0.36 of the view factor at 0.75 of the bed's rise over
 ambient, and radiation goes as T⁴). A patty reads the fire at its own position — bottom boundary,
 crust temperature cap, edge radiation and flare-ups included, because a flare burns where the fat
@@ -310,9 +330,10 @@ lands, not over bare ash. Sear over the coals, slide it across, and finish it ge
 
 **Wood, and the smoke that is the point of a fire.** A chunk is ~60 g of split hardwood: 700 kg/m³
 air-dried to about 12 % moisture, so a 4.4 cm block with 0.012 m² of surface for the fire to work
-on. It does nothing at all for a minute or two — the bed has to boil 7 g of water out of it (pinned
-at 100 °C, full latent heat, like everything else in here) and then take it to pyrolysis
-temperature, about 300 °C — and then it smoulders for ten to fifteen minutes. The rate follows the
+on. It does nothing at all for the first three minutes — the bed has to boil 7 g of water out of it
+(pinned at 100 °C, full latent heat, like everything else in here) and then take it to pyrolysis
+temperature, about 300 °C, which on a 610 °C bed takes 3:11 and on a 680 °C one 2:32 — and then it
+smoulders for fifteen to seventeen minutes. The rate follows the
 remaining surface, m^⅔, because a smouldering front lives on a surface: the smoke peaks a couple of
 minutes after the chunk is alight and decays as it is eaten away. Pyrolysis is endothermic
 (~400 kJ/kg), which is what holds a smouldering chunk in the 350–450 °C band instead of running away
@@ -338,8 +359,9 @@ hard.
 **Two vents in series.** With the lid off the bottom vent is the only vent. With the lid on the two
 are orifices in series and the flows add as 1/A² = 1/A₁² + 1/A₂², i.e. A = A₁A₂/√(A₁²+A₂²) — a
 smooth minimum, so shutting either one shuts the fire down and opening one wide does not rescue the
-other. Both wide gives 0.71 of an open kettle, which is about what a lid costs; both shut leaves the
-6 % that leaks past a lid that never quite seats, and the bed sags a couple of hundred degrees over
+other. Both wide gives 0.77 of an open kettle — 0.71 for the two orifices in series plus the 6 % that
+leaks past a lid that never quite seats, which is about what a lid costs; both shut leaves that 6 %
+on its own, and the bed sags a couple of hundred degrees over
 five minutes rather than going out in seconds.
 
 **Ash, and the bed as something you keep.** Lump charcoal is ~6 % mineral ash by mass. Half of it
@@ -412,7 +434,8 @@ burger always says the same thing and the next one does not.
 **A shift is six tickets.** Each one carries a target time from the moment you say "yes chef":
 roughly 1.6× the recipe — the longest burger on the ticket, plus 40 % of each of the others (they
 share the pan, but a crowded pan sags and every patty is formed by hand), plus the rest — so one
-medium-rare is quoted at 13:10 and a three-top at 20:00. The HUD ticket shows the clock against it
+medium-rare is quoted at 13:10 and a three-top somewhere between 20:00 and 24:00 depending on what
+is on it (rare, medium and medium-well is 20:00; medium-rare, medium-well and well-done is 23:50). The HUD ticket shows the clock against it
 ("7:40 / 13:10"); the clock runs in kitchen time, so speeding the simulation up does not buy you
 service time. Going over costs up to 10 ticket points at twice the quote, and the table says so.
 A ticket with a plate sent back scores nothing for the shift, and service moves on. At the end you
@@ -442,7 +465,7 @@ their quoted times and the shift card has nothing to complain about.
 
 In **hard mode** the same recipe is reachable without a single number. Preheat until a hand over the
 pan gives you about twenty seconds and the note says *medium* (that is a 200–220 °C pan; the grill
-chart does not apply over a pan — eight seconds over cast iron is 300 °C and a black crust), lay it
+chart does not apply over a pan — nine seconds over cast iron is 300 °C and a black crust), lay it
 in, and wait for the loud crackle to
 drop to a hiss before you flip — that is the underside telling you it has dried and browned. Press
 it: soft with a spring is rare, springy is medium-rare, firm with a little give is medium. Pull it
@@ -454,8 +477,9 @@ Toppings are scored separately and can only cost you the ticket, never the patty
 in: the buns want about a minute face-down on 200 °C metal (watch the browning index in the
 inspector — 1.2 is toasted, 4.5 is too far, and char over 0.35 is a black bun); bacon wants eight
 minutes at 180 °C with a couple of turns, not four at 260 (it comes off at a little under half its
-raw weight — that is what crisp bacon weighs, not a fifth); an egg wants the lid on for ninety
-seconds, or a flip and forty seconds, for the jammy yolk; onions want a quarter of an hour on
+raw weight — that is what crisp bacon weighs, not a fifth); an egg wants the lid on for about eighty
+seconds, or a flip and thirty, for the jammy yolk — and the window is only a few seconds wide, so
+watch the yolk rather than the clock (ninety under the lid is already hard); onions want a quarter of an hour on
 medium with a stir every minute or two, and they will drag the pan down 20 °C while they sweat, so
 start them before the meat. Take each one off when it is right — a topping left in the pan keeps
 cooking — and use the **Build onto** buttons to say which burger it belongs to.
@@ -477,8 +501,9 @@ vents shut and the wood stops burning its volatiles: the bed falls, the smoke go
 creosote it leaves on the meat costs up to six. If the lid is on, leave the lid vent open — that is
 what draws the smoke across the food and out.
 
-That last one is what the **two-zone fire** is for. Bank the coals fully, give the bars two minutes
-to settle, and sear over the pile — then, once the crust has set (about three minutes, so it lifts
+That last one is what the **two-zone fire** is for. Bank the coals fully, give the bars five to ten
+minutes to settle (they are half there in two, and you can sear over the pile while they find the
+rest of it), and sear over the pile — then, once the crust has set (about three minutes, so it lifts
 without tearing), drag it across to the bare side and let it coast. A 20 mm patty over vents on 9
 that stays over the coals lands medium-rare with a face and a half of char and scores in the
 seventies; the same patty seared for three minutes and then moved finishes with a quarter of the
