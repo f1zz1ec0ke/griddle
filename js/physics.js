@@ -716,7 +716,7 @@
     const fd = p.faceDown, wasStuck = fd.stuck;
     const torn = tearStuck(s, p, SCRAPE_TEAR);
     fd.stuck = false; // the blade is under it: whatever was welded is off the metal now
-    p.scrapeT = SCRAPE_TIME;
+    p.scrapeT = SCRAPE_TIME; p.scrapedFree = true; // ...and if the face is still raw when it goes back down, it welds again (see stepPatty)
     if (torn > 0) logEvent(s, `Worked the spatula under patty ${p.id}. It was welded on: ${(torn * 100).toFixed(0)} % of the face came away — a fraction of what lifting it would have cost — and it is free now.`, 'warn');
     else logEvent(s, `Worked the spatula under patty ${p.id}: it moves freely.${wasStuck ? ' The crust had set and let go on its own; the blade only confirmed it.' : ''}`, 'action');
     return { ok: true, torn, free: true };
@@ -961,20 +961,23 @@
     // view factor from a point to a coaxial disc of radius R at height z: R²/(R²+z²)
     const vf = (R, z) => (R * R) / (R * R + z * z);
     let rad = 0, conv = 0, source;
+    // a hand over a patty sees the patty: its top face, at 60–100 °C, fills the middle of the view and hides the metal and most of the coals under it
+    const over = s.patties.find((q) => q.where === 'pan' && (q.pos.x - x) ** 2 + (q.pos.y - y) ** 2 < (q.D / 2) ** 2) || null;
+    const Tmeat = over ? layerMean(over, over.T, over.Nz - 1) : null;
     if (s.grill) {
       const bed = bedAt(s, x), Rbed = pan.floorR * 0.88; // the bed is a little smaller than the grate it sits under
       const Fbars = vf(pan.floorR, HAND.z) * pan.barFrac;
-      const Fbed = vf(Rbed, HAND.z + HAND.bedDrop) * (1 - pan.barFrac) * bed.view;
+      const Fbed = vf(Rbed, HAND.z + HAND.bedDrop) * (1 - pan.barFrac) * bed.view * (over ? 0.35 : 1);
       // the coals radiate from their grey ash skin, not from their glowing interior
       const Tash = Tamb + HAND.ash * (bed.Tfire - Tamb);
-      const Tbar = panTatXY(s, x, y);
+      const Tbar = over ? 0.4 * panTatXY(s, x, y) + 0.6 * Tmeat : panTatXY(s, x, y);
       rad = k * (Fbed * (p4(Tash + 273.15) - Tsk4) + Fbars * (p4(Tbar + 273.15) - Tsk4));
       conv = HAND.hFire * Math.max(0, bed.Tgas - HAND.Tskin);
       source = { Tbar, Tfire: bed.Tfire };
     } else {
       // at 8 cm most of the view is the metal within a hand's width of the spot; the rest of the
       // floor fills in the edges
-      const Tlocal = panTatXY(s, x, y), Tsurf = 0.65 * Tlocal + 0.35 * pan.T;
+      const Tlocal = over ? 0.35 * panTatXY(s, x, y) + 0.65 * Tmeat : panTatXY(s, x, y), Tsurf = 0.65 * Tlocal + 0.35 * pan.T;
       rad = k * pan.emiss * vf(pan.floorR, HAND.z) * (p4(Tsurf + 273.15) - Tsk4);
       conv = HAND.h * Math.max(0, Tamb + HAND.plume * (Tsurf - Tamb) - HAND.Tskin);
       source = { Tbar: Tlocal, Tfire: 0 };
@@ -1483,7 +1486,11 @@
     p.surfT = surfT;
     fd.charRate = charRate;
     fd.crisp = clamp(fd.crisp + (dryMean > 0.6 ? 0.02 : -0.01) * dt, 0, 1);
-    if (fd.stuck && (fd.brown >= 0.5 * (bb.release || 1) + 0.15 || dryMean > 0.6)) fd.stuck = false;
+    const setEnough = fd.brown >= 0.5 * (bb.release || 1) + 0.15 || dryMean > 0.6;
+    if (fd.stuck && setEnough) fd.stuck = false;
+    // a scraped face goes back onto the metal when the blade comes out; raw protein welds to hot
+    // steel within seconds, so unless the crust has set in the meantime it is stuck again
+    if (!fd.stuck && p.scrapedFree && p.scrapeT <= 0) { p.scrapedFree = false; if (!setEnough && (bb.release || 0) > 0) fd.stuck = true; }
     // top face: submerged in hot fat or under a broiling lid it browns like the bottom
     const fu = p.faceUp;
     if ((bt.oil || bt.rad) && !p.cheeses.length) {

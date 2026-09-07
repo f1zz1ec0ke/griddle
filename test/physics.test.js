@@ -1621,3 +1621,27 @@ test('flipping turns the peak-temperature record over with the meat', () => {
   P.flipPatty(s);
   assert.equal(p.Tpk[(p.Nz - 1) * p.Nr], bot); assert.equal(p.Tpk[0], top);
 });
+
+test('a scraped raw face welds itself back on when the blade comes out; a set one stays free', () => {
+  // scrape a raw patty at 5 s: the blade frees it for the second it is under it, then raw protein
+  // on hot steel welds again; scrape one whose crust has set and it stays free
+  const s = P.createState({ pan: 'stainless' }); preheat(s, 220); P.addFat(s, 'canola', 6);
+  const p = std({ thicknessMm: 18 }); P.placePatty(s, p); cookHeld(s, 5, 220);
+  assert.ok(p.faceDown.stuck, 'raw meat on stainless is welded');
+  P.scrape(s, p); assert.ok(!p.faceDown.stuck, 'free while the blade is under it');
+  cookHeld(s, 4, 220);
+  assert.ok(p.faceDown.stuck, 'back on the metal and raw, it is welded again');
+  cookHeld(s, 120, 220);
+  P.scrape(s, p); cookHeld(s, 4, 220);
+  assert.ok(!p.faceDown.stuck, 'once the crust has set the scraped face stays free');
+});
+
+test('a hand over the meat reads the meat, not the metal hidden under it', () => {
+  const s = P.createState({}); preheat(s, 250);
+  const bare = P.handTest(s, { x: 0, y: 0 });
+  const p = std({ thicknessMm: 20 }); P.placePatty(s, p, { x: 0, y: 0 }); cookHeld(s, 60, 250);
+  const overMeat = P.handTest(s, { x: 0, y: 0 });
+  assert.ok(overMeat.seconds > bare.seconds * 1.5, `over a 20 mm patty the hand lasts longer than over bare 250 °C iron: ${overMeat.seconds.toFixed(1)} vs ${bare.seconds.toFixed(1)} s`);
+  const beside = P.handTest(s, { x: 0.11, y: 0 });
+  assert.ok(beside.seconds < overMeat.seconds, 'beside the patty the metal is in view again');
+});

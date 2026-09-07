@@ -321,7 +321,7 @@
     // ------------------------------------------------------------ binding
     bind() {
       const s = this;
-      $('btn-accept').onclick = () => { s.ticketTiming = true; s.setPhase('form'); };  // the ticket clock starts at “yes chef”
+      $('btn-accept').onclick = () => { s.ticketTiming = true; s.setSpeed(1); s.setPhase('form'); };  // the ticket clock starts at “yes chef”, at 1× — the speed buttons are hidden while forming, so the last ticket's 8× must not carry over
       const link = (id, key, fnv, fnd) => { const el = $(id); el.addEventListener('input', () => { s.form[key] = fnv(el.value); fnd && (fnd.textContent = fnd.dataset.fmt.replace('%', s.form[key])); s.rebuildPreview(); }); };
       link('f-mass', 'massG', Number, $('f-mass-v')); link('f-thick', 'thicknessMm', Number, $('f-thick-v')); link('f-work', 'work', (v) => Number(v) / 100, $('f-work-v'));
       $('f-blend').addEventListener('change', (e) => { s.form.blend = e.target.value; s.rebuildPreview(); });
@@ -336,7 +336,7 @@
       });
       this.vp.onPick = (o) => { const i = s.patties.indexOf(o); if (i >= 0) s.select(i); else if (s.items.indexOf(o) >= 0) s.selectItem(o); };
       // equipment
-      const swapStove = () => { s.state = P.createState({ pan: s.equip.pan, stove: s.equip.stove }); s.vp.setStove(s.equip.stove); s.vp.setPan(s.equip.pan); s.vp.clearStains(); $('knob').value = 0; $('knob-v').textContent = '0'; s.layoutSpots(); s.applyEquipUI(); P.logEvent(s.state, s.state.grill ? 'Wheeled the kettle out. Cold coals, cold grate: light it and wait.' : `Swapped to ${s.state.pan.name.toLowerCase()} on ${s.state.stove.name.split(' (')[0].toLowerCase()}: a cold pan.`, 'action'); s.logN = -1; };
+      const swapStove = () => { s.state = P.createState({ pan: s.equip.pan, stove: s.equip.stove }); s.vp.setStove(s.equip.stove); s.vp.setPan(s.equip.pan); s.vp.clearStains(); $('knob').value = 0; $('knob-v').textContent = '0'; s.layoutSpots(); s.applyEquipUI(); s.refreshButtons(); $('btn-lid').textContent = s.state.lid ? 'Lid off' : 'Lid on'; P.logEvent(s.state, s.state.grill ? 'Wheeled the kettle out. Cold coals, cold grate: light it and wait.' : `Swapped to ${s.state.pan.name.toLowerCase()} on ${s.state.stove.name.split(' (')[0].toLowerCase()}: a cold pan.`, 'action'); s.logN = -1; };
       $('e-stove').addEventListener('change', (e) => { s.equip.stove = e.target.value; if (s.phase === 'cook' && !s.anyPlaced()) swapStove(); });
       $('e-pan').addEventListener('change', (e) => { s.equip.pan = e.target.value; if (s.phase === 'cook' && !s.anyPlaced()) swapStove(); });
       $('e-fat').addEventListener('change', (e) => { s.equip.fat = e.target.value; });
@@ -408,6 +408,7 @@
         s.vp.forceTex = true; s.refreshButtons(); s.updateChips();
       };
       $('btn-hand').onclick = () => {
+        if (s.state.grill && s.state.lid) { s.note('The lid is on: a hand on the lid says warm and nothing else. Take it off to read the fire.'); return; }
         const p = s.patty && s.patty.where === 'pan' ? s.patty : null; // over the meat if there is meat, otherwise over the middle
         const count = (r) => `${r.seconds >= 59 ? 'you could leave it there' : `${r.seconds < 10 ? r.seconds.toFixed(1) : Math.round(r.seconds)} s before you pull it away`}: ${r.word}`;
         const g = s.state.grill;
@@ -442,6 +443,8 @@
       $('btn-audio').onclick = () => { const on = s.audio.toggle(); $('btn-audio').textContent = on ? '🔊 Sound on' : '🔇 Sound off'; };
       $('hard').addEventListener('change', (e) => {
         s.hard = e.target.checked; document.body.classList.toggle('hard', s.hard);
+        $('btn-inspector').hidden = s.hard; if (s.hard) $('inspector').hidden = true; // the inspector is a wall of thermometers
+        s.logN = -1; // redraw the log with or without its numbers
         // no thermometers means no thermometers: the probe comes out too
         if (s.hard && s.probe.inserted) { s.probe.inserted = false; s.probe.reading = null; $('btn-probe').textContent = 'Insert probe'; }
         s.refreshButtons();
@@ -640,7 +643,7 @@
       $('h-probe').textContent = this.probe.reading == null ? '—' : fmt(this.probe.reading, 1) + ' °C';
       const it = this.selItem;
       $('h-side').textContent = it
-        ? `${it.label} · ${P.itemState(it).state}${it.where === 'pan' ? ` · ${fmt(P.itemT(it), 0)} °C · ${P.fmtTime(it.timeDown)} this side` : it.burger ? ` · on burger ${it.burger}` : ' · at the pass'}`
+        ? `${it.label} · ${P.itemState(it).state}${it.where === 'pan' ? ` · ${this.hard ? '' : fmt(P.itemT(it), 0) + ' °C · '}${P.fmtTime(it.timeDown)} this side` : it.burger ? ` · on burger ${it.burger}` : ' · at the pass'}`
         : p && where === 'pan' ? `${this.patties.length > 1 ? `patty ${p.id} · ` : ''}face ${p.faceDown.id} down · ${P.fmtTime(p.timeDown)} this side` : '';
       if (st.grill && (st.grill.bank || 0) > 0.05 && !this.hard) {
         $('h-pan').textContent = `${fmt(st.grill.Thot, 0)} / ${fmt(st.grill.Tcool, 0)} °C`;
@@ -743,7 +746,9 @@
     updateLog() {
       const ev = this.state.events; const el = $('log');
       if (this.logN === ev.length) return; this.logN = ev.length;
-      el.innerHTML = ev.slice(-14).map((e) => `<div class="ev ${e.kind}"><span>${P.fmtTime(e.t)}</span>${e.text}</div>`).join('');
+      // hard mode has no thermometers, so the log does not get to quote them either
+      const mask = (t) => this.hard ? t.replace(/-?\d+(?:\.\d+)?\s*°C/g, '·· °C') : t;
+      el.innerHTML = ev.slice(-14).map((e) => `<div class="ev ${e.kind}"><span>${P.fmtTime(e.t)}</span>${mask(e.text)}</div>`).join('');
       el.scrollTop = el.scrollHeight;
     }
     drawChart(cv, trace) {
