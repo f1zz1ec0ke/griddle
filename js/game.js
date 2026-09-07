@@ -70,7 +70,7 @@
       this.ticketTarget = P.ticketTargetTime(items);
       this.ticketClock = 0; this.ticketTiming = false; this.ticketRecorded = false; this.verdicts = null;
       this.forms = items.map((id) => ({ ...DEFAULT_FORM, target: id }));
-      this.previews = []; this.patties = []; this.sel = 0; this.result = null; this.ticketResult = null;
+      this.previews = []; this.patties = []; this.sel = 0; this.selItem = null; this.result = null; this.ticketResult = null;
       $('order-who').textContent = this.ticket.who;
       $('order-line').textContent = this.ticket.line;
       $('order-target').textContent = items.map((id) => this.label(id)).join(' + ').toUpperCase();
@@ -438,7 +438,9 @@
       $('btn-probe').onclick = () => { s.probe.inserted = !s.probe.inserted; s.probe.reading = null; $('btn-probe').textContent = s.probe.inserted ? 'Pull probe' : 'Insert probe'; };
       $('probe-depth').addEventListener('input', (e) => { s.probe.depth = Number(e.target.value) / 100; $('probe-depth-v').textContent = e.target.value + ' %'; });
       $('btn-cut').onclick = () => { s.ticketTiming = false; P.serve(s.state); s.setPhase('result'); }; // the clock stops when the plates leave the pass
-      $('btn-again').onclick = () => { s.vp.setCutaway(false); s.vp.setPatty(null); s.state.patties = []; s.state.patty = null; s.state.served = false; if (s.shift && s.shift.n >= SHIFT_LEN) s.showShiftEnd(); else s.newOrder(); };
+      // everything this ticket had goes with it: the toppings too, or the next order's form phase
+      // shows the last table's chips and Tab walks a bacon rasher that has already been eaten
+      $('btn-again').onclick = () => { s.vp.setCutaway(false); s.vp.setPatty(null); s.state.patties = []; s.state.patty = null; s.state.items = []; s.state.item = null; s.selItem = null; s.state.served = false; if (s.shift && s.shift.n >= SHIFT_LEN) s.showShiftEnd(); else s.newOrder(); };
       $('btn-new-shift').onclick = () => s.newShift();
       $('btn-cutaway').onclick = () => { s.vp.setCutaway(!s.vp.cutaway); $('btn-cutaway').classList.toggle('on', s.vp.cutaway); };
       $('r-chips').addEventListener('click', (e) => { const b = e.target.closest('[data-chip]'); if (b) s.select(Number(b.dataset.chip)); });
@@ -472,6 +474,9 @@
           if (next < n) s.select(next); else s.selectItem(s.items[next - n]);
           return;
         }
+        // the cutaway is a way of looking, not an action: it works wherever its button does — while
+        // the meat rests, and on the plate in front of the customer
+        if (e.key === 'c' || e.key === 'C') { $('btn-cutaway').click(); return; }
         // the senses work in the rest phase too: a resting patty can be pressed and cut into
         if (s.phase === 'cook' || s.phase === 'rest') {
           if (e.key === 't' || e.key === 'T') { $('btn-presstest').click(); return; }
@@ -483,7 +488,6 @@
         if (e.key === ' ') { e.preventDefault(); if (s.patty && s.patty.where === 'board') $('btn-place').click(); else $('btn-flip').click(); }
         if (e.key === 'p' || e.key === 'P') $('btn-press').click();
         if (e.key === 's' || e.key === 'S') $('btn-scrape').click();
-        if (e.key === 'c' || e.key === 'C') $('btn-cutaway').click();
       });
     }
     /** The last thing the cook's eyes, ears, fingers or hand reported, on the HUD as well as the log. */
@@ -751,12 +755,12 @@
         this.drawChart($('chart'), st.trace);
       }
     }
+    /** Hard mode has no thermometers, so nothing the game writes gets to quote one either. */
+    maskT(t) { return this.hard ? String(t).replace(/(?:[-−]?\d+(?:\.\d+)?\s*[–—-]\s*)?[-−]?\d+(?:\.\d+)?\s*°C/g, '·· °C') : t; } // a range (“60–63 °C”) goes as one
     updateLog() {
       const ev = this.state.events; const el = $('log');
       if (this.logN === ev.length) return; this.logN = ev.length;
-      // hard mode has no thermometers, so the log does not get to quote them either
-      const mask = (t) => this.hard ? t.replace(/-?\d+(?:\.\d+)?\s*°C/g, '·· °C') : t;
-      el.innerHTML = ev.slice(-14).map((e) => `<div class="ev ${e.kind}"><span>${P.fmtTime(e.t)}</span>${mask(e.text)}</div>`).join('');
+      el.innerHTML = ev.slice(-14).map((e) => `<div class="ev ${e.kind}"><span>${P.fmtTime(e.t)}</span>${this.maskT(e.text)}</div>`).join('');
       el.scrollTop = el.scrollHeight;
     }
     drawChart(cv, trace) {
@@ -818,11 +822,11 @@
       if (many) {
         $('r-chips').innerHTML = tk.results.map((r, i) => `<button class="chip${i === this.sel ? ' on' : ''}" data-chip="${i}"><b>${i + 1}</b> ${r.target.label} <small>${r.total}/100</small></button>`).join('');
         $('r-ticket').hidden = false;
-        $('r-ticket').innerHTML = `<b>Ticket:</b> ${tk.results.map((r) => r.total).join(' + ')} → mean ${tk.mean}${tk.coldPenalty ? ` − ${tk.coldPenalty} for burgers that went out cold` : ''}${tk.buildPenalty ? ` − ${tk.buildPenalty} for the build` : ''}${tk.buildBonus ? ` + ${tk.buildBonus} for the toppings` : ''}` + (tk.notes.length ? `<ul>${tk.notes.map((n) => `<li>${n}</li>`).join('')}</ul>` : '');
+        $('r-ticket').innerHTML = `<b>Ticket:</b> ${tk.results.map((r) => r.total).join(' + ')} → mean ${tk.mean}${tk.coldPenalty ? ` − ${tk.coldPenalty} for burgers that went out cold` : ''}${tk.buildPenalty ? ` − ${tk.buildPenalty} for the build` : ''}${tk.buildBonus ? ` + ${tk.buildBonus} for the toppings` : ''}` + (tk.notes.length ? `<ul>${tk.notes.map((n) => `<li>${this.maskT(n)}</li>`).join('')}</ul>` : '');
       } else {
         const line = tk.buildPenalty || tk.buildBonus ? `<b>Ticket:</b> ${tk.mean}${tk.buildPenalty ? ` − ${tk.buildPenalty} for the build` : ''}${tk.buildBonus ? ` + ${tk.buildBonus} for the toppings` : ''} → ${tk.total}` : '';
         $('r-ticket').hidden = tk.notes.length === 0 && !line;
-        $('r-ticket').innerHTML = line + (tk.notes.length ? `<ul>${tk.notes.map((n) => `<li>${n}</li>`).join('')}</ul>` : '');
+        $('r-ticket').innerHTML = line + (tk.notes.length ? `<ul>${tk.notes.map((n) => `<li>${this.maskT(n)}</li>`).join('')}</ul>` : '');
       }
       this.showPattyResult();
     }
@@ -837,8 +841,8 @@
       if (v) {
         const cls = v.outcome === 'sent back' ? 'sent' : v.outcome;
         // nobody compliments a plate they are sending back, however juicy the raw middle was
-        const said = v.complaints.slice(0, 4).map((c) => `<li>${c.text}</li>`).concat(v.outcome === 'sent back' ? [] : v.praise.slice(0, 2).map((g) => `<li class="good">${g.text}</li>`));
-        box.innerHTML = `<p class="quote">${v.quote}</p>` +
+        const said = v.complaints.slice(0, 4).map((c) => `<li>${this.maskT(c.text)}</li>`).concat(v.outcome === 'sent back' ? [] : v.praise.slice(0, 2).map((g) => `<li class="good">${this.maskT(g.text)}</li>`));
+        box.innerHTML = `<p class="quote">${this.maskT(v.quote)}</p>` +
           `<span class="outcome ${cls}">${v.outcome}</span> ` +
           // the ticket's bill is printed below; per plate it is only worth repeating when there are several
           `<span class="muted">${v.outcome === 'sent back' ? 'comped — no tip' : tk.results.length > 1 ? `their share: tip ${money(v.tipAmount)} on ${money(v.bill)} (${(v.tip * 100).toFixed(0)} %)` : ''}${v.late && v.late.penalty >= 0.5 ? ` · waited ${P.fmtTime(v.late.elapsed)}` : ''}</span>` +
@@ -849,9 +853,11 @@
       const parts = r.parts;
       $('r-parts').innerHTML = [['Doneness', parts.doneness, 50], ['Crust', parts.crust, 20], ['Juiciness', parts.juiciness, 15], ['Evenness', parts.evenness, 10], ['Structure', parts.structure, 5]]
         .map(([k, v, m]) => `<div class="bar"><span>${k}</span><i><b style="width:${(v / m) * 100}%"></b></i><em>${v}/${m}</em></div>`).join('');
+      // Hard mode is no thermometers all the way through, including the post-mortem: the plate tells
+      // you what it landed on in words (and the cutaway shows you), but never what the number was.
       $('r-stats').innerHTML = [
-        ['Peak centre temperature', `${r.peak.toFixed(1)} °C (${r.got.label})`],
-        ['Ordered', `${target.label} (${target.lo}–${target.hi} °C)`],
+        ['Peak centre temperature', this.hard ? `— · it came out ${r.got.label.toLowerCase()}` : `${r.peak.toFixed(1)} °C (${r.got.label})`],
+        ['Ordered', this.hard ? target.label : `${target.label} (${target.lo}–${target.hi} °C)`],
         ['Time on the pan / resting', `${P.fmtTime(r.cookTime)} / ${P.fmtTime(r.restTime)}, ${r.flips} flip${r.flips === 1 ? '' : 's'}`],
         ['Mass', `${(r.massStart * 1000).toFixed(0)} g → ${(r.massEnd * 1000).toFixed(0)} g (−${((1 - r.massEnd / r.massStart) * 100).toFixed(0)} %)`],
         ['Water', `${(r.waterRetained * 100).toFixed(0)} % retained · ${(r.waterEvap * 1000).toFixed(1)} g steamed off · ${(r.waterDrip * 1000).toFixed(1)} g ran out`],
@@ -872,9 +878,9 @@
           ? r.build.items.map((b) => `${b.label} — <b>${b.state}</b>`).join('<br>') + (r.build.penalty ? `<br><span class="pen">− ${r.build.penalty.toFixed(1)} on the ticket</span>` : '') + (r.build.bonus ? `<br><span class="bon">+ ${r.build.bonus.toFixed(1)} on the ticket</span>` : '')
           : 'Nothing on it but the patty (and a plain, untoasted bun)'],
       ].map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
-      $('r-notes').innerHTML = r.notes.map((n) => `<li>${n}</li>`).join('');
-      this.drawChart($('r-chart'), st.trace);
-      this.drawProfile($('r-profile'), r.patty || st.patty);
+      $('r-notes').innerHTML = r.notes.map((n) => `<li>${this.maskT(n)}</li>`).join('');
+      // the two charts are thermometer traces with a °C axis, so hard mode does not get them either
+      if (!this.hard) { this.drawChart($('r-chart'), st.trace); this.drawProfile($('r-profile'), r.patty || st.patty); }
     }
     drawProfile(cv, p) {
       const ctx = cv.getContext('2d'); const W = cv.width, H = cv.height; ctx.fillStyle = '#16130f'; ctx.fillRect(0, 0, W, H);

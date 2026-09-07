@@ -91,7 +91,9 @@ runner takes waits on a frame, and a pan with three patties in it is three sets 
 The **Inspector** button opens a live chart (pan, crust surface, bottom layer, centre, top) and a
 table of everything the model knows. **Hard mode** takes the probe and the IR gun away entirely and
 leaves you with what a cook actually has: the **Senses** row — press test, peek, hand over the pan —
-your eyes, and your ears. The buttons are there in normal mode too, because a real cook uses them
+your eyes, and your ears. It holds all the way through: the Inspector is gone, the log's
+temperatures read `·· °C`, and the results card tells you what the burger came out as in words
+(“it came out raw / blue”) without the number or the two temperature traces. The buttons are there in normal mode too, because a real cook uses them
 even when the numbers are on the wall, and they cost exactly the same either way.
 
 ## What is actually simulated

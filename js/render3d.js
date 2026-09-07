@@ -153,6 +153,35 @@
     return sh;
   }
 
+  // ------------------------------------------------------------ giving the GPU its memory back
+  // Three keeps a geometry's buffers, a material's compiled program and every texture on the GPU
+  // until something disposes them; removing a mesh from the scene frees nothing. One patty carries
+  // a 1024² atlas, a 256² roughness map and a 512×256 cut face — about 6 MB of texture with mips —
+  // so a form slider rebuilding its preview thirty times a second would otherwise leak ~180 MB a
+  // second, and every ticket of a six-ticket shift would leave its patties and toppings behind.
+  const MAPS = ['map', 'roughnessMap', 'metalnessMap', 'normalMap', 'bumpMap', 'alphaMap', 'emissiveMap', 'aoMap', 'lightMap', 'specularMap', 'clearcoatMap', 'clearcoatNormalMap', 'clearcoatRoughnessMap', 'displacementMap', 'envMap'];
+  /**
+   * Free every geometry, material and texture under `obj`. Anything in `keep` is shared with
+   * something still on screen (the pan's material outlives the pan mesh it was built for) and is
+   * left alone. Each unique resource is disposed once, so a geometry two meshes share — the
+   * kettle's bowl, drawn again from the inside — is not double-freed.
+   */
+  function disposeTree(obj, keep) {
+    if (!obj) return;
+    const geos = new Set(), mats = new Set();
+    obj.traverse((o) => {
+      if (o.geometry) geos.add(o.geometry);
+      if (o.material) { if (Array.isArray(o.material)) for (const m of o.material) mats.add(m); else mats.add(o.material); }
+      if (o.isInstancedMesh && o.dispose) o.dispose(); // and the instance matrix / colour buffers
+    });
+    for (const g of geos) if (!(keep && keep.has(g))) g.dispose();
+    for (const m of mats) {
+      if (keep && keep.has(m)) continue;
+      for (const k of MAPS) { const t = m[k]; if (t && t.isTexture && !(keep && keep.has(t))) t.dispose(); }
+      m.dispose();
+    }
+  }
+
   // ------------------------------------------------------------ particles
   class Puffs {
     constructor(scene, opts) {
@@ -249,7 +278,9 @@
       this.cutaway = false; this.cutPhi = 0; this.lastGeo = null; this.forceTex = true; this.texClock = 0;
       this.rebuildGeometry(true); this.paintTextures();
     }
-    dispose() { this.vp.scene.remove(this.group); }
+    /** Off the scene and off the GPU: the atlas, the roughness and cut textures, the lathe, the
+     *  cut face, the cheese, the buns and their crumb textures all go back. */
+    dispose() { this.vp.scene.remove(this.group); disposeTree(this.group); }
     setCutaway(on, phi) { this.cutaway = on; if (on) this.cutPhi = phi; this.rebuildGeometry(true); this.forceTex = true; }
     rebuildGeometry(force) {
       const p = this.p, R = p.D / 2, h = p.h, dome = p.dome;
@@ -269,7 +300,7 @@
     }
     buildBuns() {
       const p = this.p, g = this.group, vp = this.vp;
-      if (this.bunGroup) g.remove(this.bunGroup);
+      if (this.bunGroup) { g.remove(this.bunGroup); disposeTree(this.bunGroup); } // the crumb textures are built fresh every time
       const bg = new T.Group(); this.bunGroup = bg; g.add(bg);
       const Rb = Math.max(0.05, (p.D / 2) * 0.96);
       const crust = new T.MeshStandardMaterial({ color: 0xc98a45, roughness: 0.75 });
@@ -369,18 +400,30 @@
         tintMask(vp.spots, [40, 20, 10], clamp(face.brown / 4, 0, 0.6), rg);
         tintMask(vp.blotch, COL.char, clamp(face.char / 0.6, 0, 0.75), rg);
         tintMask(vp.spots, COL.char, clamp(face.char / 0.4, 0, 0.9), rg);
+      };
+      /**
+       * The bars and the torn patches, which do not wait for the rest of the face. On a grate only
+       * a tenth of the face touches metal, so the bar track runs far ahead of the area mean: at the
+       * README's 45 s cadence a face goes up with marks at 0.5 and a mean browning of 0.10, and a
+       * cook looking down at it sees the bars, not raw meat. Torn crust is the same: it is a hole
+       * in the face, visible whether or not the rest of it has coloured.
+       */
+      const paintMarks = (face, rg) => {
         if (face.torn > 0) tintMask(vp.marbleCut, [150, 60, 60], clamp(face.torn * 3, 0, 0.8), rg);
-        // grill marks: dark bars where the grate pressed into the face
         if (face.marks > 0.2) {
           const cx = (rg.x0 + rg.x1) / 2, cy = (rg.y0 + rg.y1) / 2;
           const mc = faceColour({ brown: face.marks, char: face.marksChar || 0 }, [90, 55, 30]);
           c.save(); c.beginPath(); c.arc(cx, cy, capR, 0, Math.PI * 2); c.clip(); c.translate(cx, cy); c.rotate(face.marksAngle || 0.6);
-          c.fillStyle = rgb(mc); c.globalAlpha = clamp(face.marks / 2, 0, 0.9);
+          // the bar is not a veil over the meat: the strip it pressed on really is at that browning
+          // index, so the paint is close to opaque as soon as the mark has any colour in it. What is
+          // left of the transparency is the soft shoulder either side of a 6 mm rod.
+          c.fillStyle = rgb(mc); c.globalAlpha = clamp(face.marks / 0.7, 0, 0.92);
           for (let x = -capR; x < capR; x += capR * 0.28) c.fillRect(x - capR * 0.035, -capR, capR * 0.07, 2 * capR);
           c.restore();
         }
       };
       crustSpots(p.faceDown, bb); if (!rawTop) crustSpots(p.faceUp, bt);
+      paintMarks(p.faceDown, bb); paintMarks(p.faceUp, bt);
       // the slit a peek leaves: a knife went all the way through, so the line shows on both caps,
       // dark where the wet inside of the patty is open to the air
       if (p.slits) {
@@ -488,7 +531,7 @@
       else if (where === 'board') g.position.set(position.x, 0, position.z);
       else {
         const served = where === 'cut';
-        if (served !== this.served) { this.served = served; if (served) this.buildBuns(); else if (this.bunGroup) { g.remove(this.bunGroup); this.bunGroup = null; } }
+        if (served !== this.served) { this.served = served; if (served) this.buildBuns(); else if (this.bunGroup) { g.remove(this.bunGroup); disposeTree(this.bunGroup); this.bunGroup = null; } }
         g.position.set(position.x, position.y + (served ? this.bunBottomH : 0), position.z);
         if (this.bunTop) this.bunTop.position.y = p.h * (1 + 0.28 * p.dome) + p.cheeses.length * 0.0015 + (this.stackH || 0) + 0.001;
       }
@@ -501,7 +544,7 @@
     }
     updateCheese() {
       const p = this.p, g = this.group;
-      while (this.cheeseMeshes.length > p.cheeses.length) g.remove(this.cheeseMeshes.pop());
+      while (this.cheeseMeshes.length > p.cheeses.length) { const m = this.cheeseMeshes.pop(); g.remove(m); disposeTree(m); }
       while (this.cheeseMeshes.length < p.cheeses.length) {
         const k = this.cheeseMeshes.length;
         const geo = new T.PlaneGeometry(0.095, 0.095, 14, 14); geo.rotateX(-Math.PI / 2);
@@ -511,7 +554,7 @@
       }
       const yellow = [0.95, 0.70, 0.24], melted = [0.99, 0.74, 0.20], golden = [0.72, 0.42, 0.10], dark = [0.28, 0.13, 0.05];
       const skirtColour = (sk, onTop) => { if (!sk) return onTop; let c = mix3(onTop, golden, clamp(sk.brown / 2.5, 0, 1)); c = mix3(c, dark, clamp((sk.brown - 2.5) / 3, 0, 1)); return mix3(c, [0.06, 0.05, 0.04], clamp(sk.char / 0.8, 0, 1)); };
-      while (this.underMeshes.length > p.cheeseUnder.length) g.remove(this.underMeshes.pop());
+      while (this.underMeshes.length > p.cheeseUnder.length) { const m = this.underMeshes.pop(); g.remove(m); disposeTree(m); }
       while (this.underMeshes.length < p.cheeseUnder.length) {
         const geo = new T.PlaneGeometry(0.095, 0.095, 2, 2); geo.rotateX(-Math.PI / 2);
         const m = new T.Mesh(geo, new T.MeshPhysicalMaterial({ color: 0xf2b23c, roughness: 0.5, clearcoat: 0.2, side: T.DoubleSide }));
@@ -595,12 +638,37 @@
       ({ bun: () => this.buildBun(), bacon: () => this.buildBacon(), egg: () => this.buildEgg(), onions: () => this.buildOnions() }[it.kind] || (() => {}))();
       this.group.traverse((o) => { o.userData.item = it; }); // so a click anywhere on it selects it
     }
-    dispose() { this.vp.scene.remove(this.group); }
+    dispose() { this.vp.scene.remove(this.group); disposeTree(this.group); }
+    /**
+     * How tall this topping actually stands on the burger, so whatever goes on top of it rests on
+     * it: every mesh in here is built with its underside at the group's origin. `thickness` is the
+     * slab it occupies lying flat on the metal; this is the same number with the shape the thing
+     * has taken — a set yolk stands ~22 mm proud of the pan while a runny one that has slumped
+     * stands ~12, an onion heap cooks down to about half, and a curled rasher holds the layer above
+     * it up: not by the 15 mm its free ends reach, but by about a third of that, because the egg
+     * and the crown press them back down.
+     */
+    layerH() {
+      const it = this.it;
+      if (it.kind === 'egg') { const set = clamp(it.yolkSet, 0, 1); return 0.0035 + 0.004 * set + 0.021 * (0.42 + 0.28 * set) + 0.0005; } // yolk centre + its own half-height
+      if (it.kind === 'bacon') return this.thickness + 0.006 * Math.abs(clamp(it.curl, -1, 1));
+      if (it.kind === 'onions') return 0.0016 + 0.009 * (0.55 + 0.45 * clamp((it.bot.w + it.top.w) / it.w0, 0, 1));
+      return this.thickness;
+    }
     /**
      * In the cutaway the burger is sliced along the plane facing the camera; a topping sitting on
      * it has to be sliced the same way or it hides the cross-section it is supposed to sit on.
      * The patty does it by building half a lathe; these are cut with a real clipping plane.
+     *
+     * The plane moves with the camera, so each view keeps its own and the values are written into
+     * it: only the on/off transitions reach setClip, which bumps every material's version and makes
+     * three re-initialise its program on the next draw.
      */
+    setClipAt(nx, nz, px, pz) {
+      const pl = this.clipPlane || (this.clipPlane = new T.Plane(new T.Vector3(0, 1, 0), 0));
+      pl.normal.set(nx, 0, nz); pl.constant = -(nx * px + nz * pz);
+      if (this.clip !== pl) this.setClip(pl);
+    }
     setClip(plane) {
       if (plane === this.clip) return; this.clip = plane;
       this.group.traverse((o) => { if (o.isMesh && o.material) { o.material.clippingPlanes = plane ? [plane] : null; o.material.clipShadows = !!plane; o.material.needsUpdate = true; } });
@@ -842,6 +910,7 @@
       this._buildLights(); this._buildKitchen(); this._buildStove(); this._buildBoard(); this._buildParticles(); this._buildProbe();
       this._buildTextures();
       this.views = new Map(); this.itemViews = new Map(); this.selected = null; this.selectedItem = null; this.previewPatty = null;
+      this.peeks = new Map(); // patty → when the cut the cook made in it closes again (wall clock, ms)
       this.controls = new Orbit(this);
       this.resize();
       window.addEventListener('resize', () => this.resize());
@@ -878,6 +947,7 @@
       // pan
       this.panGroup = new T.Group(); g.add(this.panGroup);
       this.panMat = new T.MeshStandardMaterial({ color: 0x2b2725, roughness: 0.55, metalness: 0.7 });
+      this.sharedRes = new Set([this.panMat]); // materials the viewport keeps across a pan or stove swap
       this.oilMat = new T.MeshPhysicalMaterial({ color: 0xb07a20, transparent: true, opacity: 0.3, roughness: 0.04, metalness: 0.15, clearcoat: 1, clearcoatRoughness: 0.03, depthWrite: false });
       this.oil = new T.Mesh(new T.CircleGeometry(1, 64), this.oilMat); this.oil.rotation.x = -Math.PI / 2; this.oil.position.y = 0.0007; this.oil.receiveShadow = true; this.panGroup.add(this.oil);
       // residue on the pan floor: a canvas texture of fond blotches, burnt specks, welded cheese
@@ -886,7 +956,9 @@
       this.dirtCv = document.createElement('canvas'); this.dirtCv.width = this.dirtCv.height = 512;
       this.dirtTex = new T.CanvasTexture(this.dirtCv);
       this.fondMat = new T.MeshStandardMaterial({ map: this.dirtTex, transparent: true, opacity: 1, roughness: 0.85, depthWrite: false });
-      this.fond = new T.Mesh(new T.CircleGeometry(1, 64), this.fondMat); this.fond.rotation.x = -Math.PI / 2; this.fond.position.y = 0.0004; this.panGroup.add(this.fond);
+      // it hangs off the stove group, not the pan: a kettle has no pan, and the residue baked onto
+      // its bars is exactly what the wire brush is for
+      this.fond = new T.Mesh(new T.CircleGeometry(1, 64), this.fondMat); this.fond.rotation.x = -Math.PI / 2; this.fond.position.y = 0.0004; g.add(this.fond);
       let seed = 12345; const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
       this.dirtSpots = []; for (let i = 0; i < 1400; i++) { const a = rnd() * Math.PI * 2, rr = Math.sqrt(rnd()); this.dirtSpots.push({ x: 256 + 236 * rr * Math.cos(a), y: 256 + 236 * rr * Math.sin(a), s: 0.5 + rnd(), e: 0.6 + rnd() * 0.8, rot: rnd() * 3 }); }
       this.dirtSig = ''; this.dirtClock = 0;
@@ -919,7 +991,7 @@
      *  flush on the glass. */
     setStove(id) {
       this.stoveType = id;
-      if (this.burnerGroup) this.stove.remove(this.burnerGroup);
+      if (this.burnerGroup) { this.stove.remove(this.burnerGroup); disposeTree(this.burnerGroup); } // a swap is a whole new burner: give the old one's meshes back
       const g = new T.Group(); this.burnerGroup = g; this.stove.add(g);
       this.flames = []; this.coilMat = null; this.indLed = null;
       if (id === 'electric') {
@@ -998,6 +1070,7 @@
         }
         // the grate: a ring with rods across it
         const Rg = Rk * 0.93, rodR = 0.003, gy = this.PAN_Y - rodR;
+        this.grateBars = { x0: -Rg + 0.012, dx: 0.024, w: 2 * rodR }; // where the rods are, for the residue mask
         const ringG = new T.Mesh(new T.TorusGeometry(Rg, rodR * 1.2, 8, 96), steel); ringG.rotation.x = Math.PI / 2; ringG.position.y = gy; ringG.castShadow = true; g.add(ringG);
         for (let x = -Rg + 0.012; x < Rg; x += 0.024) { const L = 2 * Math.sqrt(Math.max(0, Rg * Rg - x * x)); if (L < 0.02) continue; const rod = new T.Mesh(new T.CylinderGeometry(rodR, rodR, L, 8), steel); rod.rotation.x = Math.PI / 2; rod.position.set(x, gy, 0); rod.castShadow = true; g.add(rod); }
         for (const z of [-0.14, 0.14]) { const brace = new T.Mesh(new T.CylinderGeometry(rodR, rodR, 2 * Math.sqrt(Rg * Rg - z * z), 8), steel); brace.rotation.z = Math.PI / 2; brace.position.set(0, gy - rodR, z); g.add(brace); }
@@ -1069,17 +1142,18 @@
         }
       }
       this.flameLight.position.y = id === 'charcoal' ? this.coalY + 0.03 : this.PAN_Y - 0.01;
-      if (id !== 'charcoal') { this.coals = null; this.coalMat = null; this.kettleLid = null; this.coalSeeds = null; this.woodMeshes = null; this.ashDisc = null; this.ventWheel = null; this.ventPos = null; }
+      if (id !== 'charcoal') { this.coals = null; this.coalMat = null; this.kettleLid = null; this.coalSeeds = null; this.woodMeshes = null; this.ashDisc = null; this.ventWheel = null; this.ventPos = null; this.grateBars = null; }
       if (this.panSpec) this.setPan(this.panSpec.id);
       if (this.panGroup) this.panGroup.visible = id !== 'charcoal';
       if (id === 'charcoal') { this.panFloorY = this.PAN_Y; this.panR = 0.26; }
+      if (this.fond) this.fond.position.y = this.panFloorY + 0.0004; // the pan floor, or the crowns of the bars
       if (this.controls && this.mode === 'stove') this.controls.reset('stove'); // the grate sits far higher than a pan
     }
     setPan(id) {
       const pan = P.PANS[id] || P.PANS.castiron; this.panSpec = pan;
       if (this.stoveType === 'charcoal') { this.panGroup.visible = false; this.panFloorY = this.PAN_Y; this.panR = 0.26; return; }
       this.panGroup.visible = true;
-      if (this.panMesh) this.panGroup.remove(this.panMesh);
+      if (this.panMesh) { this.panGroup.remove(this.panMesh); disposeTree(this.panMesh, this.sharedRes); } // panMat is shared with the next pan; its geometry is not
       const R = pan.diam / 2, wall = 0.045;
       const prof = [{ r: 0, y: 0, v: 0, hard: false }, { r: R * 0.97, y: 0, v: 0.3, hard: true }, { r: R * 1.02, y: wall * 0.5, v: 0.6, hard: false }, { r: R * 1.06, y: wall, v: 0.8, hard: true }, { r: R * 1.06, y: wall - 0.004, v: 0.85, hard: true }, { r: R * 1.0, y: wall - 0.004, v: 0.9, hard: true }, { r: R * 0.95, y: 0.004, v: 0.95, hard: true }, { r: 0, y: 0.004, v: 1, hard: false }];
       const geo = buildLathe(prof, 96, Math.PI * 2);
@@ -1099,7 +1173,7 @@
       class Loop extends T.Curve { getPoint(t, target) { const a = -Math.PI / 2 + t * Math.PI; return (target || new T.Vector3()).set(rimR - 0.004 + 0.028 * Math.cos(a), hy, 0.03 * Math.sin(a)); } }
       const loop = new T.Mesh(new T.TubeGeometry(new Loop(), 24, 0.006, 8, false), this.panMat); loop.castShadow = true; m.add(loop);
       // lid: glass dome with a steel rim and knob, shown when the lid is on; fogs with steam
-      if (this.lid) this.panGroup.remove(this.lid);
+      if (this.lid) { this.panGroup.remove(this.lid); disposeTree(this.lid, this.sharedRes); }
       const lid = new T.Group(); this.lid = lid; lid.position.y = this.PAN_Y + wall; lid.visible = false;
       this.lidGlass = new T.MeshPhysicalMaterial({ color: 0xd6e4ec, transparent: true, opacity: 0.2, roughness: 0.04, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.03, side: T.DoubleSide, depthWrite: false });
       const domeH = 0.075, nd = 14, lp = [];
@@ -1185,7 +1259,7 @@
     /** Keep one PattyView per patty in `list`. */
     syncViews(list) {
       const keep = new Set(list);
-      for (const [p, v] of this.views) if (!keep.has(p)) { v.dispose(); this.views.delete(p); }
+      for (const [p, v] of this.views) if (!keep.has(p)) { v.dispose(); this.views.delete(p); this.peeks.delete(p); }
       for (const p of list) if (!this.views.has(p)) this.views.set(p, new PattyView(this, p));
     }
     /** A fingertip and the joint behind it, for the press test. It comes in from the cook's side. */
@@ -1304,7 +1378,9 @@
       const v = this.viewOf(patty); if (!v) return;
       // wall-clock, not the frame's dt: this is how long the cook is looking at it, and it should
       // last the same few seconds whether the machine is drawing at 60 fps or at 4
-      this.peeking = { p: patty, until: (root.performance ? performance.now() : Date.now()) + seconds * 1000 };
+      // one entry per patty, each on its own clock: cutting into a second burger must not leave the
+      // first one lying open on the pan, and two peeks a second apart close a second apart
+      this.peeks.set(patty, (root.performance ? performance.now() : Date.now()) + seconds * 1000);
       v.setCutaway(true, Math.random() * Math.PI * 2);
     }
     /** What is under the cursor: a patty, or one of the toppings sharing the pan. */
@@ -1335,11 +1411,13 @@
     update(state, dt) {
       this.clock += dt; this.texBudget = 1;
       const pan = state.pan, p = state.patty;
-      if (this.peeking) {
-        if ((root.performance ? performance.now() : Date.now()) >= this.peeking.until) {
-          const v = this.viewOf(this.peeking.p);
-          if (v) v.setCutaway(this.cutaway && this.peeking.p === this.selected, this.controls.goal.azimuth + Math.PI / 2);
-          this.peeking = null;
+      if (this.peeks.size) {
+        const now = root.performance ? performance.now() : Date.now();
+        for (const [q, until] of this.peeks) {
+          if (now < until) continue;
+          const v = this.viewOf(q);
+          if (v) v.setCutaway(this.cutaway && q === this.selected, this.controls.goal.azimuth + Math.PI / 2);
+          this.peeks.delete(q);
         }
       }
       // stove: gas flames, electric coil glow (follows delivered power, so it lags), induction LED
@@ -1485,8 +1563,10 @@
         for (const it of items) {
           if (it.burger !== q.id || it.where !== 'cut' || it.kind === 'bun') continue;
           const v = this.itemViews.get(it); if (!v) continue;
-          stackOf.set(it, extra + v.thickness * 0.5);
-          extra += v.thickness;
+          // every topping mesh is built with its underside at its own origin, so a layer starts
+          // where the one under it ended: no air between the cheese and the bacon
+          stackOf.set(it, extra);
+          extra += v.layerH();
         }
         stackOf.set(q, extra);
       }
@@ -1521,10 +1601,8 @@
           if (hv) {
             const base = hv.group.position.y + host.h * (1 + 0.28 * host.dome) + host.cheeses.length * 0.0015;
             pos = { x: hv.group.position.x, y: base + (stackOf.get(it) || 0), z: hv.group.position.z };
-            if (this.cutaway && host === this.selected) {
-              const phi = hv.cutPhi || 0, n = new T.Vector3(-Math.sin(phi), 0, Math.cos(phi));
-              v.setClip(new T.Plane(n, -n.dot(new T.Vector3(pos.x, 0, pos.z))));
-            } else v.setClip(null);
+            if (this.cutaway && host === this.selected) { const phi = hv.cutPhi || 0; v.setClipAt(-Math.sin(phi), Math.cos(phi), pos.x, pos.z); }
+            else v.setClip(null);
           } else pos = { x: plateBase.x, y: plateBase.y, z: plateBase.z };
         } else {
           // waiting at the pass: a row along the front of the stovetop, in front of the plate
@@ -1620,9 +1698,12 @@
         for (const q of onPan) {
           if (oilDepth > q.h) { for (let i = parts.length - 1; i >= 0; i--) if (parts[i].q === q) parts.splice(i, 1); continue; }
           const want = clamp(Math.round(q.poolTop / 0.00001), 0, 120); let have = 0; for (const b of parts) if (b.q === q) have++;
-          while (have < want) { const a = Math.random() * Math.PI * 2, rr = Math.sqrt(Math.random()) * (q.D / 2) * 0.9; parts.push({ q, x: q.pos.x + Math.cos(a) * rr, y: 0, z: q.pos.y + Math.sin(a) * rr, s: rand(0.5, 1.5), sy: 0.6 }); have++; }
+          // a bead sits at a fixed place on the meat, not at a fixed place on the pan: keep its
+          // offset from the patty's centre so it rides along when the spatula slides the patty
+          while (have < want) { const a = Math.random() * Math.PI * 2, rr = Math.sqrt(Math.random()) * (q.D / 2) * 0.9; parts.push({ q, dx: Math.cos(a) * rr, dz: Math.sin(a) * rr, x: q.pos.x + Math.cos(a) * rr, y: 0, z: q.pos.y + Math.sin(a) * rr, s: rand(0.5, 1.5), sy: 0.6 }); have++; }
           for (let i = parts.length - 1; i >= 0 && have > want; i--) if (parts[i].q === q) { parts.splice(i, 1); have--; }
-          const R = q.D / 2, topY = gy + q.h; for (const b of parts) if (b.q === q) { const rr = Math.hypot(b.x - q.pos.x, b.z - q.pos.y); b.y = topY + 0.28 * q.dome * q.h * (1 - (rr / R) ** 2) + 0.0005; }
+          const R = q.D / 2, topY = gy + q.h;
+          for (const b of parts) if (b.q === q) { const rr = Math.hypot(b.dx, b.dz); b.x = q.pos.x + b.dx; b.z = q.pos.y + b.dz; b.y = topY + 0.28 * q.dome * q.h * (1 - (rr / R) ** 2) + 0.0005; }
         }
         for (let i = parts.length - 1; i >= 0; i--) if (!onPan.includes(parts[i].q)) parts.splice(i, 1);
         this.beads.update(dt, () => true);
@@ -1638,7 +1719,7 @@
       // the first four are blob counts, the fifth the depth of the carbon film; the signature is
       // built without allocating (this runs every frame, the repaint below almost never does)
       const counts = [n(pan.fond, 0.00002), n(pan.fondBurnt, 0.000015), n(pan.cheeseBits || 0, 0.00015), n(pan.meatBits || 0, 0.0001), Math.round(clamp((pan.carbon || 0) / 0.004, 0, 1) * 100) / 100];
-      const sig = counts[0] + '|' + counts[1] + '|' + counts[2] + '|' + counts[3] + '|' + counts[4] + (pan.T > 180 ? 'h' : 'c');
+      const sig = counts[0] + '|' + counts[1] + '|' + counts[2] + '|' + counts[3] + '|' + counts[4] + (pan.T > 180 ? 'h' : 'c') + (this.stoveType === 'charcoal' ? 'g' : 'p');
       const any = counts[0] + counts[1] + counts[2] + counts[3] > 0 || counts[4] > 0.01;
       this.fond.visible = any; this.fond.scale.set(this.panR, this.panR, 1);
       if (!any || sig === this.dirtSig || this.dirtClock < 0.5) return;
@@ -1661,6 +1742,17 @@
       for (let i = 0; i < counts[3]; i++) blob(this.dirtSpots[(i * 11 + 3) % this.dirtSpots.length], 3.5, 'rgba(70,32,18,0.9)');
       // a little grain so nothing reads as a clean disc
       c.globalCompositeOperation = 'multiply'; c.globalAlpha = 0.25; c.drawImage(this.noiseFine, 0, 0, 512, 512); c.globalAlpha = 1; c.globalCompositeOperation = 'source-over';
+      // On a grate there is no floor for residue to lie on: it is baked onto the bars. Mask the dirt
+      // down to the rods' own footprints — 6 mm rods on 24 mm centres, the grate built in setStove —
+      // so the gaps between the bars stay empty and the brush has something real to take off.
+      if (this.stoveType === 'charcoal' && this.grateBars) {
+        const px = 256 / this.panR, bars = this.grateBars; // canvas pixels per metre: the disc is panR in radius, 256 px
+        // one path, one fill: destination-in keeps only what the source covers, so a rectangle at a
+        // time would rub out every bar but the last
+        c.globalCompositeOperation = 'destination-in'; c.fillStyle = '#000'; c.beginPath();
+        for (let x = bars.x0; x < this.panR; x += bars.dx) c.rect(256 + (x - bars.w / 2) * px, 0, bars.w * px, 512);
+        c.fill(); c.globalCompositeOperation = 'source-over';
+      }
       this.dirtTex.needsUpdate = true;
     }
     _addStain(x, z, s) {

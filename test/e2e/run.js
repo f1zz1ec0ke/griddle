@@ -16,6 +16,8 @@ const SCENARIOS = [
   require('./scenario-medium-rare.js'),
   require('./scenario-ticket-of-three.js'),
   require('./scenario-charcoal.js'),
+  require('./scenario-viewport.js'),
+  require('./scenario-interface.js'),
 ];
 
 (async () => {

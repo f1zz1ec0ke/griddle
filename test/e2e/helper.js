@@ -103,6 +103,12 @@ class Kitchen {
     await this.page.$eval(sel, (el, v) => { el.checked = !!v; el.dispatchEvent(new Event('change', { bubbles: true })); }, on);
   }
   async text(sel) { return this.page.$eval(sel, (el) => el.textContent.trim()); }
+  /**
+   * Wait for `n` drawn frames. Under software WebGL a frame of the result phase can take half a
+   * second, so anything that is only true after the viewport has drawn again — a bun placed on a
+   * stack, an atlas repainted, a bead moved — has to be waited for in frames and not in milliseconds.
+   */
+  async frames(n = 1) { for (let i = 0; i < n; i++) await this.page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r()))); }
   /** Read something out of the live model. `fn` runs in the page with (game, P). */
   async read(fn) { return this.page.evaluate(`(${fn.toString()})(window.game, window.BurgerPhysics)`); }
   /** Advance the simulation without waiting for wall-clock seconds. */
