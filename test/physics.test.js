@@ -1612,3 +1612,12 @@ test('the customer knows the onions are plural', () => {
   const mush = P.verdict(mkResult({ total: 95, build: { items: [{ kind: 'onions', label: 'Sliced onions', state: 'soggy', score: -1 }], penalty: 1, bonus: 0 } }));
   assert.ok(mush.complaints.some((c) => /onions (have gone to mush|are soggy)/.test(c.text)), JSON.stringify(mush.complaints));
 });
+
+test('flipping turns the peak-temperature record over with the meat', () => {
+  // the grey band is judged on each cell's hottest moment; after a flip that record must still sit on the cell it belongs to
+  const s = P.createState({}); preheat(s, 230); const p = std({ thicknessMm: 20 }); P.placePatty(s, p); cookFor(s, 150);
+  const bot = p.Tpk[0], top = p.Tpk[(p.Nz - 1) * p.Nr];
+  assert.ok(bot > top + 20, `the seared face should hold the record: bottom ${bot.toFixed(0)} vs top ${top.toFixed(0)}`);
+  P.flipPatty(s);
+  assert.equal(p.Tpk[(p.Nz - 1) * p.Nr], bot); assert.equal(p.Tpk[0], top);
+});
