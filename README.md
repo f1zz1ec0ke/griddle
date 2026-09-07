@@ -151,7 +151,10 @@ just confirms that it slides.
 **Cheese** is a stack of lumped slices (each added slice rotated a little further) with heat
 passing meat → slice → slice → air. The part of a slice hanging past the patty droops as it melts;
 whatever reaches the pan becomes a skirt that boils dry into a lace, browns and burns. Flip a
-cheeseburger and the cheese goes face-down onto the pan, fries, welds, and comes back up as lace.
+cheeseburger and the cheese goes face-down onto the pan, fries, welds, and comes back up as lace —
+and the metal pays for it: the rings under the patty are charged what the pan put into the *bottom*
+of the slice stack, not the smaller flux that gets through to the meat, so warming 20–40 g of cheese
+and boiling the water out of it sags the pan by tens of degrees the way it should.
 Under deep-frying oil the whole slice fries.
 
 **Oil** is a film until it covers the floor, then a level that rises up the wall: cover the patty
@@ -233,24 +236,42 @@ fast, because the dough's maltose and free amino acids are already there. Over 2
 golden in about a minute and black in three. Turn it over and the crown just scorches: its sugars
 went in the oven. A toasted heel is a sealed crust, and it soaks up about 60 % less of the juice
 that runs out during the rest. **Bacon** renders with the patty's own melt-and-release kinetics
-(faster: the fat is in continuous bands, not locked in cells), loses about 40 % of its mass as fat
-into the pan, shrinks by a quarter, curls away from whichever face has dried and contracted more,
-and only goes crisp once the lean is dry *and* the fat is out — eight minutes at 180 °C, or black in
-three at 260. An **egg** is a bottom white, a top white and a yolk: the white sets at 62–65 °C, the
-yolk thickens from 65 and is solid by 70, and because the yolk sets from the skin inward, sunny side
-up leaves it runny for four or five minutes. A lid changes that in ninety seconds — saturated air
+(faster: the fat is in continuous bands, not locked in cells), but only the fat in the bands between
+the muscle can ever leave: a rasher gives up 50–65 % of its fat and 60–70 % of its water and comes
+off the pan at a little under half its raw weight, still about 40 % fat, which is what cooked
+streaky bacon is. It shrinks by a quarter, curls away from whichever face has dried and contracted
+more, and only goes crisp once the lean is dry *and* the fat it is going to give up is out — eight
+minutes at 180 °C (that is the metal under the rasher; the centre of a pan preheated wide open runs
+40 K over the IR gun's area mean), or black in three at 260. An **egg** is a bottom white, a top white and a yolk: the white sets at 62–65 °C from the pan up (the
+top of it is still soft at a minute and set by two), the yolk thickens from 65 and is solid by 70,
+and because the yolk sets from the skin inward, sunny side up leaves it runny for four or five
+minutes. A gelled white is not a puddle any more — it blisters and rides off the metal, so the
+contact collapses to under a third of the raw white's and the water left in it is held in the
+protein: a fried egg loses 10–15 % of its mass, not a third of it. A lid changes that in ninety seconds — saturated air
 condensing on a cold yolk is worth far more than the convection — and turning the egg over puts the
 yolk a millimetre of white off the metal, which is over-easy in under a minute and over-hard in two.
 The rim that ran out into the fat dries and browns into a lace. **Onions** are 89 % water and the
 whole model is that water: the layer against the metal boils, the pile above re-wets it as fast as
 juice can drain down through a heap of slices, and until that stops the onions sweat at 100 °C and
-nothing browns. Fifteen minutes on medium and the pile runs dry, the contact layer decouples from
-the wet mass above it, and the sugars caramelise — golden, brown, and then bitter. On a 260 °C pan
-the drying front wins in two minutes and that layer scorches instead; stirring is not fussiness, it
-is the only way to caramelise all of them rather than burn a third of them. They also lift the fond
-off the metal as they go.
+nothing browns — that is sweated onion, soft and translucent and mild, and it is what most of the
+onions on most burgers are. Fifteen minutes on medium and the pile runs dry, the contact layer
+decouples from the wet mass above it, and the sugars caramelise — golden, brown, and then bitter. An
+onion carries only 5.6 % of its weight as free sugar, so the layer on the metal can only go so dark
+before it runs out and starts to pyrolyse instead; stirring is not fussiness, it is what brings
+unspent onion down onto the metal, and it is the only way to caramelise all of them rather than burn
+a third of them. On a 260 °C pan the drying front wins in two minutes and that layer scorches. They
+also lift the fond off the metal as they go.
 
-At service each topping is **built onto a burger** (the chips show which). The patty's own score
+Anything lying on the metal is a thing the pan is heating and a thing the pan can hear: toppings
+count in the coverage, in the heat drawn out of the rings under them, and in both voices of the
+sizzle, so a pan with nothing in it but two rashers rendering still sounds like a pan with bacon in
+it. If there is nowhere clear to put something down it goes half on top of what is already there —
+the game says so — and only the part actually touching the metal cooks.
+
+At service each topping is **built onto a burger** — the chips and the *Build onto* row show which,
+including the default (`→ (2)`, a dashed outline) before the plate goes out, so a build can be
+changed while there is still time. A bun's two halves always travel together: the pair goes wherever
+the heel goes, or wherever either half was put by hand. The patty's own score
 never moves: the build is a separate service penalty of up to ten points on the ticket for anything
 sent out raw or burnt — a raw egg white, limp bacon, a black bun, scorched onions — and a couple of
 points back for a jammy yolk, crisp bacon, sweet onions or a properly toasted bun.
@@ -430,7 +451,8 @@ you are least sure about, not on all three. The results screen counts the cuts a
 Toppings are scored separately and can only cost you the ticket, never the patty. If you put them
 in: the buns want about a minute face-down on 200 °C metal (watch the browning index in the
 inspector — 1.2 is toasted, 4.5 is too far, and char over 0.35 is a black bun); bacon wants eight
-minutes at 180 °C with a couple of turns, not four at 260; an egg wants the lid on for ninety
+minutes at 180 °C with a couple of turns, not four at 260 (it comes off at a little under half its
+raw weight — that is what crisp bacon weighs, not a fifth); an egg wants the lid on for ninety
 seconds, or a flip and forty seconds, for the jammy yolk; onions want a quarter of an hour on
 medium with a stir every minute or two, and they will drag the pan down 20 °C while they sweat, so
 start them before the meat. Take each one off when it is right — a topping left in the pan keeps

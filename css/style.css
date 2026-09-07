@@ -80,6 +80,9 @@ p.warn { color: var(--warn); font-size: 12.5px; min-height: 1em; }
 .row.assign { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
 .row.assign label { margin: 0; white-space: nowrap; }
 .row.assign button { padding: 4px 9px; font-size: 12px; }
+/* the burger a topping goes to if the cook says nothing: the default build, shown before it is made */
+.row.assign button.plan { border-style: dashed; border-color: var(--accent); color: var(--accent); }
+.row.assign small { color: var(--muted); font-size: 11px; }
 .chip.item b { color: var(--good); }
 .chip i { font-style: normal; color: var(--good); font-size: 11px; }
 table.stats .pen { color: var(--bad); }

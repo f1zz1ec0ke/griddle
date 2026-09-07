@@ -214,7 +214,11 @@
       }).join('');
       const itemChips = this.phase === 'form' ? '' : this.items.map((it, i) => {
         const st = P.itemState(it);
-        const status = it.where === 'pan' ? `${P.fmtTime(it.cookTime)} · ${st.state}` : `${st.state}${it.burger ? ` → ${it.burger}` : ''}`;
+        // where it is going: assigned by hand, or the default the build step would pick (shown in
+        // brackets, so the cook sees the plan while there is still time to change it)
+        const plan = this.patties.length > 1 && it.burger == null ? P.plannedBurger(this.state, it) : null;
+        const dest = it.burger ? ` → ${it.burger}` : plan ? ` → (${plan.id})` : '';
+        const status = it.where === 'pan' ? `${P.fmtTime(it.cookTime)} · ${st.state}` : `${st.state}${dest}`;
         return `<button class="chip item${it === this.selItem ? ' on' : ''}" data-item="${i}" title="Select this topping"><b>${it.spec.short}</b> <small>${status}</small></button>`;
       }).join('');
       const chips = pattyChips + itemChips;
@@ -574,7 +578,11 @@
       const live = on || this.phase === 'rest';
       $('assign-row').hidden = !live || !it || !many;
       if (live && it && many) {
-        const html = this.patties.map((q, i) => `<button data-burger="${i}" class="${it.burger === q.id ? 'on' : ''}">${i + 1} ${SHORT[q.target]}</button>`).join(' ');
+        // the burger this topping would go to if nothing is said: shown as a dotted outline, so the
+        // default build is visible before the plate goes out rather than on the results card
+        const plan = it.burger == null ? P.plannedBurger(this.state, it) : null;
+        const html = this.patties.map((q, i) => `<button data-burger="${i}" class="${it.burger === q.id ? 'on' : plan && plan.id === q.id ? 'plan' : ''}">${i + 1} ${SHORT[q.target]}</button>`).join(' ')
+          + (plan ? ` <small>burger ${plan.id} unless you say otherwise${it.pair ? ' — both halves of a bun go together' : ''}</small>` : '');
         if (html !== this.assignHTML) { $('assign-btns').innerHTML = html; this.assignHTML = html; }
       }
       // the senses act on the selected patty, on the metal or resting; the hand only needs a stove

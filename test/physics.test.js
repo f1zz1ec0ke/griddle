@@ -204,6 +204,35 @@ test('flipping a cheeseburger puts the cheese under the meat: it fries, welds, a
   assert.ok(p.cheeses.length === 0 || p.cheeses[0].fried);
 });
 
+test('the pan pays for the cheese it is frying, not for what gets through to the meat', () => {
+  // Cheese-side down, the slice is between the metal and the meat: the meat sees what comes up
+  // through it, the metal is out what it put into the bottom of it — warming 20 g of slice and
+  // boiling ~4 g of water at 2.26 MJ/kg. Two slices under a patty on 220 °C cast iron pull tens of
+  // kilojoules out of the metal; if the rings are only charged what the *meat* took, ~30 kJ (a good
+  // 25 °C of a cast-iron pan) comes out of nowhere and a cheeseburger flipped over is free heat.
+  const s = P.createState({}); preheat(s, 220); P.addFat(s, 'canola', 8);
+  const p = std(); P.placePatty(s, p); cookHeld(s, 60, 220);
+  P.addCheese(s, p); P.addCheese(s, p); cookHeld(s, 30, 220);
+  P.setKnob(s, 0); // burner off: from here the only thing cooling the metal is what is standing on it
+  P.flipPatty(s, p);
+  const T0 = s.pan.T;
+  let debit = 0, gave = 0, took = 0;
+  for (let i = 0; i < 2400; i++) { // a minute cheese-side down, with nothing feeding the metal
+    P.step(s, DT);
+    const r = p.sc.res;
+    for (let j = 0; j < p.Nr; j++) { debit += r.qPanR[j] * DT; took += r.qBotR[j] * DT; }
+    gave += r.qBot * DT;
+  }
+  assert.equal(p.cheeseUnder.length, 2);
+  assert.ok(Math.abs(debit - gave) < 1e-6 * Math.abs(gave) + 1, `the rings must be charged the pan-side flux: ${(debit / 1000).toFixed(2)} vs ${(gave / 1000).toFixed(2)} kJ`);
+  assert.ok(debit > took * 1.5, `the cheese keeps most of it: pan gave ${(debit / 1000).toFixed(1)} kJ, meat took ${(took / 1000).toFixed(1)} kJ`);
+  assert.ok(debit > 9000, `two slices frying should be worth the best part of ten kilojoules a minute: ${(debit / 1000).toFixed(1)} kJ`);
+  assert.ok(s.pan.T < T0 - 30, `and the metal has to sag for it: ${T0.toFixed(0)} → ${s.pan.T.toFixed(0)} °C`);
+  assert.ok(p.cheeseUnder[0].T > 95 && p.cheeseUnder[1].T > 55, `that is where it went: slices at ${p.cheeseUnder.map((c) => c.T.toFixed(0)).join(' / ')} °C, the bottom one boiling`);
+  assert.ok(p.cheeseUnder[0].skirt.dry > 0.02, 'and boiling water out of the slice on the metal');
+  assert.ok(finite(p));
+});
+
 test('the pan dirties over tickets, dirt costs contact and crust, and washing resets it', () => {
   const s = P.createState({ pan: 'stainless' }); preheat(s, 220);
   const p = std(); P.placePatty(s, p); cookHeld(s, 15, 220); P.flipPatty(s); // tears: meat bits
@@ -389,6 +418,40 @@ test('the grill recipe still scores 100 either way: bare coals, or a chunk of hi
     assert.equal(r.total, 100, `${wood || 'bare coals'}: ${r.total} ${JSON.stringify(r.parts)} smoke ${r.smokiness.toFixed(2)}`);
   }
 });
+test('a smothered kettle with no wood on it is a dirty fire, not a creosote bath', () => {
+  // Shut a kettle down over plain lump and the meat sits in the bed's own starved smoke. Lump
+  // charcoal gave up its volatiles in the kiln, so what it makes without air is carbon monoxide and
+  // a little soot — a quarter the creosote weight of the same smoke off a smouldering chunk — and
+  // it is not the aromatic condensate wood lays down either. It should cost a fraction of a point
+  // and say the fire was starved, not blame wood that is not in the kettle.
+  const bare = litGrill(8, 600), withWood = litGrill(8, 600);
+  const pb = std({ thicknessMm: 18, massG: 150 }), pw = std({ thicknessMm: 18, massG: 150 });
+  P.addWood(withWood, 'hickory');
+  grillFor(bare, 240); grillFor(withWood, 240); // the chunk needs a few minutes to dry out and reach pyrolysis
+  P.placePatty(bare, pb); P.placePatty(withWood, pw);
+  for (const s of [bare, withWood]) { P.toggleLid(s); P.setKnob(s, 0); P.setTopVent(s, 0); grillFor(s, 300); }
+  const rb = P.smokeRead(pb), rw = P.smokeRead(pw);
+  assert.equal(rb.wood, null, 'nothing but the bed deposited on it');
+  assert.ok(rb.creosote < 0.35, `bare coals, smothered: creosote ${rb.creosote.toFixed(2)}`);
+  assert.ok(rw.creosote > 4 * rb.creosote, `a smouldering chunk is the tar: ${rw.creosote.toFixed(2)} vs ${rb.creosote.toFixed(2)}`);
+  const eb = P.evaluate(bare, 'medium-rare', pb);
+  assert.ok(eb.smokePenalty < 1, `a starved fire over plain lump should not cost 5 points: ${eb.smokePenalty.toFixed(1)}`);
+  assert.ok(!eb.notes.some((n) => /Wood that smoulders/.test(n)), eb.notes.join(' | '));
+  const ew = P.evaluate(withWood, 'medium-rare', pw);
+  assert.ok(ew.notes.some((n) => /Wood that smoulders/.test(n)), 'with a chunk on it, the note is about the wood');
+  assert.ok(ew.smokePenalty > 4, `and it costs: ${ew.smokePenalty}`);
+});
+
+test('the white-hot milestone is a temperature the bed can actually reach', () => {
+  // target = Tamb + (300 + 430·air)·alive·size tops out at 787 °C, and a real lump bed with both
+  // vents wide sits at 740–780: the milestone has to be inside that or it is dead text.
+  const s = P.createState({ stove: 'charcoal' }); P.setKnob(s, 10);
+  let g = 0; while (!(s._ms && s._ms.coalfull) && g++ < 60000) P.step(s, DT);
+  assert.ok(s._ms.coalfull, `never fired; the bed got to ${s.grill.Tfire.toFixed(0)} °C`);
+  assert.ok(s.grill.Tfire >= 700 && s.grill.Tfire < 800, `fired at ${s.grill.Tfire.toFixed(0)} °C`);
+  assert.ok(s.events.some((e) => /white-hot/.test(e.text)), 'and it says so in the log');
+});
+
 test('the lid vent is half the airflow with the lid on and nothing at all with it off', () => {
   const s = litGrill(8, 600);
   P.setTopVent(s, 0);
@@ -658,8 +721,16 @@ test('bacon renders most of its fat and crisps in about eight minutes at 180 °C
   const s = panAt(180, 6);
   const [b] = P.addItem(s, 'bacon');
   for (let i = 0; i < 8; i++) { cookItem(s, 60, 180); if (i % 2 === 1) P.flipItem(s, b); }
-  assert.ok(b.lostFat / b.m0 > 0.30, `only ${(b.lostFat / b.m0 * 100).toFixed(0)} % of the strip's mass came out as fat`);
-  assert.ok(b.lostFat / b.fat0 > 0.8, `only ${(b.lostFat / b.fat0 * 100).toFixed(0)} % of its fat rendered`);
+  // A 25 g rasher is 10 g of fat, 10.5 g of water and 4.5 g of lean. Frying it crisp renders 50–65 %
+  // of the fat (6 g here, a quarter of the raw strip) and drives off 60–70 % of the water: what
+  // comes out is 11–12 g — a little under half of what went in — and it is still ~40 % fat, which is
+  // what cooked streaky bacon is. Nothing renders the last of the fat out of the lean.
+  assert.ok(b.lostFat / b.m0 > 0.20, `only ${(b.lostFat / b.m0 * 100).toFixed(0)} % of the strip's mass came out as fat`);
+  assert.ok(b.lostFat / b.fat0 > 0.5 && b.lostFat / b.fat0 < 0.7, `${(b.lostFat / b.fat0 * 100).toFixed(0)} % of its fat rendered; a rasher gives up 50–65 %`);
+  const cooked = P.itemMass(b);
+  assert.ok(cooked > 0.40 * b.m0 && cooked < 0.55 * b.m0, `cooked weight ${(cooked * 1000).toFixed(1)} g of ${(b.m0 * 1000).toFixed(0)} g raw`);
+  assert.ok(b.body.w > 0.2 * b.w0, `crisp bacon is not bone dry: ${(b.body.w * 1000).toFixed(1)} g of water left`);
+  assert.ok(b.fs + b.fl > 0.3 * b.fat0, `and it keeps its intramuscular fat: ${((b.fs + b.fl) * 1000).toFixed(1)} g`);
   assert.ok(s.pan.oil > 0.006 + b.lostFat * 0.8, 'the rendered fat should be in the pan');
   assert.ok(b.crisp > 0.6, `crisp=${b.crisp}`);
   assert.ok(b.shrink > 0.2, `it should have shrunk by about a quarter: ${b.shrink}`);
@@ -686,18 +757,41 @@ test('egg: the white sets before the yolk, and a lid sets the yolk', () => {
   assert.ok(el.yolkSet > 0.75, `under a lid the steam sets the yolk: ${el.yolkSet}`);
   assert.ok(el.yolk.T > eo.yolk.T + 20, `lid ${el.yolk.T} vs open ${eo.yolk.T}`);
   assert.equal(P.itemState(eo).state, 'runny yolk');
+  // and it is still an egg: three minutes of frying takes 10–15 % of its mass off as steam (USDA
+  // has a 50 g large egg going out at 46 g), not the third of it a layer of white boiling dry would
+  assert.ok(eo.lostWater > 0.003 && eo.lostWater < 0.009, `${(eo.lostWater * 1000).toFixed(1)} g steamed off a 55 g egg`);
+  assert.ok(P.itemMass(eo) > 0.85 * eo.m0, `a fried egg keeps its weight: ${(P.itemMass(eo) * 1000).toFixed(1)} g of ${(eo.m0 * 1000).toFixed(0)}`);
+  assert.ok(eo.wBot.w > 0.5 * eo.w0b, `the set white holds its water: ${(eo.wBot.w * 1000).toFixed(1)} g of ${(eo.w0b * 1000).toFixed(1)}`);
   // turned over, the yolk is a millimetre off the metal and goes jammy in a minute
   const over = panAt(160, 8); const [ev] = P.addItem(over, 'egg');
   cookItem(over, 60, 160); P.flipItem(over, ev); cookItem(over, 35, 160);
   assert.equal(P.itemState(ev).state, 'jammy yolk');
   cookItem(over, 60, 160);
   assert.equal(P.itemState(ev).state, 'hard yolk');
+  // a yolk left on the metal long enough goes to the boil, and that water has to be counted like
+  // any other: mass + steam + fat + drip is what went in, to within a milligram
+  const yw0 = ev.yolk.w;
+  cookItem(over, 240, 200);
+  assert.ok(ev.yolk.T > 99, `a yolk left frying reaches the boil: ${ev.yolk.T}`);
+  assert.ok(ev.yolk.w < yw0 - 1e-5, `and some of its water has gone: ${(yw0 * 1000).toFixed(2)} → ${(ev.yolk.w * 1000).toFixed(2)} g`);
+  const bal = P.itemMass(ev) + ev.lostWater + ev.lostFat + ev.lostDrip - ev.fatSoaked;
+  assert.ok(Math.abs(bal - ev.m0) < 1e-6, `${((bal - ev.m0) * 1000).toFixed(3)} g adrift once the yolk has boiled`);
   // the lace at the rim browns in the fat
   assert.ok(eo.lace.brown > 1.2, `lace=${eo.lace.brown}`);
   // and a raw white is a send-back
   const raw = panAt(160, 8); const [er] = P.addItem(raw, 'egg'); cookItem(raw, 20, 160);
   assert.equal(P.itemState(er).state, 'raw white');
   assert.ok(P.itemState(er).score <= -5);
+});
+
+test('a fridge-cold patty feels firmer than the same meat that has sat out', () => {
+  const cold = std({ tempC: 4 }), warm = std({ tempC: 25 });
+  const Ec = P.firmness(cold).E, Ew = P.firmness(warm).E;
+  // Raw mince is ~8 kPa of wet paste; the solid fat in it is waxy at fridge temperature and soft at
+  // room temperature, so the same meat is ~10 % stiffer cold. Nothing has denatured in either.
+  assert.ok(Ec > Ew * 1.05, `4 °C ${Ec.toFixed(0)} Pa vs 25 °C ${Ew.toFixed(0)} Pa`);
+  assert.ok(Ew > 7.5e3 && Ec < 11e3, `both are still raw mince: ${Ew.toFixed(0)} / ${Ec.toFixed(0)} Pa`);
+  assert.equal(P.firmnessWord(P.firmness(cold).index).word, P.firmnessWord(P.firmness(warm).index).word); // both still read raw to a finger
 });
 
 test('onions: sweet and brown in a quarter of an hour on medium, ruined in minutes on a hot pan', () => {
@@ -725,6 +819,35 @@ test('onions: sweet and brown in a quarter of an hour on medium, ruined in minut
   const s3 = panAt(260, 10); const [o3] = P.addItem(s3, 'onions');
   for (let i = 0; i < 12; i++) { cookItem(s3, 30, 260); P.flipItem(s3, o3); }
   assert.ok(o3.char < o2.char, `stirred ${o3.char} vs left alone ${o2.char}`);
+});
+
+test('onions with their water gone but no colour on them are sweated, not raw', () => {
+  const s = panAt(150, 10);
+  const [o] = P.addItem(s, 'onions');
+  for (let i = 0; i < 12; i++) { cookItem(s, 60, 150); P.flipItem(s, o); }
+  // Twelve minutes on a 150 °C pan boils most of the 71 g of water out of 80 g of onion but never
+  // gets the contact layer dry enough for the sugars to go: soft, translucent, mild — sweated.
+  // Reading that as "raw" (and telling the cook only 50 g of their water was out, of 71) was wrong.
+  assert.ok(o.lostWater > 0.6 * o.w0, `${(o.lostWater * 1000).toFixed(0)} g of ${(o.w0 * 1000).toFixed(0)} g is out`);
+  assert.ok(o.carm < 0.35, `nothing has browned yet: carm=${o.carm}`);
+  const st = P.itemState(o);
+  assert.equal(st.state, 'sweated');
+  assert.ok(st.score > -1 && st.score <= 0.5, `sweated onions are not a penalty: ${st.score}`);
+  assert.ok(!/only \d+ g of their water/.test(st.note), st.note);
+  // and a heap that has only just gone in is still raw, and still says so
+  const s2 = panAt(150, 10); const [o2] = P.addItem(s2, 'onions'); cookItem(s2, 60, 150);
+  assert.equal(P.itemState(o2).state, 'raw');
+});
+
+test('the caramelised window is wide enough to hit: the contact layer runs out of sugar', () => {
+  const s = panAt(170, 10);
+  const [o] = P.addItem(s, 'onions');
+  let caramelised = 0;
+  for (let i = 0; i < 20; i++) { cookItem(s, 60, 170); P.flipItem(s, o); if (P.itemState(o).state === 'caramelised') caramelised++; }
+  // An onion carries 5.6 % of its weight as free sugars; the layer on the metal cannot go darker
+  // than the sugar it has. Stirred every minute on a 170 °C pan the heap reads caramelised for a
+  // good four or five minutes, instead of stepping from golden to bitter between two readings.
+  assert.ok(caramelised >= 4, `only ${caramelised} minutes of the cook read caramelised`);
 });
 
 test('items take a spot on the pan, count in the coverage, and pull the metal under them down', () => {
@@ -757,6 +880,54 @@ test('items take a spot on the pan, count in the coverage, and pull the metal un
   assert.ok(withBun < without - 3, `ring under the bun moved ${withBun.toFixed(1)} K, the bare ring ${without.toFixed(1)} K`);
 });
 
+test('a topping with nowhere to go lies on the meat, and only what touches the metal cooks', () => {
+  // freeSpot returns the least-bad place on a crowded pan, and addItem lays the heap there anyway —
+  // which is what a cook does. What it must not do is let the part lying on 70 °C beef draw the
+  // same 200-odd watts out of the rings as the part on the metal.
+  const s = panAt(200, 8);
+  const a = std(), b = std();
+  P.placePatty(s, a, { x: -0.045, y: 0 }); P.placePatty(s, b, { x: 0.045, y: 0 });
+  const [heap] = P.addItem(s, 'onions');
+  assert.ok(heap.overlap > 0.3, `most of a 16 cm heap has nowhere to go on this pan: overlap=${heap.overlap}`);
+  assert.ok(Math.abs(heap.contactF - (1 - heap.overlap)) < 1e-9);
+  assert.ok(s.events.some((e) => /No room/.test(e.text) && /off the metal/.test(e.text)), 'and the cook is told');
+  cookItem(s, 60, 200);
+  const crowded = heap.qBot;
+  // the same heap, the same pan, nothing else on it
+  const clear = panAt(200, 8);
+  const [alone] = P.addItem(clear, 'onions');
+  assert.equal(alone.overlap, 0); assert.equal(alone.contactF, 1);
+  cookItem(clear, 60, 200);
+  assert.ok(crowded < 0.75 * alone.qBot, `half on the meat should not draw a full footprint: ${crowded.toFixed(0)} W vs ${alone.qBot.toFixed(0)} W`);
+  assert.ok(heap.bot.T < alone.bot.T, `and it cooks slower: ${heap.bot.T.toFixed(0)} vs ${alone.bot.T.toFixed(0)} °C`);
+});
+
+test('a pan of bacon with no patty in it still sizzles', () => {
+  // boilNoise and hiss are the two voices the audio plays, and both were scaled by a patty-only
+  // contact and a patty-only dryness: with nothing but toppings on the metal that is zero, so two
+  // rashers rendering in 12 g of their own fat came out a hundredth of what the same pan sounds
+  // like with meat in it — and lifting the last patty off silenced bacon that was still frying.
+  const s = panAt(190, 0);
+  P.addItem(s, 'bacon'); P.addItem(s, 'bacon');
+  cookItem(s, 120, 190);
+  const d = s.diag;
+  assert.ok(d.contact > 0.5, `two rashers are things against the metal: contact=${d.contact}`);
+  assert.ok(s.items[0].lostFat > 0.002 && s.pan.oil > 0.004, `they should be rendering: ${(s.pan.oil * 1000).toFixed(1)} g of fat in the pan`);
+  assert.ok(d.hiss > 0.1, `fat frying on 190 °C metal has to be audible: hiss=${d.hiss.toFixed(3)}`);
+  assert.ok(d.boilNoise > 0.05, `and water is still coming out of them: boil=${d.boilNoise.toFixed(3)}`);
+  assert.ok(s.events.some((e) => /sizzle/.test(e.text)), 'and the kitchen says so at least once');
+  // the two voices track what the rashers are doing: dry lean frying is hiss, wet lean is boil
+  assert.ok(P.itemDryness(s.items[0]) > 0.3, `the face on the metal has dried down: ${P.itemDryness(s.items[0]).toFixed(2)}`);
+  // and lifting a patty out from beside them does not silence them
+  const s2 = panAt(190, 0);
+  P.addItem(s2, 'bacon');
+  const p = std(); P.placePatty(s2, p, { x: 0.05, y: 0 });
+  cookItem(s2, 120, 190);
+  const withMeat = s2.diag.hiss;
+  P.removePatty(s2, p); P.step(s2, DT);
+  assert.ok(s2.diag.hiss > 0.3 * withMeat, `rasher still frying: ${s2.diag.hiss.toFixed(3)} vs ${withMeat.toFixed(3)} with the patty beside it`);
+});
+
 test('the build: toppings go on a burger, the ticket pays for raw or burnt ones and the patty score does not move', () => {
   const s = panAt(200, 8);
   const p = std({ thicknessMm: 18 }); P.placePatty(s, p, { x: 0.05, y: 0 });
@@ -783,6 +954,43 @@ test('the build: toppings go on a burger, the ticket pays for raw or burnt ones 
   assert.ok(P.toppingsOf(s, p).length === 1);
 });
 
+test('a bun stays one bun: both halves go to the same burger, and the plan is visible before serving', () => {
+  // addItem lays the two halves at two separate free spots, and the build step used to give each
+  // topping to the burger nearest *its own* rest position — so on a three-burger ticket the heel
+  // routinely went to one burger and the crown to another. The burger with only a crown then has no
+  // heel at all: it takes the untoasted soak factor and goes out with nothing under it, and its
+  // neighbour goes out with no top. The pair has to travel together.
+  const s = panAt(200, 8);
+  const ps = [{ x: -0.07, y: 0 }, { x: 0.07, y: 0 }, { x: 0, y: 0.07 }].map((pos, i) => { const p = std({ id: i + 1, thicknessMm: 16 }); P.placePatty(s, p, pos); return p; });
+  const [heel, crown] = P.addItem(s, 'bun');
+  cookItem(s, 60, 200);
+  for (const p of ps) P.removePatty(s, p);
+  P.removeItem(s, heel); P.removeItem(s, crown);
+  // put them down on opposite sides of the board, which is exactly what split them before
+  heel.restPos = { x: -0.07, y: 0 }; crown.restPos = { x: 0.07, y: 0 };
+  assert.equal(heel.pair, crown.pair, 'the two halves of one bun share a pair id');
+  const plan = P.plannedBurger(s, heel);
+  assert.equal(P.plannedBurger(s, crown).id, plan.id, 'and the plan puts them on the same burger');
+  assert.equal(plan.id, 1, 'the pair follows the heel, which is the half the burger is built on');
+  P.serve(s);
+  assert.equal(heel.burger, crown.burger);
+  const built = ps.find((p) => p.id === heel.burger);
+  assert.ok(built.bunFaces.bottom && built.bunFaces.top, 'the burger it was built on has both halves');
+  for (const p of ps) if (p !== built) assert.ok(!p.bunFaces.bottom && !p.bunFaces.top, `burger ${p.id} should have no bun at all, not half of one`);
+  assert.ok(built.bunSoak < built.bunSoakRaw, 'and it gets the toasted heel it was given');
+  // a half the cook has assigned by hand takes its other half with it
+  const s2 = panAt(200, 8);
+  const qs = [{ x: -0.07, y: 0 }, { x: 0.07, y: 0 }].map((pos, i) => { const p = std({ id: i + 1, thicknessMm: 16 }); P.placePatty(s2, p, pos); return p; });
+  const [h2, c2] = P.addItem(s2, 'bun');
+  cookItem(s2, 30, 200);
+  for (const p of qs) P.removePatty(s2, p);
+  P.removeItem(s2, h2); P.removeItem(s2, c2);
+  P.assignTopping(s2, c2, qs[1]); // the crown, by hand, onto burger 2
+  assert.equal(P.plannedBurger(s2, h2).id, 2, 'the heel follows the half that was assigned');
+  P.serve(s2);
+  assert.equal(h2.burger, 2);
+});
+
 test('every item stays finite, conserves its mass into steam and fat, and cools off the heat', () => {
   const s = panAt(210, 8);
   const made = [];
@@ -798,9 +1006,16 @@ test('every item stays finite, conserves its mass into steam and fat, and cools 
     P.removeItem(s, it);
   }
   const egg = made.find((i) => i.kind === 'egg');
-  const hot = P.itemT(egg);
-  cookItem(s, 300, 210);
-  assert.ok(P.itemT(egg) < hot - 20, `off the heat it should cool: ${hot} → ${P.itemT(egg)}`);
+  const hot = P.itemT(egg), whiteHot = egg.wBot.T;
+  // Off the heat nothing snaps to the room: a lump of egg is ~160 J/K losing 15-odd watts to still
+  // air, so the time constant is five minutes. Five seconds of it is nothing.
+  cookItem(s, 5, 210);
+  assert.ok(P.itemT(egg) > hot - 3 && egg.wBot.T > whiteHot - 6, `five seconds off the heat: yolk ${hot} → ${P.itemT(egg)}, white ${whiteHot} → ${egg.wBot.T}`);
+  cookItem(s, 295, 210);
+  // Five minutes later the white — which is the surface — has given up most of it, while the yolk
+  // buried in the middle coasts on carry-over for the first minute and is only ~10 K down.
+  assert.ok(egg.wBot.T < whiteHot - 25, `the white should have cooled: ${whiteHot} → ${egg.wBot.T}`);
+  assert.ok(P.itemT(egg) < hot - 5 && P.itemT(egg) > 25, `off the heat it should cool: ${hot} → ${P.itemT(egg)}`);
   assert.ok(egg.restT > 290);
 });
 
@@ -1561,6 +1776,37 @@ test('the instability guard: a pathological patty stays finite, and a poisoned c
   const clean = P.createState({}); preheat(clean, 230);
   const q = std(); P.placePatty(clean, q); cookHeld(clean, 120, 230); P.flipPatty(clean); cookHeld(clean, 120, 230);
   assert.equal(clean.guard.restores, 0, 'the guard should never fire on an ordinary cook');
+});
+
+test('the guard\'s last resort leaves a patty that keeps cooking, cheese included', () => {
+  // The sanitiser runs when there is no snapshot to go back to — the step right after a flip threw
+  // it away. It used to write 0 into w0c, the *reference* water the cell was formed with, and every
+  // dryness in the model is a ratio against that: the next step divided 0/0, the grid went NaN, the
+  // rollback had nothing good to restore, and the patty sat there for the rest of the cook while
+  // pattyFinite cheerfully said it was fine. The reference has to come back as the formed value.
+  const s = P.createState({}); preheat(s, 230);
+  const p = std(); P.placePatty(s, p); cookHeld(s, 60, 230);
+  P.flipPatty(s, p); // invalidates the snapshot
+  const w0 = p.w0c[5], c0 = P.centerT(p);
+  p.w0c[5] = NaN; p.w[5] = NaN;
+  for (let i = 0; i < 1600; i++) { hold(s, 230); P.step(s, DT); } // forty seconds of cooking after the poison
+  assert.ok(P.pattyFinite(p) && finite(p));
+  assert.ok(Math.abs(p.w0c[5] - w0) < 1e-9, `the formed reference should be back, not zero: ${p.w0c[5]}`);
+  assert.ok(P.centerT(p) > c0 + 3, `and the patty goes on cooking: ${c0.toFixed(2)} → ${P.centerT(p).toFixed(2)} °C`);
+  assert.ok(Number.isFinite(P.firmness(p).index), 'a finger on it still reads a number');
+  assert.ok(s.guard.restores <= 3, `one bad step, not four hundred: ${s.guard.restores} restores`);
+  // and the slices are part of the patty: a non-finite one is invisible to a snapshot of the grid
+  const s2 = P.createState({}); preheat(s2, 230);
+  const q = std(); P.placePatty(s2, q); cookHeld(s2, 60, 230);
+  P.addCheese(s2, q); cookHeld(s2, 60, 230); P.flipPatty(s2, q); cookHeld(s2, 20, 230);
+  assert.equal(q.cheeseUnder.length, 1);
+  const cq0 = P.centerT(q);
+  q.cheeseUnder[0].T = NaN;
+  assert.equal(P.pattyFinite(q), false, 'a NaN slice is not a finite patty');
+  for (let i = 0; i < 400; i++) { hold(s2, 230); P.step(s2, DT); }
+  assert.ok(Number.isFinite(q.cheeseUnder[0].T) && q.cheeseUnder[0].T > 20, `the slice is put back on the meat: ${q.cheeseUnder[0].T}`);
+  assert.ok(P.pattyFinite(q) && P.centerT(q) > cq0 + 0.5, `and the cook continues: ${cq0.toFixed(2)} → ${P.centerT(q).toFixed(2)} °C`);
+  assert.ok(s2.guard.restores <= 3, `${s2.guard.restores} restores`);
 });
 
 // ---------------------------------------------------------------- what the integration playthrough turned up

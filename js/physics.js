@@ -146,6 +146,8 @@
     dirty: 1.5,      // and a smothered chunk yields two and a half times that, because nothing burns it off
     char: 0.20,      // what is left behind is charcoal, and it joins the bed as fuel
     bed: 2.0e-7,     // kg/s of smoke off the charcoal itself, nearly all of it only when it is starved
+    flavBed: 0.35,   // how much of the bed's own deposit reads as smoke flavour at all: charcoal smoke tastes of charcoal, and there is a little of that in every kettle, but it is not the aromatic condensate a wood chunk lays down and a smothered kettle over plain lump is not a smoked burger.
+    creoBed: 0.25,   // and a quarter of what it deposits reads as creosote. Lump charcoal has already been through pyrolysis in the kiln: starved of air it makes carbon monoxide and a little soot, not the tar load a smothered *wood* chunk gives up. Shutting a kettle down over plain charcoal is a dirty fire, but it is not a creosote bath.
     V: 0.030,        // m³ under the dome of a 57 cm kettle, above the grate
     Qopen: 0.060,    // m³/s carried away by the plume off an open kettle
     Qlid: 0.022,     // m³/s drawn through a closed kettle with both vents wide (~20× what the bed needs)
@@ -180,8 +182,10 @@
    * TOUCH is the finger test. What a finger feels is stiffness, and everything that stiffens meat
    * is already in the grid. Raw ground beef is a wet paste held together by friction: its
    * compression modulus is about 8 kPa (published values for raw mince run 5–12 kPa depending on
-   * how hard it was packed), and cold solid fat adds a little to that, which is why a fridge-cold
-   * patty feels firmer than one that has sat out. Then, in order:
+   * how hard it was packed), and cold solid fat adds a little to that — beef fat is waxy out of the
+   * fridge and already soft by the time the meat has sat out to 25 °C, so that term fades between
+   * 15 and 35 °C, which is why a fridge-cold patty feels firmer than one that has been on the
+   * board. Then, in order:
    *   • myosin (52–58 °C) gels and the paste becomes a solid — the single biggest step there is;
    *   • collagen (60–67 °C) shrinks to a fraction of its length and squeezes the fibres. Over
    *     hours it would dissolve to gelatin and soften the meat again, but a burger is on the pan
@@ -338,15 +342,18 @@
    */
   function pattyScratch(Nz, Nr) {
     const n = Nz * Nr;
-    const qBotR = new Float64Array(Nr);
+    const qBotR = new Float64Array(Nr), qPanR = new Float64Array(Nr);
     return {
       Cn: new Float64Array(n), Kn: new Float64Array(n), Q: new Float64Array(n),
       X: new Float64Array(n), flux: new Float64Array(n), fmv: new Float64Array(n), dir: new Int8Array(n),
-      Aj: new Float64Array(Nr), qBotR, TpanR: new Float64Array(Nr), hcR: new Float64Array(Nr), TsLim: new Float64Array(Nr),
+      Aj: new Float64Array(Nr), qBotR, qPanR, TpanR: new Float64Array(Nr), hcR: new Float64Array(Nr), TsLim: new Float64Array(Nr),
       TatR: new Float64Array(Nr),
       cheeseFlux: new Float64Array(26), cheeseFluxTop: new Float64Array(26), // at most 24 slices, plus the air above
-      res: { qBot: 0, qBotR, hc: 0, boilBottom: 0, evapTop: 0, fatDrip: 0, fatSide: 0, juiceSide: 0, cheeseDrip: 0, Ts: 0, qSide: 0 },
-      acc: { qBot: 0, qBotR: new Float64Array(Nr), hc: 0, boilBottom: 0, evapTop: 0, fatDrip: 0, fatSide: 0, juiceSide: 0, cheeseDrip: 0, Ts: 0, qSide: 0 },
+      // qBotR is what went into the *meat's* rings; qPanR is what the metal under them gave up.
+      // They are the same number unless there is something between the two — a slice of cheese
+      // fried under the patty — and then the difference is what that something absorbed.
+      res: { qBot: 0, qBotR, qPanR, hc: 0, boilBottom: 0, evapTop: 0, fatDrip: 0, fatSide: 0, juiceSide: 0, cheeseDrip: 0, Ts: 0, qSide: 0 },
+      acc: { qBot: 0, qBotR: new Float64Array(Nr), qPanR: new Float64Array(Nr), hc: 0, boilBottom: 0, evapTop: 0, fatDrip: 0, fatSide: 0, juiceSide: 0, cheeseDrip: 0, Ts: 0, qSide: 0 },
       bcPan: null, bcGrill: null, bcAir: null,
     };
   }
@@ -833,9 +840,16 @@
   // ---------------------------------------------------------------- the cook's senses
   /** Compression modulus (Pa) of one cell, from what has denatured in it and how dry it is. */
   function cellStiffness(p, c) {
-    const wr = p.w[c] / p.w0c[c], dry = wr >= 1 ? 0 : 1 - wr;
-    const solid = p.fs[c] / (p.w[c] + p.fs[c] + p.fl[c] + p.fr[c] + p.p[c] + 1e-12); // fat that has not melted yet is waxy and stiff
-    return TOUCH.E0 * (1 + TOUCH.aF * solid + TOUCH.aM * p.dM[c] + TOUCH.aC * p.dC[c] + TOUCH.aA * p.dA[c] + TOUCH.aW * dry);
+    const wr = p.w0c[c] > 0 ? p.w[c] / p.w0c[c] : 1, dry = wr >= 1 ? 0 : 1 - wr;
+    // Fat that has not melted yet is waxy and stiff — but "not melted" is not a step at 42 °C. Beef
+    // fat is a mixture of triglycerides with a melting range: it is hard out of the fridge, already
+    // soft and greasy at room temperature, and only fully liquid in the fifties. The solid fraction
+    // in the grid (p.fs) does not move until ~42 °C, so the waxiness is faded out over 15–35 °C
+    // here instead — otherwise a 4 °C patty and a 25 °C one that has sat out come back with exactly
+    // the same modulus, which is not what a hand feels.
+    const wax = 1 - smooth(15, 35, p.T[c]);
+    const solid = p.fs[c] / (p.w[c] + p.fs[c] + p.fl[c] + p.fr[c] + p.p[c] + 1e-12);
+    return TOUCH.E0 * (1 + TOUCH.aF * wax * solid + TOUCH.aM * p.dM[c] + TOUCH.aC * p.dC[c] + TOUCH.aA * p.dA[c] + TOUCH.aW * dry);
   }
   /**
    * What a finger on the middle of the patty feels.
@@ -1045,14 +1059,14 @@
   const SOUND_GAP = 25; // s — the ear notices the change at once, but nobody narrates it every ten seconds
   function soundCue(s) {
     const d = s.diag, sc = s._snd || (s._snd = { mode: '', t: -99 });
-    const on = s.patties.some((p) => p.where === 'pan');
+    const on = s.patties.some((p) => p.where === 'pan') || s.items.some((it) => it.where === 'pan'); // a pan with only toppings on it still makes a noise
     // hysteresis, or a patty that is half dry would flip the description back and forth
     const mode = !on ? 'off'
       : d.boilNoise > (sc.mode === 'crackle' ? 0.12 : 0.28) ? 'crackle'
       : d.hiss > (sc.mode === 'hiss' ? 0.06 : 0.16) ? 'hiss' : 'quiet';
     if (mode === sc.mode || s.t - sc.t < SOUND_GAP) return;
     const was = sc.mode; sc.mode = mode; sc.t = s.t;
-    if (mode === 'off' || !was) return;
+    if (mode === 'off' || !was || was === 'off') return; // something just laid on the metal has not "gone quiet": it has not started yet
     if (mode === 'crackle') logEvent(s, 'The sizzle is loud and rough — water boiling out of the face against the metal. Nothing browns until that stops.', 'note');
     else if (mode === 'hiss') logEvent(s, 'The sizzle has dropped to a hiss — the underside is dry. It is frying in fat now instead of boiling in juice, and that is where the crust comes from.', 'note');
     else if (s.pan.Tcenter < 140) logEvent(s, 'Almost no sound off it at all. The metal is not hot enough to boil anything out of the meat, which means it is stewing, not searing.', 'note');
@@ -1181,7 +1195,7 @@
       Cn[c] = cp;
       const ice = Tc >= 0 ? 0 : Tc <= -C.fusionSpread ? 1 : -Tc / C.fusionSpread;
       const vw = wc * IRHO_W, vf = fc * IRHO_F, vp = pc * IRHO_P, vt = vw + vf + vp + 1e-12;
-      const wr = wc / w0c[c], dryness = wr >= 1 ? 0 : 1 - wr;
+      const wr = w0c[c] > 0 ? wc / w0c[c] : 1, dryness = wr >= 1 ? 0 : 1 - wr; // a zero reference would make every dryness NaN and take the grid with it
       // volume-weighted mixture conductivity; a dried-out cell (i.e. the crust) insulates
       Kn[c] = ((vw * (C.kW + (C.kIce - C.kW) * ice) + vf * C.kF + vp * C.kP) / vt) * kWork * (1 - 0.40 * dryness);
     }
@@ -1205,13 +1219,16 @@
     }
 
     // ---- bottom boundary, per ring
-    const qBotR = sc.qBotR, TpanR = sc.TpanR, hcR = sc.hcR;
+    const qBotR = sc.qBotR, qPanR = sc.qPanR, TpanR = sc.TpanR, hcR = sc.hcR;
     let qBot = 0, qPan = 0, hc = 0;
     let TbotMean = 0; for (let j = 0; j < Nr; j++) TbotMean += T[j] * aj[j];
     const bb = bc.bottom, btype = bb.type;
     if (p.cheeseUnder.length) {
       const r = stepCheeseUnder(p, dt, bc, TbotMean);
-      for (let j = 0; j < Nr; j++) { qBotR[j] = r.qMeat * aj[j]; Q[j] += qBotR[j]; TpanR[j] = bb.T; }
+      // the meat gets what came up through the slice stack; the metal is out the flux it put into
+      // the *bottom* slice, which is a great deal more — warming 20–40 g of cheese and boiling the
+      // water out of it has to come from somewhere, and it comes out of the pan
+      for (let j = 0; j < Nr; j++) { qBotR[j] = r.qMeat * aj[j]; qPanR[j] = r.qPan * aj[j]; Q[j] += qBotR[j]; TpanR[j] = bb.T; }
       qBot = r.qMeat; qPan = r.qPan; hc = r.hc;
     } else if (btype === 'pan' || btype === 'grill') {
       const oilFilm = clamp((bb.oil || 0) / 0.003, 0, 1);
@@ -1247,11 +1264,11 @@
           hcR[j] = hcWet * (boiling ? 1.25 : 1) * crust * contact;
           q = hcR[j] * Aj[j] * (TpanR[j] - Tj);
         }
-        qBotR[j] = q; Q[j] += q; qBot += q; hc += hcR[j] * aj[j];
+        qBotR[j] = q; qPanR[j] = q; Q[j] += q; qBot += q; hc += hcR[j] * aj[j];
       }
       qPan = qBot;
     } else {
-      for (let j = 0; j < Nr; j++) { const q = bb.h * Aj[j] * (bb.T - T[j]); qBotR[j] = q; Q[j] += q; qBot += q; TpanR[j] = bb.T; }
+      for (let j = 0; j < Nr; j++) { const q = bb.h * Aj[j] * (bb.T - T[j]); qBotR[j] = q; qPanR[j] = q; Q[j] += q; qBot += q; TpanR[j] = bb.T; }
       qPan = qBot;
     }
 
@@ -1580,19 +1597,19 @@
     const n = Math.max(1, subMin || 1, Math.min(64, Math.ceil(dt / dtMax)));
     p.subSteps = n;
     if (n === 1) return stepPatty(s, p, dt, bc);
-    const h = dt / n, Nr = p.Nr, acc = p.sc.acc, accR = acc.qBotR;
+    const h = dt / n, Nr = p.Nr, acc = p.sc.acc, accR = acc.qBotR, accP = acc.qPanR;
     acc.qBot = 0; acc.hc = 0; acc.boilBottom = 0; acc.evapTop = 0; acc.fatDrip = 0; acc.fatSide = 0; acc.juiceSide = 0; acc.cheeseDrip = 0; acc.Ts = 0; acc.qSide = 0;
-    accR.fill(0);
+    accR.fill(0); accP.fill(0);
     for (let k = 0; k < n; k++) {
       const r = stepPatty(s, p, h, bc);
       acc.qBot += r.qBot; acc.hc += r.hc; acc.boilBottom += r.boilBottom; acc.evapTop += r.evapTop;
       acc.fatDrip += r.fatDrip; acc.fatSide += r.fatSide; acc.juiceSide += r.juiceSide; acc.cheeseDrip += r.cheeseDrip; acc.Ts += r.Ts; acc.qSide += r.qSide;
-      for (let j = 0; j < Nr; j++) accR[j] += r.qBotR[j];
+      for (let j = 0; j < Nr; j++) { accR[j] += r.qBotR[j]; accP[j] += r.qPanR[j]; }
     }
     // the caller wants rates and temperatures, so the sub-steps are averaged, not summed
     acc.qBot /= n; acc.hc /= n; acc.boilBottom /= n; acc.evapTop /= n;
     acc.fatDrip /= n; acc.fatSide /= n; acc.juiceSide /= n; acc.cheeseDrip /= n; acc.Ts /= n; acc.qSide /= n;
-    for (let j = 0; j < Nr; j++) accR[j] /= n;
+    for (let j = 0; j < Nr; j++) { accR[j] /= n; accP[j] /= n; }
     return acc;
   }
 
@@ -1627,11 +1644,11 @@
       for (const k of GUARD_FACE_ARRAYS) if (!finiteArray(f[k])) return false;
       for (const k of GUARD_FACE_SCALARS) if (f[k] != null && !Number.isFinite(f[k])) return false;
     }
-    return true;
+    return cheeseFinite(p); // the slices are stepped with the patty and feed its boundaries
   }
   /** The step's returned fluxes feed the pan, so they have to be finite too. */
   function stepResultFinite(r) {
-    for (const k in r) { const v = r[k]; if (k === 'qBotR') { if (!finiteArray(v)) return false; } else if (!Number.isFinite(v)) return false; }
+    for (const k in r) { const v = r[k]; if (k === 'qBotR' || k === 'qPanR') { if (!finiteArray(v)) return false; } else if (!Number.isFinite(v)) return false; }
     return true;
   }
   function guardSnapshot(p, step) {
@@ -1672,7 +1689,17 @@
     let sum = 0, n = 0; for (let c = 0; c < p.T.length; c++) if (Number.isFinite(p.T[c])) { sum += p.T[c]; n++; }
     const Tfill = n ? sum / n : p.T0;
     for (let c = 0; c < p.T.length; c++) if (!Number.isFinite(p.T[c])) p.T[c] = Tfill;
-    for (const k of ['w', 'w0c', 'fs', 'fl', 'fr', 'fat0c', 'p', 'poolB', 'poolT']) { const a = p[k]; for (let i = 0; i < a.length; i++) if (!Number.isFinite(a[i])) a[i] = 0; }
+    // w0c and fat0c are the *reference* masses the cell was formed with — every dryness in the
+    // model is a ratio against them — so a zero there is not a safe value, it is a division by
+    // zero that would freeze the patty for the rest of the cook. Put the formed value back: the
+    // cell's share of the raw mass at the mix it was made at.
+    const fatF = clamp(p.fatFrac, 0.03, 0.5), waterF = (1 - fatF) * 0.745, mCell = p.massKg0 / p.Nz;
+    for (let c = 0; c < p.T.length; c++) {
+      const aj = p.aj[c % p.Nr];
+      if (!(p.w0c[c] > 0)) p.w0c[c] = mCell * aj * waterF;
+      if (!(p.fat0c[c] > 0)) p.fat0c[c] = mCell * aj * fatF;
+    }
+    for (const k of ['w', 'fs', 'fl', 'fr', 'p', 'poolB', 'poolT']) { const a = p[k]; for (let i = 0; i < a.length; i++) if (!Number.isFinite(a[i])) a[i] = 0; }
     for (const k of ['dM', 'dC', 'dA', 'dG']) { const a = p[k]; for (let i = 0; i < a.length; i++) if (!Number.isFinite(a[i])) a[i] = 0; }
     for (let i = 0; i < p.Tpk.length; i++) if (!Number.isFinite(p.Tpk[i])) p.Tpk[i] = p.T[i];
     for (const k of GUARD_SCALARS) if (!Number.isFinite(p[k])) p[k] = 0;
@@ -1683,9 +1710,38 @@
     }
     if (!Number.isFinite(p.faceSide.brown)) p.faceSide.brown = 0;
     if (!Number.isFinite(p.faceSide.char)) p.faceSide.char = 0;
+    // a slice of cheese is stepped alongside the grid and its temperature feeds straight back into
+    // the meat's bottom boundary: a non-finite one poisons every step and there is nothing in the
+    // snapshot to roll it back to. Put it back on the meat it is lying against.
+    sanitiseCheese(p, Tfill);
     let Tmin = Infinity; for (let c = 0; c < p.T.length; c++) if (p.T[c] < Tmin) Tmin = p.T[c]; p.Tmin = Tmin;
   }
-  const ZERO_STEP = (p) => ({ qBot: 0, qBotR: new Float64Array(p.Nr), hc: 0, boilBottom: 0, evapTop: 0, fatDrip: 0, fatSide: 0, juiceSide: 0, cheeseDrip: 0, Ts: p.surfT || 0, qSide: 0 });
+  /** Every number a slice carries, re-seated on the meat's own temperature when it goes bad. */
+  function sanitiseCheese(p, Tfill) {
+    const topRow = (p.Nz - 1) * p.Nr;
+    let Tbot = 0, Ttop = 0; for (let j = 0; j < p.Nr; j++) { Tbot += p.T[j] * p.aj[j]; Ttop += p.T[topRow + j] * p.aj[j]; }
+    if (!Number.isFinite(Tbot)) Tbot = Tfill; if (!Number.isFinite(Ttop)) Ttop = Tfill;
+    for (const [list, Tmeat] of [[p.cheeses, Ttop], [p.cheeseUnder, Tbot]]) {
+      for (const ch of list) {
+        if (!Number.isFinite(ch.T)) ch.T = Tmeat;
+        for (const k of ['melt', 'mass', 'overhang', 'contact']) if (ch[k] != null && !Number.isFinite(ch[k])) ch[k] = k === 'mass' ? 0.02 : 0; // 20 g: one slice
+        const sk = ch.skirt; if (!sk) continue;
+        if (!Number.isFinite(sk.T)) sk.T = ch.T;
+        if (!Number.isFinite(sk.water)) sk.water = CHEESE_WATER;
+        for (const k of ['melt', 'brown', 'char', 'dry', 'charRate', 'mass']) if (!Number.isFinite(sk[k])) sk[k] = 0;
+      }
+    }
+  }
+  /** True when every slice on (or under) the patty is still made of numbers. */
+  function cheeseFinite(p) {
+    for (const list of [p.cheeses, p.cheeseUnder]) for (const ch of list) {
+      if (!Number.isFinite(ch.T) || !Number.isFinite(ch.mass)) return false;
+      const sk = ch.skirt;
+      if (sk && (!Number.isFinite(sk.T) || !Number.isFinite(sk.water) || !Number.isFinite(sk.mass))) return false;
+    }
+    return true;
+  }
+  const ZERO_STEP = (p) => ({ qBot: 0, qBotR: new Float64Array(p.Nr), qPanR: new Float64Array(p.Nr), hc: 0, boilBottom: 0, evapTop: 0, fatDrip: 0, fatSide: 0, juiceSide: 0, cheeseDrip: 0, Ts: p.surfT || 0, qSide: 0 });
   /**
    * stepPattyStable with the rollback around it. A blow-up is nearly always a step that was too
    * long for the cell it hit, so the retry is the same dt cut into eight, which is the fix a human
@@ -1700,6 +1756,7 @@
     const g = s.guard || (s.guard = { restores: 0, retries: 0, sanitised: 0, lastLog: -1e9 });
     const rolled = guardRestore(p);
     if (!rolled) { guardSanitise(p); g.sanitised++; }
+    else if (!cheeseFinite(p)) { sanitiseCheese(p, centerT(p)); g.sanitised++; } // the snapshot does not carry the slices; put them back on the meat
     g.restores++;
     r = stepPattyStable(s, p, dt, bc, 8);
     if (!(pattyFinite(p) && stepResultFinite(r))) {
@@ -1885,9 +1942,15 @@
     const wet = 0.3 + 0.7 * clamp(layerMean(p, p.w, p.Nz - 1) / layerMean(p, p.w0c, p.Nz - 1), 0, 1);
     const sat = 1 / (1 + p.smokeDep / (6 * SMOKE.ref));
     const k = SMOKE.vDep * wet * sat * dt;
-    let tot = 0;
-    for (let i = 0; i < SMOKE_KINDS.length; i++) { const kd = SMOKE_KINDS[i], d = k * conc[kd]; by[kd] += d; tot += d; }
-    p.smokeDep += tot; p.creoDep += tot * (1 - g.comb);
+    let tot = 0, creo = 0;
+    for (let i = 0; i < SMOKE_KINDS.length; i++) {
+      const kd = SMOKE_KINDS[i], d = k * conc[kd];
+      by[kd] += d; tot += d;
+      // volatiles that never found any air condense on the meat as tar — but only the wood's do:
+      // the bed's own starved smoke is soot off charcoal that gave up its volatiles in the kiln
+      creo += d * (1 - g.comb) * (kd === 'bed' ? SMOKE.creoBed : 1);
+    }
+    p.smokeDep += tot; p.creoDep += creo;
   }
   /**
    * What is coming off the kettle, in words — the same two numbers the renderer colours the plume
@@ -1903,7 +1966,10 @@
   }
   /** Smokiness and creosote as indices: 1.0 is one clean chunk's worth over a five-minute cook. */
   function smokeRead(p) {
-    const sm = p.smokeDep / SMOKE.ref, cre = p.creoDep / SMOKE.ref;
+    // the flavour index is what the *wood* laid down, plus the smaller charcoal taste of the bed's
+    // own smoke: the deposit is real either way, but it is not the same seasoning
+    const by = p.smokeBy;
+    const sm = (by.hickory + by.apple + by.mesquite + SMOKE.flavBed * by.bed) / SMOKE.ref, cre = p.creoDep / SMOKE.ref;
     let kind = null, best = 0;
     for (let i = 0; i < 3; i++) { const kd = SMOKE_KINDS[i]; if (p.smokeBy[kd] > best) { best = p.smokeBy[kd]; kind = kd; } }
     return { smokiness: sm, creosote: cre, wood: kind, clean: sm - cre };
@@ -1984,6 +2050,14 @@
       kMeat: 0.35,
       relMul: 2.5,                                   // the fat is in continuous bands, not locked in muscle cells: it runs out far faster than a patty's does
       shrinkMax: 0.25,                               // a rasher loses about a quarter of its length, most of it as the fat goes
+      // What a rasher keeps. Cooked streaky bacon is still about 40 % fat and 12–15 % water by
+      // weight: frying it crisp renders 50–65 % of the fat and drives off 60–70 % of the water, and
+      // what is left — 25 g in, a little under half of that out — is the strip you eat. The rest of
+      // the fat is intramuscular and stays in the shrunken lean however long it sits there, and the
+      // rest of the water is bound in the protein, which is why bacon does not simply keep going
+      // until there is nothing left of it.
+      fatBound: 0.40,                                // of fat0: never leaves the strip
+      waterBound: 0.30,                              // of the water: bound in the lean, not free to boil
     },
     egg: {
       kind: 'egg', label: 'Fried egg', short: 'egg',
@@ -1997,6 +2071,16 @@
       Uyolk: 160, UyolkFlipped: 300,                 // W/(m²K) pan-side white → yolk, through 3 mm of white and half a yolk; turned over, the yolk is a millimetre off the metal
       kWhite: 0.55, whiteMm: 3,
       laceFrac: 0.06, laceA: 0.18, hcLace: 600,      // the thin rim that runs out into the fat: 6 % of the white over 18 % of the footprint, and all but welded to the metal
+      // What stops a fried egg boiling itself dry. Liquid white wets the metal completely — that is
+      // the 320 above, and the first sizzle. The moment it gels it stops behaving like a liquid:
+      // the gel blisters, steam collects under it and it curls off the metal, so the contact
+      // collapses to under a third of what the raw white had (≈96 W/(m²K), well under meat's 380 and
+      // a bun crumb's 170), and a dried, browned film under it insulates further. That is what
+      // holds the boil-off near a gram a minute instead of five: a large egg goes 55 g in, 47–49 g
+      // out (USDA has 50 g raw → 46 g fried), i.e. 10–15 % of its mass. What is left is bound in
+      // the protein network and does not simply keep leaving.
+      setLift: 0.70, skinLift: 0.35,                 // how much of the contact the set gel and then the dry skin take away
+      whiteBound: 0.45,                              // of a set white's water: held in the gel, never free to boil
     },
     onions: {
       kind: 'onions', label: 'Sliced onions', short: 'onions',
@@ -2023,23 +2107,36 @@
    * heat — the same clamp every cell of a patty gets. `Tcap` is the hottest thing touching it: an
    * explicit lumped node whose dry mass is a gram or two (a bun's crust, the onion layer on the
    * metal once it has dried) would otherwise overshoot its own heat source on a long step and ring.
+   * It is a ceiling on *overshoot*, not a thermostat: a node may never be pushed past the thing
+   * heating it, but nothing that is merely sitting next to something cooler is dragged down to it
+   * in one step — off the heat an item cools by its own losses, over minutes, like everything else.
+   *
+   * `wFree` is how much of the node's water is actually free to leave it this step. A protein gel
+   * (set egg white, the lean of a rasher) holds most of its water in the network and only gives up
+   * what has reached the frying surface; the rest is not available to boil however hot the metal
+   * is, so the heat that would have gone into latent load goes into temperature instead — which is
+   * exactly why a drying face runs away from 100 °C. Defaults to all of it (free liquid water).
    * Returns the water boiled off, in kg.
    */
-  function heatNode(n, q, dt, cpDry, Tcap) {
+  function heatNode(n, q, dt, cpDry, Tcap, wFree) {
     const Ccap = n.m * cpDry + n.w * C.cpW + 1e-9;
+    const T0 = n.T;
     let Tn = n.T + (q * dt) / Ccap;
     let boiled = 0;
-    if (Tn > C.Tboil && n.w > 1e-9) {
+    const avail = wFree == null ? n.w : Math.min(n.w, Math.max(0, wFree));
+    if (Tn > C.Tboil && avail > 1e-9) {
       const excess = Ccap * (Tn - C.Tboil);
-      boiled = Math.min(n.w, excess / C.Lvap);
+      boiled = Math.min(avail, excess / C.Lvap);
       n.w -= boiled;
       Tn = C.Tboil + (excess - boiled * C.Lvap) / Ccap;
     }
-    if (Tcap != null && Tn > Tcap) Tn = Tcap;
+    if (Tcap != null && Tn > Math.max(Tcap, T0)) Tn = Math.max(Tcap, T0);
     n.T = Tn;
     return boiled;
   }
   function nodeDry(n, w0) { return w0 > 1e-12 ? clamp(1 - n.w / w0, 0, 1) : 1; }
+  /** The same, over the water that was ever free to leave: how dry the frying face itself is. */
+  function nodeDryFree(n, w0, bound) { const f = w0 - bound; return f > 1e-12 ? clamp(1 - (n.w - bound) / f, 0, 1) : 1; }
 
   /** Maillard and pyrolysis on one face of an item, read at its surface temperature. */
   function itemBrowning(face, Ts, dryness, dt, mul, char) {
@@ -2062,7 +2159,7 @@
       D: sp.D, Dcov: sp.Dcov, A: sp.A || (Math.PI * sp.D * sp.D) / 4,
       m0: m, T0, rings: null, burger: null,
       faceDown: makeItemFace(), faceUp: makeItemFace(),
-      flips: 0, cookTime: 0, timeDown: 0, restT: 0,
+      flips: 0, cookTime: 0, timeDown: 0, restT: 0, overlap: 0, contactF: 1,
       lostWater: 0, lostFat: 0, lostDrip: 0, fatSoaked: 0, dFat: 0, dJuice: 0,
       steam: 0, sizzle: 0, smoke: 0, qBot: 0, Ts: T0, Tat: T0, stuck: true, torn: 0,
     };
@@ -2114,6 +2211,19 @@
     if (it.kind === 'bacon') return it.body.m + it.body.w; // body.m is protein plus whatever fat has not drained out yet
     if (it.kind === 'egg') return it.wBot.m + it.wBot.w + it.wTop.m + it.wTop.w + it.yolk.m + it.yolk.w + it.lace.m + it.lace.w;
     if (it.kind === 'onions') return it.bot.m + it.bot.w + it.top.m + it.top.w;
+    return 0;
+  }
+  /**
+   * How dry the face an item has against the metal is, 0..1 — the same thing `dryDownAll` reads off
+   * a patty's bottom layer, and the thing that decides whether what you can hear is water boiling
+   * or fat frying.
+   */
+  function itemDryness(it) {
+    const sp = it.spec;
+    if (it.kind === 'bun') return nodeDry(it.face, it.w0f);
+    if (it.kind === 'bacon') return nodeDryFree(it.body, it.w0, sp.waterBound * it.w0);
+    if (it.kind === 'egg') return nodeDryFree(it.wBot, it.w0b, sp.whiteBound * it.w0b * it.setBot);
+    if (it.kind === 'onions') return nodeDry(it.bot, it.w0bot);
     return 0;
   }
   /** The temperature the cook would feel first — the HUD's one number for an item. */
@@ -2212,20 +2322,46 @@
       if (gap > bestGap) { bestGap = gap; best = c; }
       if (bestGap > 0.004) break; // 4 mm of daylight around it is good enough
     }
-    return { pos: best, gap: bestGap };
+    return { pos: best, gap: bestGap, overlap: footprintOverlap(taken, best, rad) };
+  }
+  /**
+   * How much of a footprint of radius `rad` at `pos` is lying on top of something else, as a
+   * fraction of its area, sampled on the same equal-area polar grid footprintRings uses. On a
+   * crowded pan there is nowhere clear to put a bun, and what a cook then does is lay it half on
+   * the meat — where it is against 70 °C beef, not 200 °C metal, and cooks accordingly.
+   */
+  function footprintOverlap(taken, pos, rad) {
+    if (!taken.length) return 0;
+    const nr = 4, na = 8; let on = 0;
+    for (let i = 0; i < nr; i++) {
+      const rr = rad * Math.sqrt((i + 0.5) / nr);
+      for (let a = 0; a < na; a++) {
+        const ang = (a / na) * Math.PI * 2, x = pos.x + rr * Math.cos(ang), y = pos.y + rr * Math.sin(ang);
+        for (const q of taken) if (hyp(x - q.pos.x, y - q.pos.y) < q.r) { on++; break; }
+      }
+    }
+    return on / (nr * na);
   }
 
   /** Put a topping in the pan. Buns go in as a pair of halves, cut side down. */
   function addItem(s, kind, opts) {
     if (!ITEMS[kind]) return null;
     const made = [];
+    // a bun goes in as two halves of one bun and it has to come out as two halves of one bun: they
+    // carry a shared pair id so the build never sends the heel to one burger and the crown to another
+    const pair = kind === 'bun' ? (s._pairSeq = (s._pairSeq || 0) + 1) : null;
     for (const extra of kind === 'bun' ? [{ half: 'bottom' }, { half: 'top' }] : [{}]) {
       const it = makeItem(kind, { ...(opts || {}), ...extra, id: s.items.length + 1 });
-      const { pos, gap } = freeSpot(s, it.Dcov / 2);
+      const { pos, gap, overlap } = freeSpot(s, it.Dcov / 2);
       it.pos = pos; it.rings = footprintRings(s.pan, pos, it.D / 2);
       it.Tat = ringsT(s.pan, it.rings);
+      // the part of it that is lying on the meat (or on another topping) is not touching the metal
+      // at all: it draws no pan heat and takes none out of the rings. A tenth of the footprint is
+      // left as contact whatever happens — something is always in touch with the pan at the edge.
+      it.overlap = overlap; it.contactF = clamp(1 - overlap, 0.1, 1);
+      it.pair = pair;
       s.items.push(it); made.push(it);
-      if (gap < -0.005) logEvent(s, `No room: the ${it.label.toLowerCase()} is lying half on top of something else. Crowd a pan and nothing browns.`, 'warn');
+      if (gap < -0.005) logEvent(s, `No room: the ${it.label.toLowerCase()} is lying half on top of something else — ${(overlap * 100).toFixed(0)} % of it is off the metal and will not cook. Crowd a pan and nothing browns.`, 'warn');
     }
     selectItem(s, made[0]);
     const it = made[0], Tat = it.Tat.toFixed(0);
@@ -2302,6 +2438,27 @@
     for (const p of s.patties) { const d = hyp(p.pos.x - pos.x, p.pos.y - pos.y); if (d < bestD) { bestD = d; best = p; } }
     return best;
   }
+  /**
+   * Which burger a topping is going to end up on if the cook never says otherwise. Nearest to where
+   * it came off the pan, with one exception: the two halves of a bun stay together, and the pair
+   * goes wherever the heel goes (or wherever either half has been assigned by hand). A burger with
+   * a crown and no heel is not a burger — it goes out with nothing under it, takes the untoasted
+   * soak factor, and the burger that got the heel goes out with no top.
+   *
+   * `serve` uses this, and the build row shows it, so the cook can see the default while there is
+   * still time to change it.
+   */
+  function plannedBurger(s, it) {
+    if (it.burger != null) return s.patties.find((p) => p.id === it.burger) || null;
+    if (it.pair != null) {
+      const mate = s.items.find((o) => o !== it && o.pair === it.pair);
+      if (mate) {
+        if (mate.burger != null) return s.patties.find((p) => p.id === mate.burger) || null;
+        return nearestBurger(s, it.half === 'bottom' ? it : mate.half === 'bottom' ? mate : it);
+      }
+    }
+    return nearestBurger(s, it);
+  }
   /** The toppings built onto one burger, in the order they are stacked. */
   function toppingsOf(s, patty) {
     const order = { onions: 0, bacon: 1, egg: 2, bun: 3 };
@@ -2310,8 +2467,9 @@
 
   // ---- the four step functions; each gets the same boundary object a patty gets
   /** Heat into an item's underside from whatever it is sitting on, in W. */
-  function itemQBottom(it, bc, hc, A, Tf) {
+  function itemQBottom(it, bc, hc, A0, Tf) {
     const bb = bc.bottom;
+    const A = A0 * (it.contactF == null ? 1 : it.contactF); // only the part actually on the metal
     if (bb.type === 'grill') {
       const bar = bb.barFrac * hc * (bb.Tbar - Tf);
       const open = (1 - bb.barFrac) * (0.9 * C.sigma * bb.view * (p4(bb.Tfire + 273.15) - p4(Tf + 273.15)) + 25 * (bb.Tair - Tf));
@@ -2333,7 +2491,7 @@
   function itemSurfT(Tnode, q, A, k, dzHalf, wet, cap) {
     let Ts = Tnode + (Math.max(0, q) / A) * (dzHalf / Math.max(k, 0.03));
     if (wet) Ts = Math.min(Ts, C.Tboil + 2);
-    return Math.min(Ts, cap);
+    return Math.min(Ts, Math.max(cap, Tnode)); // the metal caps the surface; air under a resting item does not cool it instantly
   }
 
   function stepBun(s, it, dt, bc) {
@@ -2388,20 +2546,26 @@
     const hc = sp.hc * (1 + 0.5 * oilFilm) * (1 - 0.25 * it.crisp);
     // the fat still in the strip is part of its heat capacity; what has drained is not
     b.m = it.prot + it.fs + it.fl + it.fr;
+    const wBound = sp.waterBound * it.w0; // bound in the lean: the free water is what can boil
     const q = itemQBottom(it, bc, hc, A, b.T);
     const bt = bc.top;
     const qTop = topH(bt, b.T) * Atop * (bt.T - b.T) + (bt.rad ? Atop * 0.9 * C.sigma * bt.radView * (p4(bt.radT + 273.15) - p4(b.T + 273.15)) : 0);
     const cap = Math.max(bottomCap(bc), bt.T);
-    const boiled = heatNode(b, q + qTop, dt, sp.cpDry, cap);
+    const boiled = heatNode(b, q + qTop, dt, sp.cpDry, cap, b.w - wBound);
     it.lostWater += boiled; it.steam = boiled / dt;
     const T = b.T;
     // melt → release → drain: the patty's own kinetics, with the bands of a rasher for cells
     const E3 = Math.exp((61 - T) / 3);
     if (it.fs > 0) { const r = (0.06 * dt) / (1 + E3 * K_FATMELT); const melt = it.fs * Math.min(1, r); it.fs -= melt; it.fl += melt; }
-    if (it.fl > 0) { const kRel = (0.0035 * sp.relMul * dt * (1 + (T > 66 ? T - 66 : 0) / 40)) / (1 + Math.sqrt(E3 * K_FATREL)); const rel = it.fl * Math.min(1, kRel); it.fl -= rel; it.fr += rel; }
+    // ...but only the fat in the bands between the muscle can ever leave: what is inside the lean
+    // stays there, so the release stops once the renderable share is out of the tissue
+    const relRoom = Math.max(0, it.fat0 * (1 - sp.fatBound) - (it.fr + it.lostFat));
+    if (it.fl > 0 && relRoom > 0) { const kRel = (0.0035 * sp.relMul * dt * (1 + (T > 66 ? T - 66 : 0) / 40)) / (1 + Math.sqrt(E3 * K_FATREL)); const rel = Math.min(relRoom, it.fl * Math.min(1, kRel)); it.fl -= rel; it.fr += rel; }
     if (it.fr > 0) { const out = it.fr * Math.min(1, 0.35 * dt * clamp((T - 38) / 50, 0.05, 1.6)); it.fr -= out; it.lostFat += out; it.dFat += out; }
-    const dry = nodeDry(b, it.w0), fatOut = clamp(it.lostFat / it.fat0, 0, 1);
-    const Ts = itemSurfT(T, q, Math.max(A, 1e-4), sp.kMeat, sp.thickMm / 4000, b.w > 0.25 * it.w0, bottomCap(bc));
+    // dryness and rendering are read against what was ever free to go: a rasher that has given up
+    // all the water and all the fat it is going to give up is crisp, whatever is still locked in it
+    const dry = nodeDryFree(b, it.w0, wBound), fatOut = clamp(it.lostFat / (it.fat0 * (1 - sp.fatBound)), 0, 1);
+    const Ts = itemSurfT(T, q, Math.max(A, 1e-4), sp.kMeat, sp.thickMm / 4000, b.w - wBound > 0.25 * (it.w0 - wBound), bottomCap(bc));
     it.Ts = Ts;
     itemBrowning(it.faceDown, Ts, dry, dt, 1, MEAT_CHAR);
     // crisp is the lean gone dry with the fat out of it: neither on its own will do it
@@ -2419,7 +2583,13 @@
   function stepEgg(s, it, dt, bc) {
     const sp = it.spec, A = it.A, wb = it.wBot, wt = it.wTop, y = it.yolk;
     const oilFilm = bc.bottom.type === 'pan' ? clamp((bc.bottom.oil || 0) / 0.003, 0, 1) : 0;
-    const hc = sp.hc * (1 + 0.4 * oilFilm) * (1 - 0.25 * it.setBot); // a set gel touches the metal less well than raw white did
+    // a set gel touches the metal far less well than the liquid white did — it bubbles, lifts and
+    // rides on its own steam — and once the film against the metal has dried and browned it is a
+    // sheet of dry albumen between the pan and the wet gel above it
+    const wbBound = sp.whiteBound * it.w0b * it.setBot;   // water locked into the gel as it sets: none of it while the white is still liquid
+    const wtBound = sp.whiteBound * it.w0t * it.setTop;
+    const skinDry = nodeDryFree(wb, it.w0b, wbBound);
+    const hc = sp.hc * (1 + 0.4 * oilFilm) * (1 - sp.setLift * it.setBot) * (1 - sp.skinLift * skinDry);
     const q = itemQBottom(it, bc, hc, A, wb.T);
     const Awhite = A - sp.yolkA;
     const Gw = (sp.kWhite / (sp.whiteMm / 1000)) * Awhite;                  // pan-side white → the white above it
@@ -2431,16 +2601,21 @@
     const qYolkAir = topH(bt, y.T) * sp.yolkA * 2 * (bt.T - y.T) + (radTop ? sp.yolkA * 2 * radTop * (p4(bt.radT + 273.15) - p4(y.T + 273.15)) : 0);
     // the top of a frying egg steams: Magnus again, and it is worth 20–30 W of cooling
     let evap = 0;
-    if (bt.RH < 0.99 && wt.w > 1e-9) {
+    if (bt.RH < 0.99 && wt.w - wtBound > 1e-9) {
       const drive = Math.max(0, rhoVapSat(wt.T) - bt.RH * rhoVapSat(bt.T));
-      evap = Math.min(wt.w, C.hMass * Awhite * drive * dt);
+      // free water off the top face only, and not at a free surface's rate: once the top has gelled
+      // the water has to come up through set protein to leave, so the effective mass transfer falls
+      // to about a quarter of a puddle's. That is why a fried egg comes off the pan moist instead
+      // of losing a gram a minute off the top of it for as long as it sits there.
+      const aw = 0.25 + 0.75 * (1 - it.setTop);
+      evap = Math.min(wt.w - wtBound, C.hMass * aw * Awhite * drive * dt);
       wt.w -= evap; it.lostWater += evap;
     }
     const cap = Math.max(bottomCap(bc), bt.T);
-    const bBot = heatNode(wb, q - qwt - qy, dt, sp.cpWhite, cap);
-    const bTop = heatNode(wt, qwt + qTopAir - qyTop - (evap * C.Lvap) / dt, dt, sp.cpWhite, cap);
-    heatNode(y, qy + qyTop + qYolkAir, dt, sp.cpYolk, cap);
-    it.lostWater += bBot + bTop; it.steam = (bBot + bTop + evap) / dt;
+    const bBot = heatNode(wb, q - qwt - qy, dt, sp.cpWhite, cap, wb.w - wbBound);
+    const bTop = heatNode(wt, qwt + qTopAir - qyTop - (evap * C.Lvap) / dt, dt, sp.cpWhite, cap, wt.w - wtBound);
+    const bY = heatNode(y, qy + qyTop + qYolkAir, dt, sp.cpYolk, cap); // an over-hard yolk boils too, and that water leaves the egg like any other
+    it.lostWater += bBot + bTop + bY; it.steam = (bBot + bTop + bY + evap) / dt;
     // setting: ovotransferrin goes at 62, ovalbumin follows, and it is visibly set by 65
     it.setBot = clamp(it.setBot + (0.6 * dt) / (1 + Math.exp((63.5 - wb.T) / 1.2)), 0, 1);
     it.setTop = clamp(it.setTop + (0.6 * dt) / (1 + Math.exp((63.5 - wt.T) / 1.2)), 0, 1);
@@ -2464,10 +2639,11 @@
       itemBrowning(lace, lace.T, lace.dry, dt, 1, MEAT_CHAR);
     }
     if (it.flipped) it.secondSide += dt;
-    const Ts = itemSurfT(wb.T, q, A, sp.kWhite, sp.whiteMm / 4000, wb.w > 0.4 * it.w0b, bottomCap(bc));
+    const Ts = itemSurfT(wb.T, q, A, sp.kWhite, sp.whiteMm / 4000, wb.w - wbBound > 0.4 * (it.w0b - wbBound), bottomCap(bc));
     it.Ts = Ts;
-    // the underside browns where the white has dried onto the metal: the brown skirt under an egg
-    itemBrowning(it.faceDown, Ts, nodeDry(wb, it.w0b), dt, 1, MEAT_CHAR);
+    // the underside browns where the white has dried onto the metal: the brown skirt under an egg.
+    // That film is what dries, not the gel behind it, so this reads the free-water dryness.
+    itemBrowning(it.faceDown, Ts, skinDry, dt, 1, MEAT_CHAR);
     // on bare bars the raw white pours straight through until it sets
     if (bc.bottom.type === 'grill') {
       const f = 0.05 * (1 - it.setBot) * dt;
@@ -2527,7 +2703,12 @@
     // of this: stirring is not fussiness, it is the only way to caramelise all of them.
     const fDry = smooth(0.55, 0.9, nodeDry(b, it.w0bot));
     const invRT = 1 / (C.R * (b.T + 273.15));
-    const rate = 5.6e6 * Math.exp(-70e3 * invRT) * fDry;
+    // ...and only while that layer still has sugar left to caramelise. An onion is 5.6 % free
+    // sugars; once the layer on the metal has spent them it cannot go darker, only pyrolyse. That
+    // is why the colour of a layer that has been on the metal a long time stops moving, and why
+    // stirring — bringing unspent onion down onto the metal — is what takes the whole lot to sweet.
+    const sugarLeft = clamp(1 - it.carmBot / 4, 0.1, 1);
+    const rate = 5.6e6 * Math.exp(-70e3 * invRT) * fDry * sugarLeft;
     const rChar = SUGAR_CHAR.A * Math.exp(-SUGAR_CHAR.Ea * invRT) * fDry * Math.max(0, 1 - it.charBot / C.Cmax);
     it.carmBot = Math.min(3, it.carmBot + rate * dt);
     it.charBot = Math.min(C.Cmax, it.charBot + rChar * dt);
@@ -2594,7 +2775,12 @@
       if (c > 2.4) return { state: 'over-caramelised', note: `Onions taken past sweet and into bitter (caramel ${c.toFixed(2)}).`, score: -1 };
       if (c > 1.0) return { state: 'caramelised', note: `Onions soft, brown and sweet (caramel ${c.toFixed(2)}; ${(it.lostWater * 1000).toFixed(0)} g of water boiled out of them${it.fond > 1e-5 ? `, and they lifted ${(it.fond * 1000).toFixed(1)} g of fond off the pan with it` : ''}).`, score: 2 };
       if (c > 0.35) return { state: 'golden', note: `Onions softened and just turning golden (caramel ${c.toFixed(2)}). Another ten minutes would have made them sweet.`, score: 0.5 };
-      return { state: 'raw', note: `The onions are still sharp — only ${(it.lostWater * 1000).toFixed(0)} g of their water is out. Raw onion on a burger is a choice; this one was an accident.`, score: -2 };
+      // Colour is not the only thing that happens to an onion. Once most of the 71 g of water is
+      // out they are soft, translucent and mild — sweated, which is what half the onions on burgers
+      // are — even though nothing has browned yet. Calling that "raw" was wrong, and the note
+      // contradicted its own number.
+      if (it.lostWater > 0.6 * it.w0) return { state: 'sweated', note: `Onions sweated soft and translucent — ${(it.lostWater * 1000).toFixed(0)} g of their ${(it.w0 * 1000).toFixed(0)} g of water is out and the sharpness went with it, but they never took any colour (caramel ${c.toFixed(2)}).`, score: 0 };
+      return { state: 'raw', note: `The onions are still sharp — only ${(it.lostWater * 1000).toFixed(0)} g of their ${(it.w0 * 1000).toFixed(0)} g of water is out. Raw onion on a burger is a choice; this one was an accident.`, score: -2 };
     }
     return { state: '', note: '', score: 0 };
   }
@@ -2841,7 +3027,7 @@
         // heat drawn from the rings under each patty ring, in the same proportions it was read from
         const share = grill ? 0.35 : 1; // on a grill most of the heat is radiant, not drawn from the bars
         for (let j = 0; j < p.Nr; j++) {
-          const row = j * Np, l = pwLo[j], h = pwHi[j], q = pr.qBotR[j] * share;
+          const row = j * Np, l = pwLo[j], h = pwHi[j], q = pr.qPanR[j] * share; // what the metal gave, not what the meat took
           for (let k = l; k <= h; k++) qRing[k] -= q * pw[row + k];
         }
         if (grill) {
@@ -2915,6 +3101,12 @@
         if (grill) { grill.fatOnCoals += it.dFat; grill.juiceOnCoals = (grill.juiceOnCoals || 0) + it.dJuice; }
         else { pan.oil += it.dFat; pan.water += it.dJuice; }
         itemBoil += it.steam; itemSizzle += it.sizzle; itemSmoke += it.smoke;
+        // a topping is something against the metal too: it counts in the sizzle's contact and
+        // dryness exactly as a patty does, or a pan of bacon rendering in 15 g of its own fat is
+        // silent because there happens to be no meat in it
+        contactAll += it.contactF == null ? 1 : it.contactF;
+        dryDownAll += itemDryness(it);
+        nOnPan++;
       } else if (it.where === 'rest' || it.where === 'cut') {
         const bc = it._bcAir || (it._bcAir = { bottom: { type: 'air', h: 15, T: 0 }, top: { h: C.hAirTop, T: 0, RH: 0, rad: false } });
         bc.bottom.T = Tamb + 8; bc.top.T = Tamb; bc.top.RH = s.env.RH;
@@ -3022,7 +3214,10 @@
       // the two milestones with a number in them are spelled out, so the message is only built
       // when it actually fires rather than 40 times a second for the rest of the cook
       if (!ms.grateHot && pan.Tcenter >= 250) { ms.grateHot = true; logEvent(s, `Grate at ${pan.Tcenter.toFixed(0)} °C: hot enough to brand the meat with bars.`, 'info'); }
-      once(s, ms, 'coalfull', s.grill.Tfire >= 800, 'Vents wide open: the bed is white-hot, well past 800 °C. Radiant heat like that sears in a minute and chars in three.', 'warn');
+      // a lump bed with both vents wide sits around 740–780 °C — the model's own ceiling is
+      // Tamb + (300 + 430·air)·alive·size, i.e. 787 °C with everything in its favour — so this is
+      // the wide-open regime, not a number that could never be reached
+      once(s, ms, 'coalfull', s.grill.Tfire >= 700, 'Vents wide open: the bed is white-hot, up around 750 °C. Radiant heat like that sears in a minute and chars in three.', 'warn');
     } else {
       once(s, ms, 'preheat150', pan.Tcenter >= 150, 'Pan centre at 150 °C. A drop of water would sizzle and vanish in a second.', 'info');
       once(s, ms, 'leiden', pan.Tcenter >= 200, 'Pan centre past ~200 °C: water drops would now bead and skate (Leidenfrost). Proper searing territory.', 'info');
@@ -3105,7 +3300,7 @@
     const list = patty ? [patty] : s.patties.filter((p) => p.where !== 'pan');
     // the build step: anything off the heat that the cook has not already put on a burger goes to
     // whichever burger it came off the pan next to
-    for (const it of s.items) if (it.where !== 'pan' && it.burger == null) { const b = nearestBurger(s, it); if (b) it.burger = b.id; }
+    for (const it of s.items) if (it.where !== 'pan' && it.burger == null) { const b = plannedBurger(s, it); if (b) it.burger = b.id; }
     for (const p of list) {
       if (p.where === 'cut') continue;
       p.where = 'cut'; p.serveT = centerT(p);
@@ -3231,7 +3426,10 @@
     else if (p.cheeses.some((c) => c.skirt && c.skirt.brown > 2)) notes.push('A crisp golden cheese skirt around the edge. Good.');
     if (s._ms && s._ms.deepfry) notes.push('It was deep-fried: cooked in enough fat to cover it, so heat came in from every side at once.');
     if (p.grilled) notes.push(p.flareChar > 0.15 ? 'Flare-ups from dripping fat licked the underside: sooty, acrid patches.' : 'Grilled over charcoal: smoke and radiant heat, the edges browned too.');
-    if (sr.creosote > 0.35) notes.push(`Smothered smoke: ${sr.creosote.toFixed(1)} of creosote on it. Wood that smoulders without air gives up its volatiles cold, they condense on the meat as tar, and it tastes of a bonfire the morning after. Open a vent.`);
+    // and say what actually made it: with no wood in the kettle there is nothing to blame the tar on
+    if (sr.creosote > 0.35) notes.push(sr.wood
+      ? `Smothered smoke: ${sr.creosote.toFixed(1)} of creosote on it. Wood that smoulders without air gives up its volatiles cold, they condense on the meat as tar, and it tastes of a bonfire the morning after. Open a vent.`
+      : `Smothered smoke: ${sr.creosote.toFixed(1)} of creosote on it — and no wood in the kettle, so that is the fire itself. Choked of air the charcoal smoulders and smokes sooty instead of burning clean, and the meat sat in it. Open a vent.`);
     else if (sr.clean > 2.5) notes.push(`Over-smoked${sr.wood ? ` on ${sr.wood}` : ''}: ${sr.clean.toFixed(1)} times what a burger wants. Smoke is a seasoning, and this one has been seasoned like a brisket.`);
     else if (sr.clean > 0.5) notes.push(`A proper line of ${sr.wood ? `${sr.wood} ` : ''}smoke through it (${sr.clean.toFixed(1)}) — ${sr.wood ? WOOD[sr.wood].note : 'clean and thin'}. That is worth ${(20 * smokeBonus).toFixed(1)} of the crust mark.`);
     else if (sr.clean > 0.15) notes.push(`A trace of ${sr.wood ? `${sr.wood} ` : ''}smoke on it — there, but you would have to be looking for it. A chunk wants ten minutes with the meat over it.`);
@@ -3572,7 +3770,7 @@
     C, BLENDS, PANS, FATS, STOVES, GRATE, COAL, BANK, WOOD, SMOKE, DONENESS, ITEMS, TOUCH, PEEK, HAND,
     makePatty, createState, step, stepPatty, pattySpots, panTat, panTatXY, selectPatty, nextTicket,
     setKnob, setBank, setTopVent, addWood, addCoals, stirCoals, emptyAsh, ventFlow, smokeRead, smokeName, addFat, placePatty, movePatty, moveItem, scrape, slideTo, coalAt, bedAt, zoneAt, flipPatty, pressPatty, removePatty, addCheese, toggleLid, basteButter, washPan, wipeStove, panDirt, serve,
-    makeItem, addItem, selectItem, flipItem, removeItem, stepItem, assignTopping, nearestBurger, toppingsOf, itemState, itemMass, itemT, freeSpot, footprintRings, ringCoverage,
+    makeItem, addItem, selectItem, flipItem, removeItem, stepItem, assignTopping, nearestBurger, plannedBurger, toppingsOf, itemState, itemMass, itemT, itemDryness, freeSpot, footprintRings, ringCoverage,
     firmness, firmnessWord, cellStiffness, pressTest, peek, sliceRead, handTest, handTestAt, handWord, HAND_WORDS,
     evaluate, evaluateTicket, buildOf, donenessOf, centerT, cellT, layerMean, gridMean, pattyMass, layerMass, waterHolding, fmtTime, clamp, lerp, rhoVapSat, logEvent, pattyFinite,
     verdict, ticketTargetTime, latePenalty, billFor, tipFraction, spellMinutes, MENU, COOK_S, SERVICE_MAX,
