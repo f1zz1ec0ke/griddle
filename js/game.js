@@ -440,7 +440,9 @@
       $('btn-cut').onclick = () => { s.ticketTiming = false; P.serve(s.state); s.setPhase('result'); }; // the clock stops when the plates leave the pass
       // everything this ticket had goes with it: the toppings too, or the next order's form phase
       // shows the last table's chips and Tab walks a bacon rasher that has already been eaten
-      $('btn-again').onclick = () => { s.vp.setCutaway(false); s.vp.setPatty(null); s.state.patties = []; s.state.patty = null; s.state.items = []; s.state.item = null; s.selItem = null; s.state.served = false; if (s.shift && s.shift.n >= SHIFT_LEN) s.showShiftEnd(); else s.newOrder(); };
+      // the results card turns the cutaway on to show the cut face; the next ticket turns it off
+      // again, and the button has to come back up with it or the first press of C looks like a no-op
+      $('btn-again').onclick = () => { s.vp.setCutaway(false); $('btn-cutaway').classList.remove('on'); s.vp.setPatty(null); s.state.patties = []; s.state.patty = null; s.state.items = []; s.state.item = null; s.selItem = null; s.state.served = false; if (s.shift && s.shift.n >= SHIFT_LEN) s.showShiftEnd(); else s.newOrder(); };
       $('btn-new-shift').onclick = () => s.newShift();
       $('btn-cutaway').onclick = () => { s.vp.setCutaway(!s.vp.cutaway); $('btn-cutaway').classList.toggle('on', s.vp.cutaway); };
       $('r-chips').addEventListener('click', (e) => { const b = e.target.closest('[data-chip]'); if (b) s.select(Number(b.dataset.chip)); });
@@ -849,7 +851,14 @@
           `<ul>${said.join('')}</ul>`;
       }
       const prefix = tk.results.length > 1 ? `Patty ${this.sel + 1}: ` : '';
-      $('r-verdict').textContent = prefix + (r.dist === 0 ? `${target.label}. Exactly what they asked for.` : r.peak < target.lo ? `Under: ${r.got.label.toLowerCase()} when they wanted ${target.label.toLowerCase()}.` : `Over: ${r.got.label.toLowerCase()} when they wanted ${target.label.toLowerCase()}.`);
+      // The band the ticket is scored against is tighter than the band the eye calls a doneness, so
+      // a plate can miss the order by a fraction of a degree and still be the doneness ordered —
+      // "Over: medium-rare when they wanted medium-rare" is not a sentence. Name the edge instead.
+      // No temperature here: hard mode reads this line too.
+      $('r-verdict').textContent = prefix + (r.dist === 0 ? `${target.label}. Exactly what they asked for.`
+        : r.got.id === target.id ? `${target.label}, but right on the ${r.peak < target.lo ? 'bottom' : 'top'} edge of the band.`
+        : r.peak < target.lo ? `Under: ${r.got.label.toLowerCase()} when they wanted ${target.label.toLowerCase()}.`
+        : `Over: ${r.got.label.toLowerCase()} when they wanted ${target.label.toLowerCase()}.`);
       const parts = r.parts;
       $('r-parts').innerHTML = [['Doneness', parts.doneness, 50], ['Crust', parts.crust, 20], ['Juiciness', parts.juiciness, 15], ['Evenness', parts.evenness, 10], ['Structure', parts.structure, 5]]
         .map(([k, v, m]) => `<div class="bar"><span>${k}</span><i><b style="width:${(v / m) * 100}%"></b></i><em>${v}/${m}</em></div>`).join('');

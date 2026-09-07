@@ -801,6 +801,10 @@
       p.h0 = p.h; p.A0 = p.A; p.D0 = p.D;
       p.faceDown.stuck = true;
       logEvent(s, `SMASHED. Patty ${p.id} flattened to ${(p.h * 1000).toFixed(0)} mm, ${(p.D * 100).toFixed(1)} cm across.` + (hitWall ? ' It has hit the pan wall.' : ' Huge contact area, huge crust, no pink centre.'), 'action');
+    } else if (s.grill) {
+      // over bars the juice does not boil off in a pan: it falls through onto the coals, which is
+      // where it goes in the model too (grill.juiceOnCoals / fatOnCoals, above)
+      logEvent(s, `Pressed patty ${p.id} with the spatula. ${(expelled * 1000).toFixed(1)} g of juice went straight through the bars onto the coals — steam, a flare if there is fat with it, and that was flavour.`, expelled > 0.002 ? 'warn' : 'action');
     } else {
       logEvent(s, `Pressed patty ${p.id} with the spatula. ${(expelled * 1000).toFixed(1)} g of juice squeezed out and boiled off. That was flavour.`, expelled > 0.002 ? 'warn' : 'action');
     }
@@ -2366,7 +2370,12 @@
       it.overlap = overlap; it.contactF = clamp(1 - overlap, 0.1, 1);
       it.pair = pair;
       s.items.push(it); made.push(it);
-      if (gap < -0.005) logEvent(s, `No room: the ${it.label.toLowerCase()} is lying half on top of something else — ${(overlap * 100).toFixed(0)} % of it is off the metal and will not cook. Crowd a pan and nothing browns.`, 'warn');
+      // The cover circles are drawn generously (a bun's Dcov is wider than the face that touches the
+      // metal), so a few millimetres of gap is a rasher resting against a bun, not a topping
+      // stranded on the meat: warning about 3 % and calling it "half on top" was crying wolf. A
+      // tenth of the footprint off the metal is where the ring heat it draws starts to lag enough
+      // to see, so that is where the line goes — and the word matches the number.
+      if (overlap > 0.1) logEvent(s, `No room: the ${it.label.toLowerCase()} is lying ${overlap > 0.35 ? 'half' : 'partly'} on top of something else — ${(overlap * 100).toFixed(0)} % of it is off the metal and will not cook. Crowd a pan and nothing browns.`, 'warn');
     }
     selectItem(s, made[0]);
     const it = made[0], Tat = it.Tat.toFixed(0);
@@ -3415,8 +3424,14 @@
     const total = parts.doneness + parts.crust + parts.juiciness + parts.evenness + parts.structure;
     const massNow = pattyMass(p);
     const notes = [];
+    // The order's band (54–57 for a medium-rare) is narrower than the band the eye calls
+    // medium-rare (donenessOf: up to 58), so a centre can miss the ticket by a fraction of a degree
+    // and still be the doneness that was asked for. Saying "that is medium-rare; the order was
+    // medium-rare, off by 0.0 °C" is nonsense — name the edge of the band instead.
+    const offBy = dist < 0.05 ? 'a fraction of a degree' : `${dist.toFixed(1)} °C`;
     if (dist === 0) notes.push(`Centre peaked at ${peak.toFixed(1)} °C — squarely ${target.label.toLowerCase()}. Nailed it.`);
-    else notes.push(`Centre peaked at ${peak.toFixed(1)} °C. That is ${got.label.toLowerCase()}; the order was ${target.label.toLowerCase()} (${target.lo}–${target.hi} °C). Off by ${dist.toFixed(1)} °C.`);
+    else if (got.id === target.id) notes.push(`Centre peaked at ${peak.toFixed(1)} °C — ${got.label.toLowerCase()} to look at, but ${offBy} ${peak > target.hi ? 'past the top' : 'short'} of the ${target.lo}–${target.hi} °C the kitchen calls ${target.label.toLowerCase()}.`);
+    else notes.push(`Centre peaked at ${peak.toFixed(1)} °C. That is ${got.label.toLowerCase()}; the order was ${target.label.toLowerCase()} (${target.lo}–${target.hi} °C). Off by ${offBy}.`);
     if (target.id !== 'well-done') notes.push('Note: ground beef is only USDA-safe at 71 °C. Anything pinker is a calculated risk you took on the customer\'s behalf.');
     if (p.faceDown.char > 0.3 || p.faceUp.char > 0.3) notes.push('At least one face is charred — pyrolysed, bitter, and carrying a haze of smoke.');
     else if (Math.max(p.faceDown.brown, p.faceUp.brown) < 1) notes.push('Barely any crust. The surface never got hot and dry enough for Maillard: the pan was too cool, or the meat too wet.');

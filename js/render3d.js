@@ -1508,9 +1508,19 @@
       const spillR = Math.min(0.45, Math.sqrt((pan.overflow || 0) / 920 / (Math.PI * 0.0015)));
       this.spill.visible = spillR > 0.01; this.spill.scale.set(spillR * 1.15, spillR, 1); this.spill.position.y = (this.stainY || 0.0012) + 0.0003;
       // grease fire around a pan, or flare-ups coming up through the grate under the meat
-      const grillFlare = this.stoveType === 'charcoal' && state.grill ? state.grill.flare : 0;
+      const grill = this.stoveType === 'charcoal' && state.grill ? state.grill : null;
+      const grillFlare = grill ? grill.flare : 0;
       const flare = this.stoveType === 'charcoal' ? (grillFlare > 0.04 ? grillFlare : 0) : (pan.flare || 0);
-      const onGrate = this.stoveType === 'charcoal' ? (state.patties || []).filter((q) => q.where === 'pan') : [];
+      // Fat burns where it lands, and it lands on the coals — so on a banked bed the bare half only
+      // smokes (physics: BANK.flare = 0.15) and there are no flames over it. Meat dragged across to
+      // finish leaves its flare behind it over the pile, which is the whole point of the two-zone
+      // fire. `coalAt` is the same coal fraction the heat transfer uses, so the flames sit exactly
+      // where the model says there is fuel.
+      const floorR = (pan && pan.floorR) || this.panR;
+      const coalFrac = (x) => (grill && grill.bank > 0.01 ? P.coalAt(grill, clamp(x / floorR, -1, 1)) : 1);
+      const onGrate = grill ? (state.patties || []).filter((q) => q.where === 'pan' && coalFrac(q.pos.x) > 0.2) : [];
+      // with nothing over the coals the flames burn on the pile itself, wherever it has been raked to
+      const bedX = grill && grill.bank > 0.01 ? 0.45 * floorR : 0;
       for (let i = 0; i < this.flareFlames.length; i++) {
         const f = this.flareFlames[i];
         f.visible = flare > 0;
@@ -1520,10 +1530,13 @@
           // tongues of flame under and around whichever patties are dripping, licking up their sides
           const q = onGrate.length ? onGrate[i % onGrate.length] : null;
           const rr = q ? (q.D / 2) * (0.5 + 0.7 * ((i * 7919) % 100) / 100) : 0.12 * fl;
-          const cx = q ? q.pos.x : 0, cz = q ? q.pos.y : 0;
-          f.position.set(cx + Math.cos(f.userData.a) * rr, this.PAN_Y - 0.03, cz + Math.sin(f.userData.a) * rr);
+          const cx = q ? q.pos.x : bedX, cz = q ? q.pos.y : 0;
+          const fx = cx + Math.cos(f.userData.a) * rr, fz = cz + Math.sin(f.userData.a) * rr;
+          const cf = coalFrac(fx);
+          if (cf < 0.15) { f.visible = false; continue; }  // ash under this tongue: nothing to burn
+          f.position.set(fx, this.PAN_Y - 0.03, fz);
           f.rotation.order = 'YXZ'; f.rotation.y = -f.userData.a; f.rotation.z = -0.12 * fl;
-          const len = 0.02 + 0.15 * Math.min(1, flare) * fl;
+          const len = (0.02 + 0.15 * Math.min(1, flare) * fl) * cf;
           f.scale.set(0.5 + 0.7 * fl, len, 0.5 + 0.7 * fl);
           f.material.color.setRGB(1, 0.45 + 0.3 * Math.random(), 0.08);
           f.material.opacity = 0.18 + 0.3 * fl * Math.min(1, flare + 0.3);

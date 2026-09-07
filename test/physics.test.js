@@ -1984,3 +1984,88 @@ test('the shard timeout is a cap on the worker, which is what run.js and the REA
   assert.match(spin.stdout, /cancelled 0/, `a 400 ms synchronous test under a 100 ms timeout still passes:\n${spin.stdout}`);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('a centre in the gap between the ticket band and the doneness band is not "off by 0.0 °C"', () => {
+  // donenessOf calls anything under 58 °C medium-rare, but the ticket is scored against 54–57, so a
+  // centre at 57.3 is the doneness that was ordered and still misses the band. The note used to read
+  // "That is medium-rare; the order was medium-rare (54–57 °C). Off by 0.0 °C.", which is not a
+  // sentence about anything.
+  const s = P.createState({}); preheat(s, 210); P.addFat(s, 'canola', 8);
+  const p = std({ thicknessMm: 18 }); P.placePatty(s, p);
+  cookHeld(s, 80, 210); P.flipPatty(s); cookHeld(s, 80, 210); P.removePatty(s); cookFor(s, 60);
+  const note = (peak, target) => { p.peakCenter = peak; const r = P.evaluate(s, target, p); return { r, n: r.notes[0] }; };
+
+  const edge = note(57.3, 'medium-rare');
+  assert.equal(edge.r.got.id, 'medium-rare');
+  assert.ok(edge.r.dist > 0.25 && edge.r.dist < 0.35, `dist=${edge.r.dist}`);
+  assert.ok(!/Off by/.test(edge.n), edge.n);
+  assert.ok(/medium-rare to look at/.test(edge.n) && /0\.3 °C past the top of the 54–57 °C/.test(edge.n), edge.n);
+
+  // a hair under the bottom of the band reads the same way round
+  const shy = note(53.8, 'medium-rare');
+  assert.ok(/0\.2 °C short of the 54–57 °C/.test(shy.n), shy.n);
+
+  // and inside a hundredth of a degree nothing pretends to a decimal it does not have
+  const hair = note(57.02, 'medium-rare');
+  assert.ok(/a fraction of a degree past the top/.test(hair.n), hair.n);
+  assert.ok(!/0\.0 °C/.test(hair.n), hair.n);
+
+  // squarely in the band, and a real miss, are both unchanged
+  assert.ok(/squarely medium-rare\. Nailed it\./.test(note(55.5, 'medium-rare').n));
+  const miss = note(66, 'medium-rare');
+  assert.equal(miss.r.got.id, 'medium-well');
+  assert.ok(/That is medium-well; the order was medium-rare \(54–57 °C\)\. Off by 9\.0 °C\./.test(miss.n), miss.n);
+});
+
+test('pressing over the bars says the juice went on the coals, not that it boiled off in a pan', () => {
+  // there is no pan under a grate: the juice a press squeezes out falls through onto the fire,
+  // which is what the model does with it — the log used to describe a pan either way
+  const g = litGrill(9, 700); cookFor(g, 180);
+  const p = std({ thicknessMm: 20, fatFrac: 0.3 }); P.placePatty(g, p);
+  cookFor(g, 90);
+  const before = g.grill.juiceOnCoals || 0;
+  P.pressPatty(g, false, p);
+  const last = g.events[g.events.length - 1].text;
+  assert.ok(/onto the coals/.test(last), last);
+  assert.ok(!/boiled off/.test(last), last);
+  assert.ok((g.grill.juiceOnCoals || 0) > before, 'and the juice really is on the coals');
+  // a smash on bars is still refused with its own line, and a press in a pan is unchanged
+  P.pressPatty(g, true, p);
+  assert.ok(/nothing to smash it against/.test(g.events[g.events.length - 1].text));
+  const s = P.createState({}); preheat(s, 200); P.addFat(s, 'canola', 8);
+  const q = std(); P.placePatty(s, q); cookFor(s, 60); P.pressPatty(s, false, q);
+  assert.ok(/boiled off/.test(s.events[s.events.length - 1].text), s.events[s.events.length - 1].text);
+});
+
+test('the crowded-pan warning is proportionate: a few millimetres of touch is not "half on top"', () => {
+  // a single patty in a 12" pan leaves plenty of room, but a bun's cover circle is wider than the
+  // face it toasts on, so the halves brush it. That used to log "lying half on top of something
+  // else — 3 % of it is off the metal and will not cook", which is not what 3 % means.
+  const s = panAt(210, 8);
+  const p = std({ thicknessMm: 18 }); P.placePatty(s, p, { x: 0, y: 0 });
+  const buns = P.addItem(s, 'bun');
+  const warn = s.events.filter((e) => /No room: the/.test(e.text));
+  for (const b of buns) {
+    if (b.overlap <= 0.1) continue;
+    assert.ok(warn.length, `overlap ${b.overlap} should have been mentioned`);
+  }
+  if (buns.every((b) => b.overlap <= 0.1)) assert.equal(warn.length, 0, s.events.filter((e) => e.kind === 'warn').map((e) => e.text).join(' | '));
+  // and a heap that really has nowhere to go is still told about, with the word matching the number
+  const c = panAt(200, 8);
+  const a = std(), b = std();
+  P.placePatty(c, a, { x: -0.045, y: 0 }); P.placePatty(c, b, { x: 0.045, y: 0 });
+  const [heap] = P.addItem(c, 'onions');
+  assert.ok(heap.overlap > 0.3, `overlap=${heap.overlap}`);
+  const said = c.events.find((e) => /No room: the/.test(e.text)).text;
+  assert.ok(new RegExp(`${Math.round(heap.overlap * 100)} % of it is off the metal`).test(said), said);
+  assert.ok(heap.overlap > 0.35 ? /lying half on top/.test(said) : /lying partly on top/.test(said), `${heap.overlap}: ${said}`);
+  // three patties and a heap: now it really is half on top, and it says so
+  const d = panAt(200, 8);
+  const three = [std(), std(), std()];
+  const spots = P.pattySpots(3, d.pan.floorR, three[0].D / 2);
+  three.forEach((q, i) => P.placePatty(d, q, spots[i]));
+  const [heap3] = P.addItem(d, 'onions');
+  const said3 = d.events.find((e) => /No room: the/.test(e.text)).text;
+  assert.ok(heap3.overlap > 0.35, `overlap=${heap3.overlap}`);
+  assert.ok(/lying half on top/.test(said3), said3);
+});
