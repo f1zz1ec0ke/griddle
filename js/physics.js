@@ -710,6 +710,12 @@
     it.pos = { x: to.pos.x, y: to.pos.y };
     it.rings = footprintRings(s.pan, it.pos, it.D / 2); // the metal it draws from is the metal under it now
     it.Tat = ringsT(s.pan, it.rings) + (s.grill && s.pan.zoned ? zoneAt(s.pan, it.pos.x) : 0);
+    // `overlap` is placement state, not a permanent property of the topping. A crowded item may
+    // begin partly on the meat, but after it is dragged the heat-transfer area must describe the new
+    // footprint. (slideTo normally finds clear metal; recalculating keeps this correct if that policy
+    // changes later.)
+    it.overlap = footprintOverlap(occupants(s, it), it.pos, it.Dcov / 2);
+    it.contactF = clamp(1 - it.overlap, 0.1, 1);
     logEvent(s, `Moved the ${it.label.toLowerCase()} ${(moved * 100).toFixed(1)} cm: ${before.toFixed(0)} °C under it before, ${it.Tat.toFixed(0)} °C now.`, 'action');
     return { ok: true, moved, pos: it.pos };
   }
@@ -2311,10 +2317,10 @@
     return T;
   }
   /** Everything already on the pan or the grate, with the radius it covers. */
-  function occupants(s) {
+  function occupants(s, exclude) {
     const out = [];
-    for (const p of s.patties) if (p.where === 'pan') out.push({ pos: p.pos, r: p.D / 2 });
-    for (const it of s.items) if (it.where === 'pan') out.push({ pos: it.pos, r: it.Dcov / 2 });
+    for (const p of s.patties) if (p !== exclude && p.where === 'pan') out.push({ pos: p.pos, r: p.D / 2 });
+    for (const it of s.items) if (it !== exclude && it.where === 'pan') out.push({ pos: it.pos, r: it.Dcov / 2 });
     return out;
   }
   /**

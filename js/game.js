@@ -83,6 +83,10 @@
     }
     // ------------------------------------------------------------ the shift: six tickets and a till
     emptyShift() { return { n: 0, plan: this.planShift(), tickets: [], points: 0, tips: 0, bill: 0, covers: 0, time: 0 }; }
+    /** Whether reloading would throw away work from a shift that has actually started. */
+    hasUnfinishedShift() {
+      return !!(this.shift && this.shift.n < SHIFT_LEN && (this.shift.n > 0 || this.ticketTiming));
+    }
     /**
      * A service builds the way a real one does: singles while the room fills, two-tops in the
      * middle, and a three-burger table at the peak. Tickets are drawn from TICKETS by how many
@@ -455,6 +459,10 @@
         s.logN = -1; // redraw the log with or without its numbers
         // no thermometers means no thermometers: the probe comes out too
         if (s.hard && s.probe.inserted) { s.probe.inserted = false; s.probe.reading = null; $('btn-probe').textContent = 'Insert probe'; }
+        // Results are normally rendered only once, on entering the phase. Re-render their text and
+        // charts now so switching difficulty on the plate cannot leave temperatures (or a previous
+        // ticket's canvas) behind, and switching back restores the current ticket's measurements.
+        if (s.phase === 'result') s.renderResultDetails();
         s.refreshButtons();
       });
       $('btn-inspector').onclick = () => { $('inspector').hidden = !$('inspector').hidden; };
@@ -466,7 +474,7 @@
       const hud = $('hud'), fit = () => document.documentElement.style.setProperty('--hud-h', `${hud.offsetHeight}px`);
       if (root.ResizeObserver) new ResizeObserver(fit).observe(hud);
       root.addEventListener('resize', fit); fit();
-      window.addEventListener('beforeunload', (e) => { if (s.shift && s.shift.n > 0 && s.shift.n < SHIFT_LEN) { e.preventDefault(); e.returnValue = ''; } }); // a reload loses the shift; the browser asks first
+      window.addEventListener('beforeunload', (e) => { if (s.hasUnfinishedShift()) { e.preventDefault(); e.returnValue = ''; } }); // a reload loses the shift; the browser asks first
       window.addEventListener('keydown', (e) => {
         if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
         if (e.key === 'Tab' && s.phase !== 'order' && (s.forms.length > 1 || s.items.length)) {
@@ -821,6 +829,11 @@
       // its own score, or anything raw or burnt on the build) is "sent back" whatever the ticket total
       const anyBack = this.verdicts && this.verdicts.some((v) => v.outcome === 'sent back');
       $('r-grade').textContent = anyBack ? (tk.total >= 55 ? 'Sent back — over the build, not the meat.' : 'Sent back.') : tk.total >= 90 ? 'Line-cook royalty' : tk.total >= 75 ? 'Solid. They will come back.' : tk.total >= 55 ? 'Edible. Nobody complained out loud.' : tk.total >= 45 ? 'They ate it. They will not be back.' : 'The customer left. So did the smoke alarm.';
+      this.renderResultDetails();
+    }
+    /** Re-render the result fields whose contents depend on Hard mode. */
+    renderResultDetails() {
+      const tk = this.ticketResult; if (!tk) return;
       const many = tk.results.length > 1;
       $('r-chips').hidden = !many;
       if (many) {

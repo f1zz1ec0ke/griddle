@@ -932,6 +932,13 @@ test('a topping with nowhere to go lies on the meat, and only what touches the m
   cookItem(clear, 60, 200);
   assert.ok(crowded < 0.75 * alone.qBot, `half on the meat should not draw a full footprint: ${crowded.toFixed(0)} W vs ${alone.qBot.toFixed(0)} W`);
   assert.ok(heap.bot.T < alone.bot.T, `and it cooks slower: ${heap.bot.T.toFixed(0)} vs ${alone.bot.T.toFixed(0)} °C`);
+  // Once the crowded heap is moved onto bare metal, the old placement must not keep throttling its
+  // contact area. moveItem used to move the rings but leave these two values frozen at placement.
+  P.removePatty(s, a); P.removePatty(s, b);
+  const moved = P.moveItem(s, heap, { x: 0, y: 0 });
+  assert.equal(moved.ok, true);
+  assert.equal(heap.overlap, 0);
+  assert.equal(heap.contactF, 1);
 });
 
 test('a pan of bacon with no patty in it still sizzles', () => {

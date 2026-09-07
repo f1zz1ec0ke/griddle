@@ -71,6 +71,19 @@ module.exports = {
     k.ok(/·· °C/.test(card.notes), `and the notes read “${card.notes.split('.')[0]}.”`);
     await k.shot('hard-result');
 
+    // Difficulty is live on the plate too: changing it must re-render this ticket rather than leave
+    // the old mode's text or a canvas belonging to an earlier ticket behind.
+    await k.check('#hard', false);
+    const normalResult = await k.read(() => ({
+      stats: document.getElementById('r-stats').textContent,
+      charts: getComputedStyle(document.querySelector('.charts')).display,
+    }));
+    k.ok(/[\d]\s*°C/.test(normalResult.stats), 'turning Hard off on the result restores this ticket\'s temperatures');
+    k.ok(normalResult.charts !== 'none', 'and redraws this ticket\'s temperature traces');
+    await k.check('#hard', true);
+    const remasked = await k.read(leaks);
+    k.ok(remasked.length === 0, `turning Hard back on remasks the whole result (${remasked.length ? remasked.join(' | ') : 'clean'})`);
+
     // and C works on the plate too (the results card turns the cutaway on, so this turns it off)
     await k.page.keyboard.press('c');
     k.ok(await k.read((g) => g.vp.cutaway) === false, 'C works on the plate as well');

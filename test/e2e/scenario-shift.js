@@ -31,7 +31,9 @@ module.exports = {
       const t = TICKETS[i];
       await k.order([t.target], t.who, t.line);
       k.ok(await k.read((g) => g.shift.n) === i, `the shift is on ticket ${i + 1} of 6 before it is accepted`);
+      if (i === 0) k.ok(!(await k.read((g) => g.hasUnfinishedShift())), 'an untouched first order has no shift progress to lose');
       await k.click('#btn-accept');
+      if (i === 0) k.ok(await k.read((g) => g.hasUnfinishedShift()), 'accepting the first ticket immediately enables reload protection');
 
       // ---- form: 14 mm so the whole service fits in a test
       await k.range('#f-thick', 14);
@@ -104,6 +106,7 @@ module.exports = {
       best: document.getElementById('se-best').textContent,
       shift: { n: g.shift.n, points: g.shift.points, tips: g.shift.tips, covers: g.shift.covers },
       stored: localStorage.getItem('griddle.bestShift'),
+      unfinished: g.hasUnfinishedShift(),
     }));
     k.ok(!end.hidden, 'the end-of-shift card is up');
     k.ok(end.rows.length === 6, `six tickets on the card, one row each (${end.rows.length})`);
@@ -113,6 +116,7 @@ module.exports = {
     k.ok(end.shift.points === points, `the shift total is the sum of the tickets (${end.shift.points} vs ${points})`);
     k.near(end.shift.tips, tips, 1e-9, 'and so are the tips');
     k.ok(end.shift.covers === 6, `six covers over six single-burger tickets (${end.shift.covers})`);
+    k.ok(!end.unfinished, 'a completed six-ticket shift no longer needs reload protection');
     k.ok(end.score === `${Math.round(points / 6)}/100`, `the headline is the average ticket: ${end.score} of ${points} over 6`);
     k.ok(end.stats.includes('1 sent back'), 'the stats own up to the send-back');
     k.ok(end.stats.includes(`${points} points on the night`), `the stats agree with the running total (${points})`);
