@@ -22,19 +22,22 @@
   const SHORT = { rare: 'Rare', 'medium-rare': 'MR', medium: 'Med', 'medium-well': 'MW', 'well-done': 'WD' };
 
   const TICKETS = [
-    { who: 'Table 3', line: '“Rare. Like, actually rare. I will send it back.”', items: ['rare'] },
-    { who: 'Table 7', line: '“Medium-rare, please, and a good crust on it.”', items: ['medium-rare'] },
-    { who: 'The regular at the bar', line: '“Medium. Warm pink centre, not red, not grey.”', items: ['medium'] },
-    { who: 'Table 12', line: '“Medium-well — just a hint of pink.”', items: ['medium-well'] },
-    { who: 'A dad', line: '“Well done. No pink. Don\'t burn it though.”', items: ['well-done'] },
-    { who: 'Table 9, two covers', line: '“One medium-rare, one well done — she doesn\'t trust pink. Together, please.”', items: ['medium-rare', 'well-done'] },
-    { who: 'Two regulars', line: '“Both medium. Same time, same plate.”', items: ['medium', 'medium'] },
-    { who: 'Date night', line: '“Rare for me, medium-well for him. Don\'t let mine sit while his cooks.”', items: ['rare', 'medium-well'] },
-    { who: 'Birthday table', line: '“Three burgers: rare, medium, medium-well. All at once or not at all.”', items: ['rare', 'medium', 'medium-well'] },
-    { who: 'Family of three', line: '“Medium-rare, medium-well, and a well-done for the kid. Hot, please.”', items: ['medium-rare', 'medium-well', 'well-done'] },
+    { who: 'Table 3', line: '“Rare. Like, actually rare. I will send it back.”', items: ['rare'], builds: [["bun"]] },
+    { who: 'Table 7', line: '“Medium-rare, please, and a good crust on it.”', items: ['medium-rare'], builds: [["bun", "cheese"]] },
+    { who: 'The regular at the bar', line: '“Medium. Warm pink centre, not red, not grey.”', items: ['medium'], builds: [["bun", "bacon", "cheese"]] },
+    { who: 'Table 12', line: '“Medium-well — just a hint of pink.”', items: ['medium-well'], builds: [["bun", "onions"]] },
+    { who: 'A dad', line: '“Well done. No pink. Don\'t burn it though.”', items: ['well-done'], builds: [["bun", "egg"]] },
+    { who: 'Table 9, two covers', line: '“One medium-rare, one well done — she doesn\'t trust pink. Together, please.”', items: ['medium-rare', 'well-done'], builds: [["bun", "cheese"], ["bun", "bacon"]] },
+    { who: 'Two regulars', line: '“Both medium. Same time, same plate.”', items: ['medium', 'medium'], builds: [["bun", "onions"], ["bun", "egg"]] },
+    { who: 'Date night', line: '“Rare for me, medium-well for him. Don\'t let mine sit while his cooks.”', items: ['rare', 'medium-well'], builds: [["bun"], ["bun", "cheese", "bacon"]] },
+    { who: 'Birthday table', line: '“Three burgers: rare, medium, medium-well. All at once or not at all.”', items: ['rare', 'medium', 'medium-well'], builds: [["bun", "cheese"], ["bun", "bacon"], ["bun", "onions"]] },
+    { who: 'Family of three', line: '“Medium-rare, medium-well, and a well-done for the kid. Hot, please.”', items: ['medium-rare', 'medium-well', 'well-done'], builds: [["bun", "cheese"], ["bun", "egg"], ["bun", "bacon"]] },
   ];
   const DEFAULT_FORM = { massG: 150, thicknessMm: 20, blend: '80/20', temp: 'fridge', work: 0.35, dimple: true, salt: 'surface' };
   const SHIFT_LEN = 6;                  // six tickets is a service
+  const SAVE_KEY = 'griddle.session.v1';
+  const SNAPSHOT_FIELDS = ['mode', 'phase', 'state', 'patties', 'forms', 'equip', 'ticket', 'shift', 'sel', 'selItem', 'probe', 'speed', 'hard', 'ticketTarget', 'ticketClock', 'ticketTiming', 'ticketRecorded', 'stoveUsed', 'practiceNextId', 'addingPractice', 'shownShiftEnd'];
+  const BUILD_NAMES = { bun: 'bun halves', cheese: 'cheese', bacon: 'bacon', egg: 'egg', onions: 'onions' };
   const BEST_KEY = 'griddle.bestShift'; // localStorage: the best shift this browser has ever cooked
   const money = (v) => '$' + (v || 0).toFixed(2);
 
@@ -43,6 +46,7 @@
       this.vp = new root.BurgerRender.Viewport($('view'));
       this.audio = new root.KitchenAudio();
       this.speed = 1; this.phase = 'order'; this.hard = false;
+      this.mode = 'service'; this.paused = false; this.autosaveClock = 0;
       this.probe = { inserted: false, depth: 0.5, reading: null };
       this.forms = [{ ...DEFAULT_FORM, target: 'medium' }]; this.previews = []; this.sel = 0;
       this.patties = []; this.spots = []; this.selItem = null;
@@ -52,8 +56,146 @@
       this.shift = this.emptyShift();
       this.bind();
       this.newOrder();
+      $('btn-load').textContent = 'Resume saved service';
+      try { $('btn-service-load').hidden = $('btn-load').hidden = !localStorage.getItem(SAVE_KEY + '.service'); $('btn-practice-load').hidden = !localStorage.getItem(SAVE_KEY + '.practice'); } catch (_) {}
       this.last = performance.now(); this.acc = 0;
       requestAnimationFrame((t) => this.frame(t));
+    }
+    get stopped() { return this.paused || !$('help').hidden; }
+    syncPause() {
+      document.body.classList.toggle('paused', this.paused);
+      $('btn-pause').textContent = this.paused ? 'Resume' : 'Pause';
+      $('btn-pause').setAttribute('aria-pressed', String(this.paused));
+      const help = !$('help').hidden;
+      $('panel').inert = this.paused || help;
+      for (const id of ['hud', 'view', 'inspector', 'order', 'results', 'shiftend']) $(id).inert = help;
+      this.last = performance.now(); this.acc = 0;
+    }
+    setPaused(on) { this.paused = on; this.syncPause(); }
+    openHelp() {
+      this.helpFocus = document.activeElement;
+      $('help').hidden = false; this.syncPause(); $('btn-help-close').focus();
+    }
+    closeHelp() {
+      $('help').hidden = true; this.syncPause();
+      if (this.helpFocus && this.helpFocus.isConnected) this.helpFocus.focus();
+    }
+    saveSession(automatic = false) {
+      if (automatic && this.mode === 'service' && this.phase === 'order' && !this.shift.n) return;
+      try {
+        const snapshot = Object.fromEntries(SNAPSHOT_FIELDS.map(k => [k, this[k]]));
+        snapshot.controls = {};
+        for (const el of document.querySelectorAll('input[id], select[id]')) snapshot.controls[el.id] = { value: el.value, checked: el.checked };
+        localStorage.setItem(SAVE_KEY + '.' + this.mode, root.GriddleSession.encode(snapshot));
+        this.savedSession = true; $('btn-load').hidden = false; $('btn-load').textContent = 'Resume saved ' + this.mode;
+        if (this.mode === 'practice') $('btn-practice-load').hidden = false;
+        else $('btn-service-load').hidden = false;
+        $('save-status').textContent = automatic ? 'Autosaved' : 'Saved — safe to close';
+        return true;
+      } catch (_) {
+        this.savedSession = false;
+        $('save-status').textContent = 'Could not save. Storage may be full or unavailable.';
+        return false;
+      }
+    }
+    loadSession(mode = this.mode) {
+      let snapshot;
+      try {
+        snapshot = root.GriddleSession.validate(root.GriddleSession.decode(localStorage.getItem(SAVE_KEY + '.' + mode)), P);
+      } catch (_) { $('save-status').textContent = 'Saved session could not be read. Your current kitchen is unchanged.'; return false; }
+      this.vp.setPatty(null);
+      for (const k of SNAPSHOT_FIELDS) this[k] = snapshot[k];
+      this.previews = []; this.stateForPreview = null;
+      this.sel = Math.max(0, Math.min(this.sel || 0, this.forms.length - 1));
+      this.chipsHTML = this.assignHTML = this.clockHTML = ''; this.logN = -1;
+      for (const [id, control] of Object.entries(snapshot.controls || {})) {
+        const el = $(id); if (el && (el.tagName === 'INPUT' || el.tagName === 'SELECT')) { el.value = control.value; el.checked = control.checked; }
+      }
+      document.body.classList.toggle('hard', this.hard); $('hard').checked = this.hard;
+      $('btn-inspector').hidden = this.hard; $('inspector').hidden = true;
+      this.vp.setStove(this.equip.stove); this.vp.setPan(this.equip.pan); this.vp.clearStains();
+      this.vp.setCutaway(false); $('btn-cutaway').classList.remove('on');
+      this.layoutSpots(); this.applyEquipUI(); this.updateOrderText(); this.updateShiftBar(); this.updateTicketClock();
+      $('knob').value = this.state.stove.knob; $('knob-v').textContent = this.state.stove.knob;
+      $('e-fatg-v').textContent = this.equip.fatG + ' g'; $('e-coalg-v').textContent = this.equip.coalG + ' g';
+      this.syncProbe(); $('btn-lid').textContent = this.state.lid ? 'Lid off' : 'Lid on';
+      $('h-sense').hidden = true; this.senseNote = '';
+      $('shiftend').hidden = true;
+      $('btn-load').hidden = false; $('btn-load').textContent = 'Resume saved ' + this.mode;
+      const phase = this.phase;
+      if (this.shownShiftEnd) { this.setPhase('order'); this.showShiftEnd(); }
+      else this.setPhase(phase);
+      this.setSpeed(this.speed); this.setPaused(true); this.autosaveClock = 0;
+      this.savedSession = true; $('save-status').textContent = 'Restored paused — resume when ready';
+      this.vp.forceTex = true;
+      return true;
+    }
+    syncProbe() {
+      $('probe-depth').value = Math.round(this.probe.depth * 100);
+      $('probe-depth-v').textContent = $('probe-depth').value + ' %';
+      $('btn-probe').textContent = this.probe.inserted ? 'Pull probe' : 'Insert probe';
+    }
+    startPractice() {
+      this.mode = 'practice'; this.paused = false; this.addingPractice = false; this.practiceNextId = 1;
+      this.state = P.createState({ pan: this.equip.pan, stove: this.equip.stove }); this.stoveUsed = false;
+      this.ticket = { who: 'Free practice', line: '', items: [] };
+      this.ticketTiming = false; this.ticketClock = 0; this.ticketTarget = 0; this.ticketRecorded = false;
+      this.forms = [{ ...DEFAULT_FORM, target: 'medium' }]; this.patties = []; this.previews = []; this.sel = 0; this.selItem = null;
+      this.shownShiftEnd = false; $('shiftend').hidden = true;
+      $('btn-load').textContent = 'Resume saved practice'; $('save-status').textContent = '';
+      try { $('btn-load').hidden = !localStorage.getItem(SAVE_KEY + '.practice'); } catch (_) { $('btn-load').hidden = true; }
+      this.updateOrderText(); this.updateTicketClock(); this.setPhase('form'); this.setSpeed(1); this.syncPause();
+    }
+    addPracticePatty() {
+      if (this.mode !== 'practice' || this.patties.length >= 4) return;
+      this.addingPractice = true;
+      this.forms.push({ ...DEFAULT_FORM, target: 'medium' }); this.sel = this.forms.length - 1;
+      this.selItem = null; this.setPhase('form');
+    }
+    clearPractice() {
+      if (this.mode !== 'practice') return;
+      this.state.patties = []; this.state.patty = null; this.state.items = []; this.state.item = null;
+      this.state.where = 'board'; this.state.served = false;
+      this.patties = []; this.forms = []; this.sel = 0; this.selItem = null;
+      this.vp.setPatty(null); this.probe.inserted = false; this.syncProbe();
+      this.setPhase('cook'); P.logEvent(this.state, 'Practice bench cleared. The stove keeps its heat and residue.', 'action');
+    }
+    reheat() {
+      const it = this.selItem, p = this.patty;
+      if (it) { if (!P.reheatItem(this.state, it)) return; }
+      else { if (!p || p.where !== 'rest') return; P.placePatty(this.state, p, P.freeSpot(this.state, p.D / 2).pos); }
+      this.setPhase('cook'); this.vp.forceTex = true;
+      P.logEvent(this.state, 'Back at the stove — check the burner or vents before continuing.', 'info');
+    }
+    discard() {
+      if (this.selItem) {
+        if (!P.discardItem(this.state, this.selItem)) return;
+        this.selItem = null; P.selectItem(this.state, null);
+      } else if (this.mode === 'practice' && this.patty) {
+        const p = this.patty;
+        if (p.where === 'pan') P.removePatty(this.state, p);
+        this.state.patties = this.state.patties.filter(q => q !== p);
+        for (const it of this.items) if (it.burger === p.id) it.burger = null;
+        this.patties.splice(this.sel, 1); this.forms.splice(this.sel, 1);
+        this.sel = Math.max(0, this.sel - 1);
+        this.state.patty = this.patty; this.state.where = this.patty ? this.patty.where : 'board';
+        this.vp.setPatty(null);
+        P.logEvent(this.state, `Discarded practice patty ${p.id}.`, 'action');
+      } else return;
+      this.maybeRest(); this.refreshButtons(); this.updateChips(); this.vp.forceTex = true;
+    }
+    updateBuilds() {
+      const el = $('build-checklist');
+      if (this.mode === 'practice') { el.textContent = ''; return; }
+      const rows = (this.ticket.builds || []).map((build, i) => {
+        const p = this.patties[i];
+        const tops = p ? this.items.filter(it => P.plannedBurger(this.state, it) === p) : [];
+        return `<div><b>${i + 1} ${this.label(this.ticket.items[i])}</b>: ` + build.map(k => {
+          const have = p && (k === 'cheese' ? p.cheeses.length > 0 : k === 'bun' ? ['top', 'bottom'].every(half => tops.some(it => it.kind === k && it.half === half)) : tops.some(it => it.kind === k));
+          return `<span class="${have ? 'ready' : 'missing'}">${have ? '✓' : '○'} ${BUILD_NAMES[k]}</span>`;
+        }).join(' · ') + '</div>';
+      });
+      const html = rows.join(''); if (el.innerHTML !== html) el.innerHTML = html;
     }
     // ------------------------------------------------------------ orders & phases
     get form() { return this.forms[this.sel]; }
@@ -67,10 +209,18 @@
       // The room's patience for this order, running from the moment it is accepted. The clock is in
       // kitchen seconds — the same time base the physics runs on — so speeding the sim up does not
       // buy service time.
-      this.ticketTarget = P.ticketTargetTime(items);
+      this.ticketTarget = P.ticketTargetTime(items) + ((this.ticket.builds || []).some(b => b.includes('onions')) ? 600 : (this.ticket.builds || []).some(b => b.includes('bacon')) ? 300 : (this.ticket.builds || []).length ? 120 : 0);
       this.ticketClock = 0; this.ticketTiming = false; this.ticketRecorded = false; this.verdicts = null;
       this.forms = items.map((id) => ({ ...DEFAULT_FORM, target: id }));
       this.previews = []; this.patties = []; this.sel = 0; this.selItem = null; this.result = null; this.ticketResult = null;
+      this.updateOrderText();
+      this.updateShiftBar(); this.updateTicketClock();
+      this.setPhase('order');
+    }
+    updateOrderText() {
+      const items = this.ticket.items;
+      $('ticket-label').textContent = this.mode === 'practice' ? '' : 'Ticket: ';
+      if (this.mode === 'practice') { $('ticket-target').textContent = 'Free practice'; $('ticket').removeAttribute('data-hint'); $('ticket').title = ''; return; }
       $('order-who').textContent = this.ticket.who;
       $('order-line').textContent = this.ticket.line;
       $('order-target').textContent = items.map((id) => this.label(id)).join(' + ').toUpperCase();
@@ -78,8 +228,7 @@
       $('ticket-target').textContent = items.map((id) => this.label(id)).join(' + ');
       const hint = items.map((id) => { const d = P.DONENESS.find((x) => x.id === id); return `${d.label}: ${d.lo}–${d.hi} °C`; }).join(' · ') + ' at the centre, measured at its peak after resting';
       $('ticket').dataset.hint = hint; $('ticket').title = hint;
-      this.updateShiftBar(); this.updateTicketClock();
-      this.setPhase('order');
+      $('order-builds').textContent = (this.ticket.builds || []).map((build, i) => `${i + 1} ${this.label(items[i])}: ${build.map(k => BUILD_NAMES[k]).join(', ')}`).join(' · ');
     }
     // ------------------------------------------------------------ the shift: six tickets and a till
     emptyShift() { return { n: 0, plan: this.planShift(), tickets: [], points: 0, tips: 0, bill: 0, covers: 0, time: 0 }; }
@@ -105,14 +254,18 @@
       return out;
     }
     newShift() {
+      this.mode = 'service'; this.paused = false; this.addingPractice = false; this.shownShiftEnd = false;
       this.shift = this.emptyShift();
+      this.state.items = []; this.state.item = null;
       $('shiftend').hidden = true;
       this.vp.setCutaway(false); $('btn-cutaway').classList.remove('on');
       this.vp.setPatty(null); this.state.patties = []; this.state.patty = null; this.state.served = false;
       this.newOrder();
+      $('btn-load').textContent = 'Resume saved service';
+      try { $('btn-load').hidden = !localStorage.getItem(SAVE_KEY + '.service'); } catch (_) {}
     }
     updateShiftBar() {
-      const sh = this.shift; if (!sh) return;
+      const sh = this.shift; if (!sh || this.mode === 'practice') return;
       const n = Math.min(sh.n + 1, SHIFT_LEN);
       let pips = ''; for (let i = 0; i < SHIFT_LEN; i++) pips += i < sh.n ? '<i>●</i>' : '○';
       $('order-shift').innerHTML =
@@ -126,7 +279,7 @@
     updateTicketClock() {
       const el = $('ticket-clock'); if (!el) return;
       const t = this.ticketClock || 0, target = this.ticketTarget || 0;
-      el.hidden = !(target > 0);
+      el.hidden = this.mode === 'practice' || !(target > 0);
       const html = `<b>${P.fmtTime(t)}</b> / ${P.fmtTime(target)}`;
       if (html !== this.clockHTML) { el.innerHTML = html; this.clockHTML = html; }
       el.classList.toggle('late', target > 0 && t > target && t <= target * 2);
@@ -141,6 +294,7 @@
     loadBest() { try { const raw = localStorage.getItem(BEST_KEY); return raw ? JSON.parse(raw) : null; } catch (e) { return null; } }
     saveBest(rec) { try { localStorage.setItem(BEST_KEY, JSON.stringify(rec)); return true; } catch (e) { return false; } }
     showShiftEnd() {
+      this.shownShiftEnd = true;
       const sh = this.shift, ts = sh.tickets;
       if (!ts.length) { this.newShift(); return; }
       const avg = Math.round(sh.points / ts.length);
@@ -170,17 +324,21 @@
     }
     setPhase(ph) {
       this.phase = ph;
+      this.cameraPreset = ph === 'rest' || ph === 'result' ? 'serve' : ph === 'cook' ? 'default' : null;
+      $('station-state').textContent = { order: 'Ready', form: 'Prep', cook: 'On the heat', rest: 'At the pass', result: 'Service' }[ph];
+      $('panel').scrollTop = 0;
       document.body.dataset.phase = ph;
       for (const el of document.querySelectorAll('[data-phase]')) el.hidden = el.dataset.phase.split(' ').indexOf(ph) < 0;
       $('panel').hidden = !(ph === 'form' || ph === 'cook' || ph === 'rest'); // an empty panel is a box in the corner of the results
       if (ph === 'form') { this.vp.setMode('board'); this.loadForm(); this.rebuildPreview(); }
-      if (ph === 'cook') { this.vp.setMode('stove'); }
+      if (ph === 'cook' || ph === 'rest' || ph === 'result') { this.vp.setMode('stove'); }
       if (ph === 'result') { this.showResults(); }
-      this.refreshButtons(); this.updateChips();
+      this.refreshButtons(); this.updateChips(); this.syncPause();
+      if (this.vp.resize) this.vp.resize(); // Recenter when the station/results appear or disappear.
     }
     // ------------------------------------------------------------ selection (one chip per patty)
     select(i) {
-      if (i < 0 || i >= this.forms.length) return;
+      if (i < 0 || i >= this.forms.length || (this.addingPractice && this.phase === 'form' && i !== this.forms.length - 1)) return;
       if (i === this.sel && !this.selItem) return;
       this.selItem = null; P.selectItem(this.state, null);
       this.sel = i;
@@ -214,7 +372,7 @@
         // each patty's chip carries the toppings that have been built onto it
         const tops = p ? this.items.filter((it) => it.burger === p.id) : [];
         const built = tops.length ? ` <i>+ ${tops.map((it) => it.spec.short).join(' ')}</i>` : '';
-        return `<button class="chip${i === this.sel && !this.selItem ? ' on' : ''}" data-chip="${i}" title="Select patty ${i + 1} (Tab cycles)"><b>${i + 1}</b> ${SHORT[f.target]}${built} <small>${status}</small></button>`;
+        return `<button ${this.addingPractice && this.phase === 'form' && i !== this.forms.length - 1 ? 'disabled' : ''} class="chip${i === this.sel && !this.selItem ? ' on' : ''}" data-chip="${i}" title="Select patty ${i + 1} ([ and ] cycle food)"><b>${i + 1}</b> ${this.mode === 'practice' ? 'Patty' : SHORT[f.target]}${built} <small>${status}</small></button>`;
       }).join('');
       const itemChips = this.phase === 'form' ? '' : this.items.map((it, i) => {
         const st = P.itemState(it);
@@ -226,8 +384,14 @@
         return `<button class="chip item${it === this.selItem ? ' on' : ''}" data-item="${i}" title="Select this topping"><b>${it.spec.short}</b> <small>${status}</small></button>`;
       }).join('');
       const chips = pattyChips + itemChips;
-      if (chips !== this.chipsHTML) { el.innerHTML = chips; this.chipsHTML = chips; }
-      el.hidden = this.phase === 'order' || (!many && !this.items.length);
+      if (chips !== this.chipsHTML) {
+        const active = document.activeElement;
+        const key = active && el.contains(active) ? active.hasAttribute('data-chip') ? ['data-chip', active.dataset.chip] : ['data-item', active.dataset.item] : null;
+        el.innerHTML = chips; this.chipsHTML = chips;
+        if (key) { const next = el.querySelector(`[${key[0]}="${key[1]}"]`); if (next) next.focus({ preventScroll: true }); }
+      }
+      this.updateBuilds();
+      el.hidden = this.phase === 'order' || (!many && !this.items.length && this.mode !== 'practice');
     }
     // ------------------------------------------------------------ forming
     loadForm() {
@@ -236,13 +400,15 @@
       $('f-thick').value = f.thicknessMm; $('f-thick-v').textContent = `${f.thicknessMm} mm`;
       $('f-work').value = Math.round(f.work * 100); $('f-work-v').textContent = String(Math.round(f.work * 100));
       $('f-blend').value = f.blend; $('f-temp').value = f.temp; $('f-salt').value = f.salt; $('f-dimple').checked = f.dimple;
-      $('f-title').textContent = this.forms.length > 1 ? `1 · Form patty ${this.sel + 1} of ${this.forms.length} (${this.label(f.target).toLowerCase()})` : '1 · Form the patty';
-      $('btn-copy').hidden = this.forms.length < 2;
+      $('f-title').textContent = this.mode === 'practice' ? 'Form a practice patty' : this.forms.length > 1 ? `1 · Form patty ${this.sel + 1} of ${this.forms.length} (${this.label(f.target).toLowerCase()})` : '1 · Form the patty';
+      $('btn-copy').hidden = this.mode === 'practice' || this.forms.length < 2;
     }
     makeFromForm(f, i) {
       const temp = { fridge: 4, room: 18, frozen: -18 }[f.temp];
       const blend = P.BLENDS.find((b) => b.id === f.blend);
-      return P.makePatty({ id: i + 1, target: f.target, massG: f.massG, thicknessMm: f.thicknessMm, fatFrac: blend.fat, tempC: temp, dimple: f.dimple, work: f.work, salt: f.salt });
+      const p = P.makePatty({ id: i + 1, target: f.target, massG: f.massG, thicknessMm: f.thicknessMm, fatFrac: blend.fat, tempC: temp, dimple: f.dimple, work: f.work, salt: f.salt });
+      p.requiredBuild = this.mode === 'practice' ? [] : (this.ticket.builds && this.ticket.builds[i]) || [];
+      return p;
     }
     rebuildPreview() {
       const f = this.form;
@@ -256,13 +422,19 @@
       const tHalf = ((p.h0 / 2) ** 2) / alpha;
       $('f-time').textContent = `~${(tHalf / 60 * 0.6).toFixed(0)}–${(tHalf / 60 * 0.9).toFixed(0)} min total (thermal diffusion estimate)`;
       const d = P.DONENESS.find((x) => x.id === f.target);
-      $('f-warn').textContent = f.temp === 'frozen' ? 'Frozen: the outside will be well done before the middle thaws.' : f.thicknessMm < 10 ? 'This thin, it is a smash patty. There will be no pink centre whatever you do.' : f.thicknessMm > 32 ? 'Very thick: expect a wide grey band unless you flip often and keep the pan moderate.' : (d.hi < 60 && f.thicknessMm < 15) ? `Thin for a ${d.label.toLowerCase()}: the centre will race past ${d.hi} °C before a crust forms.` : (d.lo >= 65 && f.thicknessMm > 22) ? `Thick for a ${d.label.toLowerCase()}: a long cook, and a wide grey band before the centre gets there.` : '';
+      $('f-warn').textContent = f.temp === 'frozen' ? 'Frozen: the outside will be well done before the middle thaws.' : f.thicknessMm < 10 ? 'This thin, it is a smash patty. There will be no pink centre whatever you do.' : f.thicknessMm > 32 ? 'Very thick: expect a wide grey band unless you flip often and keep the pan moderate.' : (this.mode !== 'practice' && d.hi < 60 && f.thicknessMm < 15) ? `Thin for a ${d.label.toLowerCase()}: the centre will race past ${d.hi} °C before a crust forms.` : (this.mode !== 'practice' && d.lo >= 65 && f.thicknessMm > 22) ? `Thick for a ${d.label.toLowerCase()}: a long cook, and a wide grey band before the centre gets there.` : '';
       const board = this.stateForPreview || (this.stateForPreview = P.createState({}));
       board.patty = p; board.where = 'board';
       this.vp.setPatty(p);
       this.updateChips();
     }
     startCook() {
+      if (this.mode === 'practice' && this.addingPractice) {
+        const p = this.makeFromForm(this.form, this.sel); p.id = this.practiceNextId++;
+        this.patties.push(p); this.addingPractice = false; this.layoutSpots();
+        P.selectPatty(this.state, p); this.probe.reading = null;
+        this.vp.setPatty(null); this.setPhase('cook'); return;
+      }
       // The stove persists between tickets: same pan and burner means the pan keeps its heat,
       // fat, fond and the spatter on the stovetop. A different pan is a cold pan.
       const st = this.state;
@@ -281,9 +453,10 @@
       this.stoveUsed = true;
       // every patty on the ticket is formed now and waits on the board until it is laid in
       this.patties = this.forms.map((f, i) => this.makeFromForm(f, i));
+      if (this.mode === 'practice') { for (const p of this.patties) p.id = this.practiceNextId++; }
       this.layoutSpots();
       this.sel = 0; this.selItem = null; this.vp.setPatty(null);
-      this.probe = { inserted: false, depth: 0.5, reading: null }; $('btn-probe').textContent = 'Insert probe';
+      this.probe = { inserted: false, depth: 0.5, reading: null }; this.syncProbe();
       $('btn-lid').textContent = 'Lid on';
       this.chart = []; this.logN = -1;
       $('log').innerHTML = '';
@@ -298,8 +471,9 @@
       } else if (reuse) P.logEvent(this.state, `Order: ${labels}. ${n > 1 ? `${n} patties are` : 'Patty is'} on the board; the ${surf} is still at ${this.state.pan.T.toFixed(0)} °C from the last ticket` + (this.state.pan.oil > 0.001 ? ` with ${(this.state.pan.oil * 1000).toFixed(1)} g of fat in it.` : '.'), 'info');
       else if (grill) P.logEvent(this.state, `Order: ${labels}. ${n > 1 ? `${n} patties are` : 'Patty is'} on the board. The kettle is cold: light the coals (open the vents) and give the bed a few minutes.`, 'info');
       else P.logEvent(this.state, `Order: ${labels}. ${n > 1 ? `${n} patties are` : 'Patty is'} on the board; the pan is cold (${this.state.pan.T.toFixed(0)} °C).`, 'info');
+      if (this.mode === 'practice') { this.state.events = []; P.logEvent(this.state, 'Free practice. Experiment freely; clear food to change equipment. No tickets or scores.', 'info'); }
       this.applyEquipUI();
-      if (n > 1) P.logEvent(this.state, `${n} burgers on one ticket: they all have to come off hot together. Lay the one that needs longest in first; every cold patty pulls the pan down.`, 'info');
+      if (n > 1 && this.mode !== 'practice') P.logEvent(this.state, `${n} burgers on one ticket: they all have to come off hot together. Lay the one that needs longest in first; every cold patty pulls the pan down.`, 'info');
       this.setPhase('cook');
       this.setSpeed(1);
     }
@@ -323,12 +497,23 @@
       $('btn-lid').title = grill ? 'The kettle lid: turns the grill into an oven and calms the coals.' : 'A glass lid: traps steam, cooks the top, softens the crust.';
     }
     layoutSpots() {
-      const maxR = Math.max(...this.patties.map((p) => p.D / 2));
+      const maxR = Math.max(0.05, ...this.patties.map((p) => p.D / 2));
       this.spots = P.pattySpots(this.patties.length, this.state.pan.floorR, maxR);
     }
     // ------------------------------------------------------------ binding
     bind() {
       const s = this;
+      $('btn-pause').onclick = () => s.setPaused(!s.paused);
+      $('btn-save').onclick = () => s.saveSession();
+      $('btn-load').onclick = () => s.loadSession();
+      $('btn-service-load').onclick = () => s.loadSession('service');
+      $('btn-practice-load').onclick = () => s.loadSession('practice');
+      $('btn-practice').onclick = () => { if (s.hasUnfinishedShift() && !s.saveSession()) return; s.startPractice(); };
+      $('btn-end-practice').onclick = () => { if (!s.saveSession()) return; s.clearPractice(); s.newShift(); };
+      $('btn-add-patty').onclick = () => s.addPracticePatty();
+      $('btn-clear-practice').onclick = () => s.clearPractice();
+      $('btn-reheat').onclick = () => s.reheat();
+      $('btn-discard').onclick = () => s.discard();
       $('btn-accept').onclick = () => { s.ticketTiming = true; s.setSpeed(1); s.setPhase('form'); };  // the ticket clock starts at “yes chef”, at 1× — the speed buttons are hidden while forming, so the last ticket's 8× must not carry over
       const link = (id, key, fnv, fnd) => { const el = $(id); el.addEventListener('input', () => { s.form[key] = fnv(el.value); fnd && (fnd.textContent = fnd.dataset.fmt.replace('%', s.form[key])); s.rebuildPreview(); }); };
       link('f-mass', 'massG', Number, $('f-mass-v')); link('f-thick', 'thicknessMm', Number, $('f-thick-v')); link('f-work', 'work', (v) => Number(v) / 100, $('f-work-v'));
@@ -365,7 +550,7 @@
       $('btn-move-out').onclick = () => s.slide(true);
       // dragging in the viewport: the renderer asks what may be dragged and where a drop would land,
       // and hands the drop back here so the physics decides what the move costs
-      s.vp.canDrag = (o) => s.phase === 'cook' && o && o.where === 'pan';
+      s.vp.canDrag = (o) => !s.stopped && s.phase === 'cook' && o && o.where === 'pan';
       s.vp.dropSpot = (o, want) => P.slideTo(s.state, o, (o.D != null ? o.D : o.Dcov) / 2, want);
       s.vp.onDrop = (o, land, moved) => {
         if (moved < 0.004) return; // a nudge of a few millimetres on screen is a click, not a move
@@ -466,25 +651,32 @@
         s.refreshButtons();
       });
       $('btn-inspector').onclick = () => { $('inspector').hidden = !$('inspector').hidden; };
-      $('btn-help').onclick = () => { $('help').hidden = !$('help').hidden; };
-      $('help').addEventListener('click', (e) => { if (e.target === $('help')) $('help').hidden = true; });
+      $('btn-help').onclick = () => s.openHelp();
+      $('kitchen-menu').addEventListener('keydown', e => {
+        if (e.key === 'Escape') { $('kitchen-menu').open = false; $('kitchen-menu').querySelector('summary').focus(); }
+      });
+      document.addEventListener('pointerdown', e => {
+        if (!$('kitchen-menu').contains(e.target)) $('kitchen-menu').open = false;
+      });
+      $('btn-help-close').onclick = () => s.closeHelp();
+      $('help').addEventListener('click', (e) => { if (e.target === $('help')) s.closeHelp(); });
       document.addEventListener('pointerdown', () => { if (!s.audio.ctx && !s.audioAsked) { s.audioAsked = true; s.audio.start(); $('btn-audio').textContent = '🔊 Sound on'; } }, { once: true });
-      // the HUD wraps onto two or three lines on a busy ticket (three chips, four toppings, the
-      // kettle's readouts); the side panel starts wherever it ends, instead of under it
-      const hud = $('hud'), fit = () => document.documentElement.style.setProperty('--hud-h', `${hud.offsetHeight}px`);
-      if (root.ResizeObserver) new ResizeObserver(fit).observe(hud);
-      root.addEventListener('resize', fit); fit();
-      window.addEventListener('beforeunload', (e) => { if (s.hasUnfinishedShift()) { e.preventDefault(); e.returnValue = ''; } }); // a reload loses the shift; the browser asks first
+      window.addEventListener('beforeunload', (e) => { if ((s.hasUnfinishedShift() || s.mode === 'practice') && !s.saveSession(true)) { e.preventDefault(); e.returnValue = ''; } }); // a reload loses the shift; the browser asks first
       window.addEventListener('keydown', (e) => {
-        if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
-        if (e.key === 'Tab' && s.phase !== 'order' && (s.forms.length > 1 || s.items.length)) {
-          // Tab walks the chips: every patty, then every topping, then back to the first patty
+        if (!$('help').hidden) {
+          if (e.key === 'Escape') { e.preventDefault(); s.closeHelp(); }
+          else if (e.key === 'Tab') { e.preventDefault(); $('btn-help-close').focus(); }
+          e.stopImmediatePropagation(); return;
+        }
+        if (e.target && (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName) || e.target.isContentEditable)) return;
+        if ((e.key === '[' || e.key === ']') && s.phase !== 'order' && (s.forms.length || s.items.length)) {
           e.preventDefault();
           const n = s.forms.length, i = s.selItem ? n + s.items.indexOf(s.selItem) : s.sel;
-          const next = (i + 1) % (n + s.items.length);
+          const next = (i + (e.key === '[' ? -1 : 1) + n + s.items.length) % (n + s.items.length);
           if (next < n) s.select(next); else s.selectItem(s.items[next - n]);
           return;
         }
+        if (s.stopped) return;
         // the cutaway is a way of looking, not an action: it works wherever its button does — while
         // the meat rests, and on the plate in front of the customer
         if (e.key === 'c' || e.key === 'C') { $('btn-cutaway').click(); return; }
@@ -496,15 +688,15 @@
         }
         if (s.phase !== 'cook') return;
         if (e.key === 'f' || e.key === 'F') $('btn-flip').click();
-        if (e.key === ' ') { e.preventDefault(); if (s.patty && s.patty.where === 'board') $('btn-place').click(); else $('btn-flip').click(); }
+        if (e.key === ' ' && (!e.target || e.target.tagName !== 'BUTTON')) { e.preventDefault(); if (s.patty && s.patty.where === 'board') $('btn-place').click(); else $('btn-flip').click(); }
         if (e.key === 'p' || e.key === 'P') $('btn-press').click();
         if (e.key === 's' || e.key === 'S') $('btn-scrape').click();
-      });
+      }, true);
     }
     /** The last thing the cook's eyes, ears, fingers or hand reported, on the HUD as well as the log. */
     note(text) { this.senseNote = text; $('h-sense-v').textContent = text; $('h-sense').hidden = false; }
     /** Test/debug hook: advance the physics by `seconds` without rendering. */
-    fastForward(seconds) { let n = Math.round(seconds / DT); while (n-- > 0) P.step(this.state, DT); if (this.ticketTiming) { this.ticketClock += seconds; this.updateTicketClock(); } this.vp.forceTex = true; }
+    fastForward(seconds) { if (this.stopped) return; let n = Math.round(seconds / DT); while (n-- > 0) P.step(this.state, DT); if (this.ticketTiming) { this.ticketClock += seconds; this.updateTicketClock(); } this.vp.forceTex = true; }
     setSpeed(v) { this.speed = v; for (const b of document.querySelectorAll('[data-speed]')) b.classList.toggle('on', Number(b.dataset.speed) === v); }
     anyPlaced() { return this.patties.some((p) => p.where !== 'board'); }
     inPan() { return this.patties.filter((p) => p.where === 'pan'); }
@@ -553,7 +745,7 @@
      * left on the board. A rasher still rendering is a reason to leave the burner on.
      */
     maybeRest() {
-      if (this.phase !== 'cook') return false;
+      if (this.phase !== 'cook' || this.mode === 'practice') return false;
       const left = this.inPan().length + this.items.filter((q) => q.where === 'pan').length;
       const board = this.patties.filter((q) => q.where === 'board').length;
       if (left > 0 || board > 0 || !this.patties.some((q) => q.where !== 'board')) return false;
@@ -567,6 +759,14 @@
     }
     refreshButtons() {
       const on = this.phase === 'cook', p = this.patty, it = this.selItem;
+      $('btn-end-practice').hidden = this.mode !== 'practice';
+      $('practice-tools').hidden = this.mode !== 'practice' || !['cook', 'rest'].includes(this.phase);
+      $('btn-add-patty').disabled = this.patties.length >= 4;
+      $('btn-add-patty').textContent = this.patties.length >= 4 ? 'Four patties on the bench' : 'Form another patty';
+      $('btn-reheat').disabled = !(it ? it.where === 'rest' : p && p.where === 'rest');
+      $('btn-discard').disabled = !(it && it.where !== 'cut') && !(this.mode === 'practice' && p);
+      $('btn-discard').textContent = it && it.pair != null ? 'Discard both bun halves' : it ? 'Discard ' + it.spec.short : this.mode === 'practice' ? 'Discard patty' : 'Discard topping';
+      $('btn-cut').hidden = this.mode === 'practice';
       if (it && this.items.indexOf(it) < 0) this.selItem = null;
       const where = p ? p.where : 'board';
       const inPan = on && where === 'pan';
@@ -596,7 +796,7 @@
         // the burger this topping would go to if nothing is said: shown as a dotted outline, so the
         // default build is visible before the plate goes out rather than on the results card
         const plan = it.burger == null ? P.plannedBurger(this.state, it) : null;
-        const html = this.patties.map((q, i) => `<button data-burger="${i}" class="${it.burger === q.id ? 'on' : plan && plan.id === q.id ? 'plan' : ''}">${i + 1} ${SHORT[q.target]}</button>`).join(' ')
+        const html = this.patties.map((q, i) => `<button data-burger="${i}" class="${it.burger === q.id ? 'on' : plan && plan.id === q.id ? 'plan' : ''}">${i + 1} ${this.mode === 'practice' ? 'Patty' : SHORT[q.target]}</button>`).join(' ')
           + (plan ? ` <small>burger ${plan.id} unless you say otherwise${it.pair ? ' — both halves of a bun go together' : ''}</small>` : '');
         if (html !== this.assignHTML) { $('assign-btns').innerHTML = html; this.assignHTML = html; }
       }
@@ -618,7 +818,8 @@
     }
     // ------------------------------------------------------------ loop
     frame(now) {
-      const real = Math.min(0.1, (now - this.last) / 1000); this.last = now;
+      const visualDt = Math.max(0, Math.min(0.1, (now - this.last) / 1000));
+      const real = this.stopped ? 0 : visualDt; this.last = now;
       const st = this.state;
       const active = this.phase === 'cook' || this.phase === 'rest';
       // The ticket clock runs from “yes chef” to the moment the plates go out, in the same kitchen
@@ -646,10 +847,14 @@
       } else {
         this.audio.update({ sizzle: 0, spatter: 0 }, 0, real);
       }
+      this.autosaveClock += real;
+      if (this.autosaveClock >= 15) { this.autosaveClock = 0; this.saveSession(true); }
       const viewState = this.phase === 'form' ? this.stateForPreview : this.phase === 'order' ? (this.stateForPreview || P.createState({})) : st;
       if (this.phase === 'form' || this.phase === 'order') { viewState.diag = viewState.diag || {}; viewState.where = 'board'; }
       this.vp.setProbe(this.probe.inserted && !!this.state.patty && (this.phase === 'cook' || this.phase === 'rest'), this.probe.depth);
-      this.vp.update(viewState, real);
+      this.vp.update(viewState, real, visualDt);
+      // Position the food first, then ease the camera toward its new station.
+      if (this.cameraPreset) { this.vp.controls.preset(this.cameraPreset); this.cameraPreset = null; }
       requestAnimationFrame((t) => this.frame(t));
     }
     updateProbe(dt) {
@@ -886,7 +1091,7 @@
         ['Mass', `${(r.massStart * 1000).toFixed(0)} g → ${(r.massEnd * 1000).toFixed(0)} g (−${((1 - r.massEnd / r.massStart) * 100).toFixed(0)} %)`],
         ['Water', `${(r.waterRetained * 100).toFixed(0)} % retained · ${(r.waterEvap * 1000).toFixed(1)} g steamed off · ${(r.waterDrip * 1000).toFixed(1)} g ran out`],
         ['Fat rendered into the pan', `${(r.fatLost * 1000).toFixed(1)} g`],
-        ['On the bun', `${r.cheeseSlices ? r.cheeseSlices + ' slice' + (r.cheeseSlices > 1 ? 's' : '') + ' of cheese · ' : ''}${(r.bunSoak * 1000).toFixed(1)} g of juice into the bottom bun`],
+        ['On the bun', r.patty.bunFaces && r.patty.bunFaces.bottom ? `${r.cheeseSlices ? r.cheeseSlices + ' slice' + (r.cheeseSlices > 1 ? 's' : '') + ' of cheese · ' : ''}${(r.bunSoak * 1000).toFixed(1)} g of juice into the bottom bun` : 'No bottom bun served'],
         ['Crust (browning index / char)', `A: ${r.faces.down.id === 'A' ? r.faces.down.brown.toFixed(1) : r.faces.up.brown.toFixed(1)} / ${(r.faces.down.id === 'A' ? r.faces.down.char : r.faces.up.char).toFixed(2)} · B: ${r.faces.down.id === 'B' ? r.faces.down.brown.toFixed(1) : r.faces.up.brown.toFixed(1)} / ${(r.faces.down.id === 'B' ? r.faces.down.char : r.faces.up.char).toFixed(2)}`],
         ['Grey band', `${(r.overFrac * 100).toFixed(0)} % of the meat cooked past target`],
         // the smoke line only exists if it was cooked over a fire
@@ -900,7 +1105,7 @@
         ].filter(Boolean).join('<br>') || 'None: never pressed, never cut.'],
         ['Build', r.build.items.length
           ? r.build.items.map((b) => `${b.label} — <b>${b.state}</b>`).join('<br>') + (r.build.penalty ? `<br><span class="pen">− ${r.build.penalty.toFixed(1)} on the ticket</span>` : '') + (r.build.bonus ? `<br><span class="bon">+ ${r.build.bonus.toFixed(1)} on the ticket</span>` : '')
-          : 'Nothing on it but the patty (and a plain, untoasted bun)'],
+          : 'Nothing on it but the patty'],
       ].map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
       $('r-notes').innerHTML = r.notes.map((n) => `<li>${this.maskT(n)}</li>`).join('');
       // the two charts are thermometer traces with a °C axis, so hard mode does not get them either

@@ -34,19 +34,46 @@ is several hundred simulated minutes of cooking and node runs the tests in a fil
 refuses to report a pass unless the shards add up to every test in the file — it reads them at any
 indentation, and refuses to run at all if it finds a test whose name is a template it could never
 match, or if its two independent scans of the file disagree. `TEST_WORKERS=1` makes it serial and
-`npm test -- <substring>` runs the tests whose names contain that substring.
+`node test/run.js <substring>` runs the tests whose names contain that substring.
 
-`TEST_TIMEOUT` (ms, default 600000) is **one worker's budget for its whole shard**, not a per-test
-limit, because a per-test limit is not on offer: node applies `--test-timeout` to the test that
-wraps the file (four 150 ms tests under `--test-timeout=400` all pass and the *file* is cancelled at
-401 ms), and a `{ timeout }` on a test cannot interrupt a synchronous one anyway — the timer is a
-task on the event loop and every test here is one long synchronous grind through the model. So the
-number caps the shard, a shard that runs over is cancelled where it stands, and the runner says
-which worker ran out of time and which test it had last finished. Measured here (4 cores, node 22):
-a shard on four workers is 58–83 s, the whole file in one worker is 227 s, and the slowest single
-test in it is 17 s — so ten minutes is seven times the worst shard and two and a half times the
-serial run. Two tests in the suite pin all of that. `.github/workflows/test.yml` runs the smoke
-import and `npm test` on Node 22 for every push and pull request.
+`TEST_TIMEOUT` (ms, default 600000) is **one worker's budget for its whole shard**.
+A parent-process watchdog terminates an overdue worker even when its test is synchronous.
+Workers execute the test file directly, avoiding an extra child process and differences in
+Node's built-in file-timeout behavior. The runner reports the last completed test and refuses
+to pass an incomplete shard. Regression tests check both asynchronous and synchronous hangs.
+After the physics shards, `npm test` runs the session and gameplay regression tests.
+CI runs the suite on Node 22 and Node 24 for every push and pull request.
+
+## Practice, sessions and burger builds
+
+**Free practice** starts an untimed kitchen with no tickets, customers or scores. Form up to four
+patties at once, add toppings, and experiment with the same simulation used in service.
+**Form another patty** adds food to the existing kitchen; **Clear food** empties the bench while
+preserving stove heat and residue, and lets you change equipment. No tutorial is required.
+
+Service tickets now specify a build for each burger as well as its doneness. The order card and
+cooking panel list the requested bun halves, cheese, bacon, egg or onions. A check mark means an
+ingredient is assigned, not that it is cooked: its quality still matters. Assign toppings to the
+correct burger using the existing assignment controls. Bun halves move together. Missing a
+requested ingredient sends that burger back; extra toppings remain allowed. Tickets with builds
+allow additional time, especially for onions.
+
+**Back on the heat** returns resting meat or toppings to the pan. Cooking damage, temperatures
+and previous peak temperature are preserved; reheating cannot undo overcooking. Check the burner
+or vents when returning from rest. **Discard** removes the selected topping (both halves for a
+bun), so a replacement can be cooked and assigned normally. Practice also lets you discard meat.
+
+**Pause** freezes the simulation and ticket clock. Opening Help also freezes cooking and blocks
+background actions; Escape closes Help. **Save** stores the current kitchen, food, forms, ticket
+and shift in this browser. Active sessions also autosave every 15 seconds and on leaving the page.
+Service and practice have separate save slots; **Resume saved service/practice** restores one
+paused, with no offline cooking. The status next to Save reports storage failures. Saves are local
+to this browser and site address; clearing browser storage removes them. Camera position is not saved.
+
+The interface is designed for desktop use (1024 px or wider). A floating station overlays the
+full-width 3D kitchen, with instruments at the bottom and food selection above. The Kitchen menu holds
+save/resume, camera, inspector and sound controls. Equipment, cleaning tools and the log expand
+when needed. Phone layouts are not supported. Hard mode still hides thermometers.
 
 ### End-to-end
 
@@ -93,7 +120,7 @@ runner takes waits on a frame, and a pan with three patties in it is three sets 
 | `T` | press test: put a finger on it and feel how far it has gone |
 | `K` | peek: cut into it and look at the colour and the grey band |
 | `H` | hold a hand over the pan or the grate and count the seconds |
-| `Tab`, click a patty or topping, or the chips under the ticket | select what the buttons act on |
+| `[` / `]`, click a patty or topping, or the chips under the ticket | select what the buttons act on; Tab moves keyboard focus normally |
 | **Extras** row | put bun halves, bacon, an egg or sliced onions in the pan beside the patties |
 | `F` with a topping selected | turn the bun / rasher / egg — or stir the onions |
 | Stove: charcoal kettle | the knob becomes the bottom vent, the pan goes away, and the lid is the kettle's |
@@ -535,5 +562,5 @@ test/calibrate.js        scenario runner used to tune the constants (pan and ket
 test/perf.js             benchmark: milliseconds of CPU per simulated second
 test/player.js           recipe sweep: `node test/player.js [grill] [quick] [order]`
 test/e2e/                end-to-end scenarios played in a real browser (npm run e2e)
-.github/workflows/test.yml   the smoke import and the suite, on Node 22
+.github/workflows/test.yml   the smoke import and the suite, on Node 22 and 24
 ```
