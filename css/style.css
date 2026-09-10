@@ -59,10 +59,6 @@ body.hard #senses button { border-color: var(--accent); }
 .speed button:last-child, .views button:last-child { border-radius: 0 6px 6px 0; }
 
 /* side panel */
-/* The panel starts under the HUD — but only down to a point. A busy kettle ticket wraps the HUD onto
-   three or four rows (260 px at 1400×860, 320 px at 1100×700), and following it that far leaves the
-   cook 357 px of viewport for 1400 px of controls. The HUD stops 364 px short of the right edge, so
-   the rows past the cap hang over the 3-D view instead, which is what a real pass looks like. */
 #panel { position: fixed; top: calc(min(var(--hud-h, 56px), 180px) + 8px); right: 12px; width: 340px; max-height: calc(100% - min(var(--hud-h, 56px), 180px) - 20px); overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; z-index: 4; backdrop-filter: blur(6px); }
 #panel h2 { margin: 0 0 10px; font-size: 15px; letter-spacing: 0.04em; color: var(--accent); }
 .row { margin: 8px 0; }
@@ -144,31 +140,6 @@ table.stats td:first-child { color: var(--muted); width: 42%; }
 #r-notes { font-size: 13px; line-height: 1.4; padding-left: 18px; }
 .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .charts canvas { width: 100%; height: auto; border-radius: 6px; }
-/* Under 1200 px the HUD's own rows are the problem, not just where the panel starts: three patty
-   chips, five topping chips, the two-zone IR readout and the fire's sentence wrap onto four lines
-   (320 px of a 700 px window). The chips lose their status line — it is in the panel and in the log
-   — the readout boxes tighten up and stop stretching to the tallest one in the row, and the wordy
-   ones (the fire, the cook's note, the side note) are clamped to two lines. */
-@media (max-width: 1200px) {
-  #hud { gap: 4px 10px; padding: 6px 10px; }
-  .chip small { display: none; }
-  .readouts { gap: 5px 8px; align-items: flex-start; }  /* not stretch: one wordy box must not make the rest of the row as tall */
-  .ro { min-width: 62px; padding: 3px 8px; }
-  .ro span { font-size: 15px; }
-  #ro-fire { min-width: 150px; max-width: 210px; }
-  .ro.note { min-width: 150px; max-width: 210px; }
-  .ro.small { max-width: 150px; }
-  /* the sentences say the same thing in their first clause; the rest is in the log */
-  #ro-fire span, .ro.note span, .ro.small span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-  .tools button { padding: 4px 7px; font-size: 12px; }
-}
-@media (max-width: 900px) {
-  #hud { right: 0; }
-  #panel { width: min(340px, 92vw); top: auto; bottom: 8px; right: 8px; max-height: 55vh; }
-  #inspector { width: min(440px, 92vw); bottom: auto; top: 70px; }
-  .readouts { display: none; }
-}
-
 /* patty chips: one per burger on the ticket */
 .chips { display: flex; gap: 6px; flex-wrap: wrap; }
 #chips { pointer-events: auto; }
@@ -209,3 +180,104 @@ p.shiftrun { color: var(--muted); border-top: 1px dotted #2a241d; padding-top: 6
 #se-tickets .t.best b { color: var(--good); }
 .ticket-sum { font-size: 13px; background: #1e1914; border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
 .ticket-sum ul { margin: 6px 0 0; padding-left: 18px; }
+
+/* Session controls and per-burger build requests. */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+#save-status { font-size: 11px; color: var(--muted); max-width: 210px; }
+.build-list { font-size: 12px; line-height: 1.5; }
+.build-list:not(:empty) { border-bottom: 1px solid var(--line); padding: 6px 0; margin-bottom: 10px; }
+.build-list .missing { color: var(--warn); }
+.build-list .ready { color: var(--good); }
+#practice-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+body.paused #panel::before { content: 'Paused — resume to cook'; display: block; color: var(--accent); margin-bottom: 8px; }
+
+/* Desktop workstation: fixed chrome and a floating station over the full-width world. */
+:root { --panel: #1c1916f5; --line: #ffffff14; --muted: #a59b8f; --accent: #edb66b; --station-width: 360px; }
+body { min-width: 1024px; }
+button, select, summary { transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease; }
+button { background: #ffffff07; border-radius: 8px; font-size: 13px; min-height: 34px; }
+button:hover:not(:disabled), summary:hover { background: #ffffff10; border-color: #ffffff30; }
+button:active:not(:disabled) { transform: translateY(1px); }
+button:disabled { opacity: .3; }
+select { padding: 9px; border-radius: 8px; }
+input[type=range] { cursor: pointer; }
+* { scrollbar-width: thin; scrollbar-color: #66584a transparent; }
+#view { top: 64px; right: 0; width: 100%; height: calc(100% - 64px); }
+#hud { inset: 0 0 auto; height: 64px; padding: 0 24px; display: flex; flex-wrap: nowrap; gap: 28px; background: #171410; border-bottom: 1px solid var(--line); z-index: 12; }
+.brand { font-size: 16px; letter-spacing: .16em; flex: 0 0 auto; }
+.brand small { font-size: 10px; letter-spacing: .01em; margin-top: 3px; }
+.ticket { font-size: 12px; min-width: 0; white-space: normal; }
+.ticket b { font-size: 13px; }
+.tclock { display: block; margin-top: 3px; font-size: 11px; }
+.tools { flex-wrap: nowrap; gap: 8px; white-space: nowrap; }
+.tools > .speed { display: flex; order: -2; margin-right: 6px; }
+#btn-pause { order: -1; min-width: 72px; }
+.speed button { min-width: 34px; border-color: transparent; background: transparent; }
+.speed button.on { background: #edb66b20; color: var(--accent); }
+.toolbar-menu { position: relative; }
+summary { cursor: pointer; list-style: none; user-select: none; }
+summary::-webkit-details-marker { display: none; }
+.toolbar-menu > summary { padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; font-size: 13px; }
+.toolbar-menu summary span { margin-left: 16px; color: var(--muted); }
+.menu-content { position: absolute; right: 0; top: calc(100% + 12px); width: 310px; max-height: calc(100vh - 90px); overflow: auto; padding: 18px; border: 1px solid #ffffff20; border-radius: 12px; background: #24201c; box-shadow: 0 16px 48px #0008; display: flex; flex-wrap: wrap; gap: 8px; }
+.menu-content .eyebrow, .menu-content #save-status { width: 100%; max-width: none; white-space: normal; }
+.menu-content .eyebrow { margin-bottom: 4px; }
+.menu-divider { height: 1px; background: var(--line); width: 100%; margin: 6px 0; }
+.menu-content .views { display: flex; width: 100%; }
+.menu-content .views button { flex: 1; padding: 5px; }
+#chips { position: fixed; top: 84px; left: 24px; max-width: calc(100% - 448px); flex-wrap: nowrap; overflow-x: auto; padding-bottom: 5px; }
+.chip { flex: 0 0 auto; min-height: 34px; border-radius: 8px; background: #1b1713e8; }
+.chip.on { border-color: #edb66b65; background: #403021; }
+.chip small { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.readouts { position: fixed; bottom: 20px; left: 24px; width: calc(100% - 448px); flex-wrap: nowrap; overflow-x: auto; padding: 8px 0; gap: 8px; align-items: stretch; }
+.ro { flex: 0 0 auto; background: #1b1713ed; border-color: #ffffff12; border-radius: 10px; padding: 10px 14px; min-width: 90px; }
+.ro label { font-size: 9px; letter-spacing: .1em; color: #b8a995; }
+.ro span { font-size: 20px; line-height: 1.5; }
+.ro.small { max-width: 200px; }
+#ro-side:has(#h-side:empty) { display: none; }
+#ro-fire { min-width: 190px; max-width: 250px; }
+#ro-fire span, .ro.note span { font-size: 12px; }
+#panel { top: 84px; right: 20px; bottom: 20px; width: var(--station-width); max-height: none; padding: 20px; border-radius: 14px; background: var(--panel); backdrop-filter: none; box-shadow: 0 10px 40px #0003; }
+.panel-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.station-state { font-size: 11px; color: var(--accent); background: #edb66b12; padding: 4px 8px; border-radius: 5px; }
+#panel h2 { font-size: 17px; letter-spacing: -.02em; color: var(--ink); margin: 16px 0 12px; }
+.row { margin: 12px 0; }
+.actions { gap: 8px; margin: 14px 0; }
+.actions button { min-height: 38px; }
+#btn-place:disabled, #btn-reheat:disabled, #btn-discard:disabled { display: none; }
+.row.two:has(#btn-reheat:disabled):has(#btn-discard:disabled) { display: none; }
+.control-group { border-top: 1px solid var(--line); margin-top: 14px; }
+.control-group > summary { padding: 14px 0; color: var(--muted); font-size: 12px; display: flex; justify-content: space-between; }
+.control-group > summary::after { content: '+'; color: var(--accent); }
+.control-group[open] > summary::after { content: '−'; }
+.control-group[open] > summary { color: var(--ink); }
+.row.knob { background: #ffffff04; border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+.row.knob label b { color: var(--accent); font-size: 16px; }
+.row.knob label small, .row.extras label small, .row.move label small { font-size: 11px; line-height: 1.4; margin-top: 3px; }
+.build-list { border-radius: 8px; }
+.build-list:not(:empty) { background: #edb66b08; padding: 10px; border: 1px solid #edb66b18; margin-bottom: 14px; }
+#practice-tools button { font-size: 11px; min-height: 30px; }
+#practice-tools { padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+body.paused #panel::before { font-size: 12px; background: #edb66b12; padding: 10px; border-radius: 8px; margin-bottom: 14px; }
+#inspector { top: 140px; bottom: 116px; left: 24px; width: min(440px, calc(100% - 450px)); overflow: auto; padding: 18px; background: #1c1916fa; z-index: 6; }
+.modal { z-index: 20; backdrop-filter: blur(8px); background: #0b0906a6; }
+.modal.right { top: 64px; padding: 20px; backdrop-filter: none; }
+.modal.right .card { max-height: calc(100vh - 104px); }
+.card { width: 560px; max-width: none; max-height: calc(100vh - 64px); padding: 32px; background: #211c17fa; border-color: #ffffff1a; border-radius: 18px; }
+.card.wide { width: 660px; }
+.card h1 { font-size: 36px; letter-spacing: -.035em; font-weight: 650; }
+.card > button { margin: 4px 3px 0 0; }
+.card > .primary { padding: 11px 22px; }
+.order-intro { font-size: 18px; margin-top: 24px; }
+.order-intro span { font-size: 13px; color: var(--muted); }
+.scoreline h1 { font-size: 23px; }
+#log { max-height: none; border-top: 0; padding-top: 0; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
+
+.panel-heading { position: sticky; top: -20px; z-index: 2; background: #1c1916; margin: -20px -20px 16px; padding: 18px 20px; }
+/* Results replace the station instead of covering the cooking stage. */
+.modal.right .card { width: var(--station-width); padding: 20px; border-radius: 14px; }
+.modal.right .scoreline { gap: 12px; align-items: flex-start; }
+.modal.right .scoreline h1 { font-size: 19px; }
+.modal.right .score { font-size: 44px; }
+.modal.right .charts { grid-template-columns: 1fr; }

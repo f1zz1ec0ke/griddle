@@ -590,7 +590,9 @@
   }
 
   function placePatty(s, patty, pos) {
-    if (patty.where === 'pan') return;
+    if (patty.where === 'pan' || patty.where === 'cut') return;
+    const reheating = patty.where === 'rest';
+    if (reheating) { patty.restT = 0; patty.serveT = null; }
     if (!s.patties.includes(patty)) s.patties.push(patty);
     patty.where = 'pan'; patty.pos = pos || patty.pos || { x: 0, y: 0 };
     selectPatty(s, patty);
@@ -599,6 +601,7 @@
     patty.dirtAtStart = panDirt(s.pan);
     if (patty.dirtAtStart > 0.002) logEvent(s, 'The pan is dirty: burnt bits from earlier tickets will stick to this crust and smoke.', 'warn');
     const Tunder = panTatXY(s, patty.pos.x, patty.pos.y);
+    if (reheating) { logEvent(s, `Patty ${patty.id} back on the heat at ${centerT(patty).toFixed(1)} °C. The crust, juices and cooking history stay with it.`, 'action'); return; }
     const others = s.patties.filter((q) => q !== patty && q.where === 'pan').length;
     logEvent(s, `Patty ${patty.id} (${(patty.massKg0 * 1000).toFixed(0)} g, ${(patty.h0 * 1000).toFixed(0)} mm, ${(patty.fatFrac * 100).toFixed(0)} % fat, ${patty.T0.toFixed(0)} °C) hits the ${s.grill ? 'grate' : 'pan'} at ${Tunder.toFixed(0)} °C under it` + (others ? ` — ${others + 1} ${s.grill ? 'on the grate' : 'in the pan'} now, and every cold patty drags the metal down.` : '.'), 'action');
     if (s.grill && (!s.grill.lit || s.grill.Tfire < 350)) logEvent(s, 'The coals are not ready. Meat over a cool fire steams and sticks; wait for the bed to glow.', 'warn');
@@ -2369,7 +2372,7 @@
     // carry a shared pair id so the build never sends the heel to one burger and the crown to another
     const pair = kind === 'bun' ? (s._pairSeq = (s._pairSeq || 0) + 1) : null;
     for (const extra of kind === 'bun' ? [{ half: 'bottom' }, { half: 'top' }] : [{}]) {
-      const it = makeItem(kind, { ...(opts || {}), ...extra, id: s.items.length + 1 });
+      const it = makeItem(kind, { ...(opts || {}), ...extra, id: (s._itemSeq = Math.max(s._itemSeq || 0, ...s.items.map(o => o.id), 0) + 1) });
       const { pos, gap, overlap } = freeSpot(s, it.Dcov / 2);
       it.pos = pos; it.rings = footprintRings(s.pan, pos, it.D / 2);
       it.Tat = ringsT(s.pan, it.rings);
@@ -2452,8 +2455,30 @@
     logEvent(s, `${it.label} off the heat after ${fmtTime(it.cookTime)} — ${itemState(it).state}.`, 'action');
     return true;
   }
+  /** Return a topping from the pass without replacing its cooked state. */
+  function reheatItem(s, it) {
+    if (!it || it.where !== 'rest' || !s.items.includes(it)) return false;
+    const { pos, overlap } = freeSpot(s, it.Dcov / 2);
+    it.pos = pos; it.rings = footprintRings(s.pan, pos, it.D / 2);
+    it.overlap = overlap; it.contactF = clamp(1 - overlap, 0.1, 1);
+    it.where = 'pan'; it.restT = 0; it.timeDown = 0; it.serveT = null;
+    logEvent(s, `${it.label} back on the heat.`, 'action');
+    return true;
+  }
+  /** Discard the selected topping; paired buns leave together. Residue stays on the pan. */
+  function discardItem(s, it) {
+    if (!it || it.where === 'cut' || !s.items.includes(it)) return false;
+    const discarded = s.items.filter(o => o === it || (it.pair != null && o.pair === it.pair));
+    let mass = 0;
+    for (const o of discarded) { mass += itemMass(o); if (o.where === 'pan') removeItem(s, o); }
+    s.items = s.items.filter(o => !discarded.includes(o));
+    if (discarded.includes(s.item)) s.item = null;
+    s.wasteG = (s.wasteG || 0) + mass * 1000;
+    logEvent(s, `Discarded ${it.pair != null ? 'both bun halves' : it.label.toLowerCase()} (${(mass * 1000).toFixed(0)} g). Add a fresh replacement from Extras.`, 'action');
+    return true;
+  }
   /** The build step: this topping belongs on that burger. */
-  function assignTopping(s, it, patty) { if (!it || !patty) return false; it.burger = patty.id; return true; }
+  function assignTopping(s, it, patty) { if (!it || !patty) return false; for (const o of s.items) if (o === it || (it.pair != null && o.pair === it.pair)) o.burger = patty.id; return true; }
   /** Whichever burger it came off the pan next to, when the cook has not said otherwise. */
   function nearestBurger(s, it) {
     let best = null, bestD = Infinity;
@@ -3340,7 +3365,7 @@
       for (const it of tops) if (it.where !== 'cut') { it.where = 'cut'; it.serveT = itemT(it); }
       for (let j = 0; j < p.Nr; j++) { p.poolT[j] = 0; p.poolB[j] = 0; } p.poolTop = 0; p.poolBottom = 0;
       const built = tops.length ? ` Built with ${tops.map((it) => it.label.toLowerCase()).join(', ')}.` : '';
-      logEvent(s, `Patty ${p.id} on a bun.${p.bunSoak > 0.0015 ? ` ${(p.bunSoak * 1000).toFixed(1)} g of juice went straight into the bottom bun${heel && soakF < 0.8 ? ' — far less than it would have taken untoasted' : ''}.` : ''}${p.cheeses.length ? ` ${p.cheeses.length} slice${p.cheeses.length > 1 ? 's' : ''} of cheese under the lid.` : ''}${built}`, 'action');
+      logEvent(s, `Patty ${p.id} ${heel && crown ? 'on a bun' : heel || crown ? 'served with a partial bun' : 'served without a bun'}.${heel && p.bunSoak > 0.0015 ? ` ${(p.bunSoak * 1000).toFixed(1)} g of juice went straight into the bottom bun${heel && soakF < 0.8 ? ' — far less than it would have taken untoasted' : ''}.` : ''}${p.cheeses.length ? ` ${p.cheeses.length} slice${p.cheeses.length > 1 ? 's' : ''} of cheese under the lid.` : ''}${built}`, 'action');
     }
     s.served = true; syncSelected(s);
   }
@@ -3373,7 +3398,11 @@
     });
     let pen = 0, bon = 0;
     for (const b of items) { if (b.score < 0) pen -= b.score; else bon += b.score; }
-    return { items, penalty: clamp(pen, 0, 10), bonus: clamp(bon, 0, 5) };
+    const tops = toppingsOf(s, patty);
+    const missing = (patty.requiredBuild || []).filter(kind => kind === 'cheese' ? !patty.cheeses.length
+      : kind === 'bun' ? !['bottom', 'top'].every(half => tops.some(it => it.kind === 'bun' && it.half === half))
+      : !tops.some(it => it.kind === kind));
+    return { items, missing, penalty: clamp(pen + missing.length * 5, 0, 10), bonus: clamp(bon, 0, 5) };
   }
   function evaluate(s, targetId, patty) {
     const p = patty || s.patty; if (!p) return null;
@@ -3514,9 +3543,10 @@
     for (const r of results) { bPen += r.build.penalty; bBon += r.build.bonus; }
     const buildPenalty = list.length ? bPen / list.length : 0, buildBonus = list.length ? bBon / list.length : 0;
     for (const r of results) for (const b of r.build.items) if (b.score <= -3) notes.push(`Burger ${r.id}: ${b.label.toLowerCase()} went out ${b.state}. That is a send-back.`);
+    for (const r of results) for (const kind of r.build.missing) notes.push(`Burger ${r.id}: missing the requested ${kind === 'bun' ? 'bun halves' : kind}. That is a send-back.`);
     const rests = list.map((p) => p.restT || 0);
     const spread = rests.length > 1 ? Math.max(...rests) - Math.min(...rests) : 0;
-    if (list.length > 1 && spread < 90 && coldPenalty < 0.5) notes.push('All the burgers landed together, still hot. That is the hard part of a multi-burger ticket.');
+    if (list.length > 1 && spread < 90 && coldPenalty < 0.5 && list.every(p => (p.serveT == null ? centerT(p) : p.serveT) >= 45)) notes.push('All the burgers landed together, still hot. That is the hard part of a multi-burger ticket.');
     else if (spread >= 240) notes.push(`The burgers came off the pan ${fmtTime(spread)} apart. Start the well-done one first and the rare one last so they finish together.`);
     const mean = results.length ? results.reduce((a, r) => a + r.total, 0) / results.length : 0;
     const total = Math.round(clamp(mean - coldPenalty - buildPenalty + buildBonus, 0, 100));
@@ -3728,7 +3758,8 @@
     // `buildOf` returns { items, penalty, bonus }; a hand-built result may pass the items directly
     const buildRaw = result.build || (pt && pt.build) || null;
     const build = Array.isArray(buildRaw) ? buildRaw : buildRaw && Array.isArray(buildRaw.items) ? buildRaw.items : [];
-    const buildItems = []; let badBuild = false;
+    const buildItems = []; let badBuild = !!(buildRaw && buildRaw.missing && buildRaw.missing.length);
+    for (const kind of (buildRaw && buildRaw.missing) || []) gripe('build', 0.95, [`I asked for ${kind === 'bun' ? 'a bun' : kind}. It's missing.`], 20);
     for (const it of build) {
       if (!it) continue;
       // what the table calls it: "the egg", "the bacon", "the onions" — but a bun is its half
@@ -3799,7 +3830,7 @@
     C, BLENDS, PANS, FATS, STOVES, GRATE, COAL, BANK, WOOD, SMOKE, DONENESS, ITEMS, TOUCH, PEEK, HAND,
     makePatty, createState, step, stepPatty, pattySpots, panTat, panTatXY, selectPatty, nextTicket,
     setKnob, setBank, setTopVent, addWood, addCoals, stirCoals, emptyAsh, ventFlow, smokeRead, smokeName, addFat, placePatty, movePatty, moveItem, scrape, slideTo, coalAt, bedAt, zoneAt, flipPatty, pressPatty, removePatty, addCheese, toggleLid, basteButter, washPan, wipeStove, panDirt, serve,
-    makeItem, addItem, selectItem, flipItem, removeItem, stepItem, assignTopping, nearestBurger, plannedBurger, toppingsOf, itemState, itemMass, itemT, itemDryness, freeSpot, footprintRings, ringCoverage,
+    makeItem, addItem, selectItem, flipItem, removeItem, reheatItem, discardItem, stepItem, assignTopping, nearestBurger, plannedBurger, toppingsOf, itemState, itemMass, itemT, itemDryness, freeSpot, footprintRings, ringCoverage,
     firmness, firmnessWord, cellStiffness, pressTest, peek, sliceRead, handTest, handTestAt, handWord, HAND_WORDS,
     evaluate, evaluateTicket, buildOf, donenessOf, centerT, cellT, layerMean, gridMean, pattyMass, layerMass, waterHolding, fmtTime, clamp, lerp, rhoVapSat, logEvent, pattyFinite,
     verdict, ticketTargetTime, latePenalty, billFor, tipFraction, spellMinutes, MENU, COOK_S, SERVICE_MAX,

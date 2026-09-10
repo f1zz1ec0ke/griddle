@@ -1963,33 +1963,18 @@ test('the runner sees every test in this file, whatever the indentation, and ref
   assert.throws(() => runner.testNames(`${T}(\`per wood: \${wood}\`, () => {});`), /template/);
 });
 
-test('the shard timeout is a cap on the worker, which is what run.js and the README say it is', () => {
-  // `npm test` gives each worker `--test-timeout`, and the number is documented as the budget for
-  // that worker's whole shard rather than for one test. This is why: node applies the option to the
-  // test that wraps the file, and it cannot interrupt a synchronous test at all. If a node upgrade
-  // ever changes either half of that, this fails and the docs get another look.
-  const os = require('node:os'), path = require('node:path'), { spawnSync } = require('node:child_process');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'griddle-timeout-'));
-  const T = 'test';  // spelled out so test/run.js's scan of this file does not count the fixtures
-  // NODE_TEST_CONTEXT has to go: a child that thinks it is already inside a test run refuses to
-  // run any files ("run() is being called recursively") and hands back an empty report
-  const env = { ...process.env }; delete env.NODE_TEST_CONTEXT;
-  const run = (name, body, args) => {
-    const file = path.join(dir, name);
-    fs.writeFileSync(file, body);
-    return spawnSync(process.execPath, ['--test', ...args, '--test-reporter=spec', file], { encoding: 'utf8', env });
-  };
-  // three tests of 120 ms under a 300 ms cap: every test is well inside it, the file is not
-  const each = run('each.test.js', `const { ${T} } = require('node:test');\nconst sleep = (ms) => new Promise((r) => setTimeout(r, ms));\n`
-    + [1, 2, 3].map((n) => `${T}('t${n}', async () => { await sleep(120); });`).join('\n'), ['--test-timeout=300']);
-  assert.match(each.stdout, /✔ t1/, each.stdout);
-  assert.match(each.stdout, /cancelled 1/, `the file itself is what times out, not a test:\n${each.stdout}`);
-  assert.match(each.stdout, /each\.test\.js.*timed out/s, each.stdout);
-  // and a synchronous test cannot be cancelled by its own timeout: the timer never gets a turn
-  const spin = run('spin.test.js', `const { ${T} } = require('node:test');\n${T}('spin', { timeout: 100 }, () => { const t0 = Date.now(); while (Date.now() - t0 < 400); });\n`, []);
-  assert.match(spin.stdout, /✔ spin/, spin.stdout);
-  assert.match(spin.stdout, /cancelled 0/, `a 400 ms synchronous test under a 100 ms timeout still passes:\n${spin.stdout}`);
-  fs.rmSync(dir, { recursive: true, force: true });
+test('the shard watchdog stops async work and synchronous work on supported Node versions', async () => {
+  const { runProcess } = require('./run');
+  const asyncWork = await runProcess(['-e', 'setTimeout(() => console.log("too late"), 2000)'], 300);
+  assert.equal(asyncWork.timedOut, true);
+  assert.ok(!asyncWork.out.includes('too late'));
+  const syncWork = await runProcess(['-e', 'while (true) {}'], 300);
+  assert.equal(syncWork.timedOut, true);
+  assert.notEqual(syncWork.code, 0);
+  const done = await runProcess(['-e', 'console.log("done")'], 5000);
+  assert.equal(done.timedOut, false);
+  assert.equal(done.code, 0);
+  assert.match(done.out, /done/);
 });
 
 test('a centre in the gap between the ticket band and the doneness band is not "off by 0.0 °C"', () => {

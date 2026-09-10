@@ -302,6 +302,9 @@
       const p = this.p, g = this.group, vp = this.vp;
       if (this.bunGroup) { g.remove(this.bunGroup); disposeTree(this.bunGroup); } // the crumb textures are built fresh every time
       const bg = new T.Group(); this.bunGroup = bg; g.add(bg);
+      const bf = p.bunFaces || {};
+      this.bunBottomH = bf.bottom ? 0.022 : 0; this.bunTop = null;
+      if (!bf.bottom && !bf.top) return;
       const Rb = Math.max(0.05, (p.D / 2) * 0.96);
       const crust = new T.MeshStandardMaterial({ color: 0xc98a45, roughness: 0.75 });
       const crumbTex = (soak, toast, cutAtTop) => {
@@ -334,10 +337,9 @@
       };
       const bottom = [{ r: 0, y: 0, v: 0 }, { r: Rb * 0.92, y: 0, v: 0.2 }, { r: Rb, y: 0.007, v: 0.4 }, { r: Rb * 0.98, y: 0.017, v: 0.6 }, { r: Rb * 0.85, y: 0.022, v: 0.8 }, { r: 0, y: 0.022, v: 1 }];
       const top = [{ r: 0, y: 0, v: 0 }, { r: Rb * 0.97, y: 0, v: 0.15 }, { r: Rb, y: 0.006, v: 0.3 }, { r: Rb * 0.93, y: 0.013, v: 0.5 }, { r: Rb * 0.72, y: 0.02, v: 0.7 }, { r: Rb * 0.4, y: 0.024, v: 0.85 }, { r: 0, y: 0.025, v: 1 }];
-      this.bunBottomH = 0.022;
-      // a bun the cook actually toasted goes out with its toast on it; anything else is a raw bun
-      const bf = p.bunFaces || {};
-      half(bottom, -this.bunBottomH, p.bunSoak || 0, bf.bottom, true);
+      // Only draw the halves that were actually included in the served build.
+      if (bf.bottom) half(bottom, -this.bunBottomH, p.bunSoak || 0, bf.bottom, true);
+      if (!bf.top) return;
       this.bunTop = half(top, 0, 0, bf.top, false);
       const seedGeo = new T.SphereGeometry(1, 6, 5); const seedMat = new T.MeshStandardMaterial({ color: 0xf6ead2, roughness: 0.6 });
       let sd = 7 + (p.id || 0); const rnd = () => { sd = (sd * 1103515245 + 12345) & 0x7fffffff; return sd / 0x7fffffff; };
@@ -918,7 +920,18 @@
     }
     resize() {
       const w = this.canvas.clientWidth || 800, h = this.canvas.clientHeight || 600;
-      this.renderer.setSize(w, h, false); this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
+      this.renderer.setSize(w, h, false); this.camera.aspect = w / h;
+      // Preserve the horizontal framing when the desktop station leaves a narrow stage.
+      this.camera.fov = 2 * Math.atan(Math.tan(42 * Math.PI / 360) * Math.max(1, 1.25 / this.camera.aspect)) * 180 / Math.PI;
+      // Shift the projection, not the orbit target: picking, dragging and every camera
+      // preset still refer to the food, but it appears centered in the uncovered area.
+      const canvasRect = this.canvas.getBoundingClientRect();
+      const station = document.getElementById('panel');
+      const results = document.getElementById('results');
+      const overlay = station && !station.hidden ? station
+        : results && !results.hidden ? results.querySelector('.card') : null;
+      const covered = overlay ? w - clamp(overlay.getBoundingClientRect().left - canvasRect.left, 0, w) : 0;
+      this.camera.setViewOffset(w, h, covered / 2, 0, w, h);
       const px = (h / 2) / Math.tan((this.camera.fov * Math.PI) / 360) * this.renderer.getPixelRatio();
       this.steam.setScale(px); this.smoke.setScale(px);
     }
@@ -1408,7 +1421,7 @@
      * still gets its ten repaints a second and no single frame carries more than one.
      */
     claimTexBudget() { if (this.texBudget <= 0) return false; this.texBudget--; return true; }
-    update(state, dt) {
+    update(state, dt, cameraDt = dt) {
       this.clock += dt; this.texBudget = 1;
       const pan = state.pan, p = state.patty;
       if (this.peeks.size) {
@@ -1657,7 +1670,7 @@
 
       this._updateParticles(state, dt, list, stoveOn);
 
-      this.controls.update(dt);
+      this.controls.update(cameraDt);
       this.renderer.render(this.scene, this.camera);
     }
     /** Sizzle, steam, smoke, spatter, juice beads and fat drips around every patty on the pan. */
@@ -1816,7 +1829,7 @@
       if (name === 'top') this.goal = { target: t, azimuth: this.goal.azimuth, polar: 0.12, dist: 0.5 };
       if (name === 'side') this.goal = { target: t.clone().setY(t.y + 0.01), azimuth: -Math.PI / 2, polar: 1.45, dist: 0.32 };
       if (name === 'close') this.goal = { target: t.clone().setY(t.y + 0.01), azimuth: this.goal.azimuth, polar: 1.1, dist: 0.16 };
-      if (name === 'serve') { const az = -0.9; this.goal = { target: t.clone().add(new T.Vector3(Math.sin(az) * 0.075, 0.03, -Math.cos(az) * 0.075)), azimuth: az, polar: 1.2, dist: 0.34 }; }
+      if (name === 'serve') { const az = -0.9; this.goal = { target: t.clone().add(new T.Vector3(0, 0.015, 0)), azimuth: az, polar: 1.2, dist: 0.34 }; }
       if (name === 'default') this.reset(this.vp.mode);
     }
     dolly(f) { this.goal.dist = clamp(this.goal.dist * f, 0.06, 2.5); }
@@ -1830,7 +1843,7 @@
       const d = this.drag; if (!d) return;
       const dx = e.clientX - d.x, dy = e.clientY - d.y; d.x = e.clientX; d.y = e.clientY; d.moved += Math.abs(dx) + Math.abs(dy);
       if (d.moving) { this.vp.moveDrag(e.clientX, e.clientY); return; }
-      if (d.b === 0 && !d.shift) { this.goal.azimuth -= dx * 0.006; this.goal.polar = clamp(this.goal.polar - dy * 0.006, 0.05, 1.52); }
+      if (d.b === 0 && !d.shift) { this.goal.azimuth += dx * 0.006; this.goal.polar = clamp(this.goal.polar - dy * 0.006, 0.05, 1.52); }
       else if (d.b === 2) { this.dolly(Math.exp(dy * 0.006)); }
       else { // pan (middle, or shift+left)
         const right = new T.Vector3(); const up = new T.Vector3(0, 1, 0); this.cam.getWorldDirection(right); right.cross(up).normalize();
