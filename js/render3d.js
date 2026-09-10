@@ -1843,7 +1843,7 @@
       const d = this.drag; if (!d) return;
       const dx = e.clientX - d.x, dy = e.clientY - d.y; d.x = e.clientX; d.y = e.clientY; d.moved += Math.abs(dx) + Math.abs(dy);
       if (d.moving) { this.vp.moveDrag(e.clientX, e.clientY); return; }
-      if (d.b === 0 && !d.shift) { this.goal.azimuth -= dx * 0.006; this.goal.polar = clamp(this.goal.polar - dy * 0.006, 0.05, 1.52); }
+      if (d.b === 0 && !d.shift) { this.goal.azimuth += dx * 0.006; this.goal.polar = clamp(this.goal.polar - dy * 0.006, 0.05, 1.52); }
       else if (d.b === 2) { this.dolly(Math.exp(dy * 0.006)); }
       else { // pan (middle, or shift+left)
         const right = new T.Vector3(); const up = new T.Vector3(0, 1, 0); this.cam.getWorldDirection(right); right.cross(up).normalize();
