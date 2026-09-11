@@ -903,8 +903,8 @@
       this.renderer.shadowMap.enabled = true; this.renderer.shadowMap.type = T.PCFSoftShadowMap;
       this.renderer.localClippingEnabled = true; // the toppings on a served burger are cut with the same plane the patty is
       this.renderer.outputEncoding = T.sRGBEncoding; this.renderer.toneMapping = T.ACESFilmicToneMapping; this.renderer.toneMappingExposure = 0.95;
-      this.scene = new T.Scene(); this.scene.background = new T.Color(0x1a1714);
-      this.scene.fog = new T.Fog(0x1a1714, 1.2, 3.5);
+      this.scene = new T.Scene(); this.scene.background = new T.Color(0xe4dece);
+      this.scene.fog = new T.Fog(0xe4dece, 5, 12);
       this.camera = new T.PerspectiveCamera(42, 1, 0.005, 20);
       this.clock = 0; this.texBudget = 0;
       this.mode = 'board'; // 'board' | 'stove'
@@ -921,40 +921,37 @@
     resize() {
       const w = this.canvas.clientWidth || 800, h = this.canvas.clientHeight || 600;
       this.renderer.setSize(w, h, false); this.camera.aspect = w / h;
-      // Preserve the horizontal framing when the desktop station leaves a narrow stage.
+      // Preserve horizontal framing on smaller desktop windows.
       this.camera.fov = 2 * Math.atan(Math.tan(42 * Math.PI / 360) * Math.max(1, 1.25 / this.camera.aspect)) * 180 / Math.PI;
-      // Shift the projection, not the orbit target: picking, dragging and every camera
-      // preset still refer to the food, but it appears centered in the uncovered area.
-      const canvasRect = this.canvas.getBoundingClientRect();
-      const station = document.getElementById('panel');
-      const results = document.getElementById('results');
-      const overlay = station && !station.hidden ? station
-        : results && !results.hidden ? results.querySelector('.card') : null;
-      const covered = overlay ? w - clamp(overlay.getBoundingClientRect().left - canvasRect.left, 0, w) : 0;
-      this.camera.setViewOffset(w, h, covered / 2, 0, w, h);
+      // No horizontal sidebar offset. Shallow prep/results trays only lift the framing
+      // vertically, keeping the food visible above them without moving the orbit target.
+      this.camera.clearViewOffset();
+      const phase = document.body.dataset.phase;
+      const tray = phase === 'form' ? document.getElementById('prep-tray')
+        : phase === 'result' ? document.querySelector('#results .receipt') : null;
+      if (tray) {
+        const covered = clamp(h - tray.getBoundingClientRect().top, 0, h * .5);
+        this.camera.setViewOffset(w, h, 0, covered / 2, w, h);
+      }
       const px = (h / 2) / Math.tan((this.camera.fov * Math.PI) / 360) * this.renderer.getPixelRatio();
       this.steam.setScale(px); this.smoke.setScale(px);
     }
     // ---- static scenery
     _buildLights() {
-      this.scene.add(new T.HemisphereLight(0xfff2e0, 0x2a2018, 0.4));
-      const key = new T.SpotLight(0xfff0d8, 1.1, 4, Math.PI / 5, 0.5, 1);
+      this.scene.add(new T.HemisphereLight(0xfff7e8, 0xb5ac8f, 0.72));
+      const key = new T.SpotLight(0xfff0d8, 0.8, 5, Math.PI / 5, 0.5, 1);
       key.position.set(0.3, 1.3, 0.5); key.castShadow = true; key.shadow.mapSize.set(2048, 2048); key.shadow.bias = -0.0004; key.shadow.radius = 4;
       key.target.position.set(0, 0, 0); this.scene.add(key); this.scene.add(key.target);
-      const fill = new T.DirectionalLight(0xc9d8ff, 0.35); fill.position.set(-0.8, 0.6, -0.4); this.scene.add(fill);
+      const fill = new T.DirectionalLight(0xe2f4ff, 0.72); fill.position.set(-0.6, 2.0, 2.8); this.scene.add(fill);
       this.flameLight = new T.PointLight(0xff8a2a, 0, 0.6, 2); this.flameLight.position.set(0, 0.022, 0); this.scene.add(this.flameLight);
       this.key = key;
     }
     _buildKitchen() {
-      const wall = new T.Mesh(new T.PlaneGeometry(4, 2), new T.MeshStandardMaterial({ color: 0x3b332c, roughness: 0.95 }));
-      wall.position.set(0, 0.8, -0.7); this.scene.add(wall);
-      // tile splash-back
-      const tiles = new T.Mesh(new T.PlaneGeometry(4, 0.7), new T.MeshStandardMaterial({ color: 0x5d5148, roughness: 0.6, metalness: 0.05 }));
-      tiles.position.set(0, 0.35, -0.69); this.scene.add(tiles);
+      this.room = root.buildKitchenRoom(T, this.scene);
     }
     _buildStove() {
       const g = new T.Group(); this.stove = g;
-      const top = new T.Mesh(new T.BoxGeometry(1.2, 0.03, 0.7), new T.MeshStandardMaterial({ color: 0x15130f, roughness: 0.3, metalness: 0.7 }));
+      const top = new T.Mesh(new T.BoxGeometry(0.43, 0.03, 0.40), new T.MeshStandardMaterial({ color: 0x3a4140, roughness: 0.3, metalness: 0.7 }));
       top.position.y = -0.015; top.receiveShadow = true; g.add(top);
       this.burnerGroup = null; this.flames = []; this.setStove('gas');
       // pan
@@ -1206,8 +1203,6 @@
       const g = new T.Group(); this.board = g;
       const wood = new T.Mesh(new T.BoxGeometry(0.42, 0.025, 0.30), new T.MeshStandardMaterial({ color: 0xb8865a, roughness: 0.8 }));
       wood.position.y = -0.0125; wood.receiveShadow = true; wood.castShadow = true; g.add(wood);
-      const counter = new T.Mesh(new T.BoxGeometry(1.2, 0.03, 0.7), new T.MeshStandardMaterial({ color: 0x4a4744, roughness: 0.5, metalness: 0.05 }));
-      counter.position.y = -0.04; counter.receiveShadow = true; g.add(counter);
       // a ruler for scale
       const ruler = new T.Mesh(new T.BoxGeometry(0.15, 0.002, 0.02), new T.MeshStandardMaterial({ color: 0xe8e0c8, roughness: 0.6 })); ruler.position.set(0.09, 0.001, 0.1); ruler.rotation.y = Math.PI; g.add(ruler);
       const cv = document.createElement('canvas'); cv.width = 300; cv.height = 40; const c = cv.getContext('2d'); c.fillStyle = '#e8e0c8'; c.fillRect(0, 0, 300, 40); c.fillStyle = '#333'; c.font = '14px sans-serif';
@@ -1412,7 +1407,7 @@
     setMode(mode) {
       this.mode = mode;
       this.stove.visible = mode === 'stove'; this.board.visible = mode === 'board';
-      this.scene.background.setHex(mode === 'stove' ? 0x1a1714 : 0x2a2622); this.scene.fog.color.copy(this.scene.background);
+      // Prep and cooking share the same daylight room.
       this.controls.reset(mode);
     }
     /**
@@ -1820,12 +1815,13 @@
       this.zoomStack = null;
       if (mode === 'board') { this.goal = { target: new T.Vector3(0, 0.01, 0), azimuth: -0.7, polar: 0.95, dist: 0.36 }; }
       else if (this.vp.PAN_Y > 0.1) { this.goal = { target: new T.Vector3(0, this.vp.PAN_Y - 0.02, 0), azimuth: -1.0, polar: 0.85, dist: 0.95 }; }
-      else { this.goal = { target: new T.Vector3(0, 0.045, 0), azimuth: -1.0, polar: 1.0, dist: 0.6 }; }
+      else { this.goal = { target: new T.Vector3(0, 0.045, 0), azimuth: -1.0, polar: 1.22, dist: 0.78 }; }
     }
     preset(name) {
       this.zoomStack = null;
       const pg = this.vp.pattyGroup && this.vp.patty ? this.vp.pattyGroup.position.clone().setY(this.vp.pattyGroup.position.y + (this.vp.patty.h || 0.02) / 2) : null;
       const t = pg || (this.vp.mode === 'stove' ? new T.Vector3(0, this.vp.PAN_Y + 0.01, 0) : new T.Vector3(0, 0.01, 0));
+      if (name === 'room') this.goal = { target: new T.Vector3(0, -.13, .12), azimuth: -1.05, polar: 1.07, dist: 2.5 };
       if (name === 'top') this.goal = { target: t, azimuth: this.goal.azimuth, polar: 0.12, dist: 0.5 };
       if (name === 'side') this.goal = { target: t.clone().setY(t.y + 0.01), azimuth: -Math.PI / 2, polar: 1.45, dist: 0.32 };
       if (name === 'close') this.goal = { target: t.clone().setY(t.y + 0.01), azimuth: this.goal.azimuth, polar: 1.1, dist: 0.16 };
