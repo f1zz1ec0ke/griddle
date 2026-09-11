@@ -151,14 +151,14 @@
 <!-- results -->
 <section class="receipt-overlay" data-phase="result" id="results">
 <div class="receipt">
-<div class="eyebrow">Service</div>
-<div class="scoreline"><div class="score"><span id="r-score">0</span><small>/100</small></div><div><h1 id="r-verdict"></h1><p class="muted" id="r-grade"></p></div></div>
+<div class="eyebrow" id="r-mode">Service</div>
+<div class="scoreline"><div class="score" id="r-score-wrap"><span id="r-score">0</span><small>/100</small></div><div><h1 id="r-verdict"></h1><p class="muted" id="r-grade"></p></div></div>
 <div class="chips" hidden="" id="r-chips"></div>
 
 <div class="customer" hidden="" id="r-customer"></div>
 
 
-<details class="receipt-breakdown"><summary>Ticket &amp; bill</summary><p class="ticket-sum" hidden="" id="r-ticket"></p><p class="bill" hidden="" id="r-bill"></p><p class="shiftrun" hidden="" id="r-shift"></p></details><details class="receipt-details"><summary>See how it cooked</summary><div id="r-parts"></div><table class="stats"><tbody id="r-stats"></tbody></table><ul id="r-notes"></ul><div class="charts"><canvas height="150" id="r-chart" width="420"></canvas><canvas height="150" id="r-profile" width="420"></canvas></div></details><button class="primary" id="btn-again">Next ticket</button></div>
+<details class="receipt-breakdown" id="r-breakdown"><summary>Ticket &amp; bill</summary><p class="ticket-sum" hidden="" id="r-ticket"></p><p class="bill" hidden="" id="r-bill"></p><p class="shiftrun" hidden="" id="r-shift"></p></details><details class="receipt-details" id="r-details"><summary>See how it cooked</summary><div id="r-parts"></div><table class="stats"><tbody id="r-stats"></tbody></table><ul id="r-notes"></ul><div class="charts"><canvas height="150" id="r-chart" width="420"></canvas><canvas height="150" id="r-profile" width="420"></canvas></div></details><button class="primary" id="btn-again">Next ticket</button></div>
 </section>
 <!-- end of shift -->
 <section class="modal" hidden="" id="shiftend">
@@ -203,6 +203,6 @@
 <script src="js/audio.js"></script>
 <script src="js/session.js?v=finish-3"></script>
 <script src="js/cues.js?v=diner-2"></script>
-<script src="js/game.js?v=finish-3"></script>
+<script src="js/game.js?v=practice-1"></script>
 </body>
 </html>

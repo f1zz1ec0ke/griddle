@@ -368,7 +368,7 @@
         const p = this.patties[i];
         let status;
         if (this.phase === 'form') status = `${f.thicknessMm} mm · ${f.massG} g`;
-        else if (this.phase === 'result') { const r = this.ticketResult && this.ticketResult.results.find((x) => x.patty === p); status = r ? `${r.total}/100` : '—'; }
+        else if (this.phase === 'result') { const r = this.ticketResult && this.ticketResult.results.find((x) => x.patty === p); status = r ? this.mode === 'practice' ? r.got.label : `${r.total}/100` : '—'; }
         else if (!p || p.where === 'board') status = 'on the board';
         else if (p.where === 'oven') status = `in the oven ${P.fmtTime(p.ovenTime || 0)}`;
         else if (p.where === 'pan') status = `in the pan ${P.fmtTime(p.cookTime)}`;
@@ -644,12 +644,12 @@
       $('btn-remove').onclick = () => { if (s.selItem) { if (P.removeItem(s.state, s.selItem)) { s.maybeRest(); s.refreshButtons(); s.updateChips(); } } else s.remove(); };
       $('btn-probe').onclick = () => { s.probe.inserted = !s.probe.inserted; s.probe.reading = null; $('btn-probe').textContent = s.probe.inserted ? 'Pull probe' : 'Insert probe'; };
       $('probe-depth').addEventListener('input', (e) => { s.probe.depth = Number(e.target.value) / 100; $('probe-depth-v').textContent = e.target.value + ' %'; });
-      $('btn-cut').onclick = () => { s.ticketTiming = false; P.serve(s.state); s.setPhase('result'); }; // the clock stops when the plates leave the pass
+      $('btn-cut').onclick = () => { if (s.stopped || $('btn-cut').disabled) return; s.selItem = null; P.selectItem(s.state, null); s.ticketTiming = false; P.serve(s.state); s.setPhase('result'); }; // the clock stops when the plates leave the pass
       // everything this ticket had goes with it: the toppings too, or the next order's form phase
       // shows the last table's chips and Tab walks a bacon rasher that has already been eaten
       // the results card turns the cutaway on to show the cut face; the next ticket turns it off
       // again, and the button has to come back up with it or the first press of C looks like a no-op
-      $('btn-again').onclick = () => { s.vp.setCutaway(false); $('btn-cutaway').classList.remove('on'); s.vp.setPatty(null); s.state.patties = []; s.state.patty = null; s.state.items = []; s.state.item = null; s.selItem = null; s.state.served = false; if (s.shift && s.shift.n >= SHIFT_LEN) s.showShiftEnd(); else s.newOrder(); };
+      $('btn-again').onclick = () => { if (s.mode === 'practice') { s.vp.setCutaway(false); $('btn-cutaway').classList.remove('on'); s.result = null; s.ticketResult = null; s.clearPractice(); s.addPracticePatty(); return; } s.vp.setCutaway(false); $('btn-cutaway').classList.remove('on'); s.vp.setPatty(null); s.state.patties = []; s.state.patty = null; s.state.items = []; s.state.item = null; s.selItem = null; s.state.served = false; if (s.shift && s.shift.n >= SHIFT_LEN) s.showShiftEnd(); else s.newOrder(); };
       $('btn-new-shift').onclick = () => s.newShift();
       $('btn-cutaway').onclick = () => { s.vp.setCutaway(!s.vp.cutaway); $('btn-cutaway').classList.toggle('on', s.vp.cutaway); };
       $('r-chips').addEventListener('click', (e) => { const b = e.target.closest('[data-chip]'); if (b) s.select(Number(b.dataset.chip)); });
@@ -792,7 +792,7 @@
       $('btn-reheat').disabled = !(it ? it.where === 'rest' : p && ['rest', 'oven'].includes(p.where));
       $('btn-discard').disabled = !(it && it.where !== 'cut') && !(this.mode === 'practice' && p);
       $('btn-discard').textContent = it && it.pair != null ? 'Discard both bun halves' : it ? 'Discard ' + it.spec.short : this.mode === 'practice' ? 'Discard patty' : 'Discard topping';
-      $('btn-cut').hidden = this.mode === 'practice';
+      $('btn-cut').hidden = !(this.phase === 'rest' || (this.mode === 'practice' && this.phase === 'cook'));
       if (it && this.items.indexOf(it) < 0) this.selItem = null;
       const where = p ? p.where : 'board';
       const inPan = on && where === 'pan';
@@ -841,7 +841,7 @@
       }
       $('e-stove').disabled = $('e-pan').disabled = this.anyPlaced() || this.items.length > 0;
       if (this.state.grill) { $('btn-fat').disabled = true; }
-      $('btn-cut').disabled = this.patties.some(q => q.where === 'oven') || this.inPan().length > 0 || this.items.some((q) => q.where === 'pan');
+      $('btn-cut').disabled = !this.patties.length || this.patties.some(q => q.where === 'board' || q.where === 'oven') || this.inPan().length > 0 || this.items.some((q) => q.where === 'pan');
     }
     // ------------------------------------------------------------ loop
     frame(now) {
@@ -1051,6 +1051,21 @@
     showResults() {
       const st = this.state;
       const tk = P.evaluateTicket(st); this.ticketResult = tk;
+      const practice = this.mode === 'practice';
+      $('r-mode').textContent = practice ? 'Practice cook' : 'Service';
+      $('r-score-wrap').hidden = practice; $('r-breakdown').hidden = practice;
+      $('r-parts').hidden = practice; $('r-notes').hidden = practice;
+      $('r-details').open = practice;
+      if (practice) {
+        this.verdicts = null;
+        $('r-bill').hidden = true; $('r-shift').hidden = true;
+        $('r-grade').textContent = 'Explore the centre, crust and cooking history.';
+        $('btn-again').textContent = 'Cook another';
+        this.vp.controls.preset('serve'); $('inspector').hidden = true;
+        this.vp.setCutaway(true); $('btn-cutaway').classList.add('on');
+        this.renderResultDetails();
+        return;
+      }
       // What the room actually experienced: the wait, then each customer's own words about the
       // plate in front of them, the bill and what they left on it.
       const elapsed = this.ticketClock || 0, targetT = this.ticketTarget || 0;
@@ -1091,6 +1106,12 @@
       const tk = this.ticketResult; if (!tk) return;
       const many = tk.results.length > 1;
       $('r-chips').hidden = !many;
+      if (this.mode === 'practice') {
+        $('r-chips').innerHTML = many ? tk.results.map((r, i) => `<button class="chip${i === this.sel ? ' on' : ''}" data-chip="${i}">Patty ${i + 1} · ${r.got.label}</button>`).join('') : '';
+        $('r-ticket').hidden = true;
+        this.showPattyResult();
+        return;
+      }
       if (many) {
         $('r-chips').innerHTML = tk.results.map((r, i) => `<button class="chip${i === this.sel ? ' on' : ''}" data-chip="${i}"><b>${i + 1}</b> ${r.target.label} <small>${r.total}/100</small></button>`).join('');
         $('r-ticket').hidden = false;
@@ -1125,7 +1146,7 @@
       // a plate can miss the order by a fraction of a degree and still be the doneness ordered —
       // "Over: medium-rare when they wanted medium-rare" is not a sentence. Name the edge instead.
       // No temperature here: hard mode reads this line too.
-      $('r-verdict').textContent = prefix + (r.dist === 0 ? `${target.label}. Exactly what they asked for.`
+      $('r-verdict').textContent = this.mode === 'practice' ? prefix + r.got.label : prefix + (r.dist === 0 ? `${target.label}. Exactly what they asked for.`
         : r.got.id === target.id ? `${target.label}, but right on the ${r.peak < target.lo ? 'bottom' : 'top'} edge of the band.`
         : r.peak < target.lo ? `Under: ${r.got.label.toLowerCase()} when they wanted ${target.label.toLowerCase()}.`
         : `Over: ${r.got.label.toLowerCase()} when they wanted ${target.label.toLowerCase()}.`);
@@ -1156,7 +1177,7 @@
         ['Build', r.build.items.length
           ? r.build.items.map((b) => `${b.label} — <b>${b.state}</b>`).join('<br>') + (r.build.penalty ? `<br><span class="pen">− ${r.build.penalty.toFixed(1)} on the ticket</span>` : '') + (r.build.bonus ? `<br><span class="bon">+ ${r.build.bonus.toFixed(1)} on the ticket</span>` : '')
           : 'Nothing on it but the patty'],
-      ].map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+      ].filter(([k]) => this.mode !== 'practice' || !['Ordered', 'Grey band'].includes(k)).map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
       $('r-notes').innerHTML = r.notes.map((n) => `<li>${this.maskT(n)}</li>`).join('');
       // the two charts are thermometer traces with a °C axis, so hard mode does not get them either
       if (!this.hard) { this.drawChart($('r-chart'), st.trace); this.drawProfile($('r-profile'), r.patty || st.patty); }

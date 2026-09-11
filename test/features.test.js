@@ -280,3 +280,48 @@ test('flip animation arcs around the centre, freezes on pause and lands without 
   assert.deepEqual(view.group.position.toArray(),[.03,.01,.04]);
   assert.equal(p.flips,1,'rendering must not change the simulated flip count');
 });
+
+
+test('practice can cut and inspect a rested burger without recording service, then cook again', () => {
+  const {game:g, elements:e, storage} = kitchen();
+  g.startPractice(); g.startCook();
+  assert.equal(e.get('btn-cut').disabled, true, 'unplaced food cannot be served');
+  g.place(); assert.equal(e.get('btn-cut').disabled, true);
+  P.setOven(g.state, 180); e.get('btn-oven').click();
+  assert.equal(e.get('btn-cut').disabled, true, 'take food out of the oven first');
+  e.get('btn-remove').click();
+  const onion = P.addItem(g.state, 'onions')[0]; g.refreshButtons();
+  assert.equal(e.get('btn-cut').disabled, true, 'lift toppings too');
+  P.removeItem(g.state,onion); g.refreshButtons();
+  assert.equal(e.get('btn-cut').hidden, false); assert.equal(e.get('btn-cut').disabled, false);
+  const shift = JSON.stringify(g.shift); e.get('btn-cut').click();
+  assert.equal(g.phase,'result'); assert.equal(g.patty.where,'cut');
+  assert.equal(g.vp.cutaway,true); assert.equal(JSON.stringify(g.shift),shift);
+  assert.equal(e.get('r-mode').textContent,'Practice cook');
+  assert.equal(e.get('r-score-wrap').hidden,true); assert.equal(e.get('r-customer').hidden,true);
+  assert.equal(e.get('r-breakdown').hidden,true); assert.equal(e.get('r-details').open,true);
+  assert.match(e.get('r-stats').innerHTML,/Peak centre temperature/);
+  assert.doesNotMatch(e.get('r-stats').innerHTML,/Ordered|Grey band/);
+  assert.doesNotMatch(e.get('r-verdict').textContent,/asked|wanted/);
+  assert.equal(g.saveSession(),true);
+  const {game:r,elements:re} = kitchen(storage);
+  assert.equal(r.loadSession('practice'),true); assert.equal(r.phase,'result');
+  assert.equal(r.vp.cutaway,true); assert.equal(re.get('r-score-wrap').hidden,true);
+  r.setPaused(false); const oven=r.state.oven, pan=r.state.pan;
+  re.get('btn-again').click();
+  assert.equal(r.mode,'practice'); assert.equal(r.phase,'form'); assert.equal(r.forms.length,1);
+  assert.equal(r.state.oven,oven); assert.equal(r.state.pan,pan); assert.equal(r.vp.cutaway,false);
+  assert.equal(r.ticketTiming,false); assert.equal(r.state.patties.length,0);
+});
+
+test('practice results let the cook inspect each burger independently', () => {
+  const {game:g,elements:e} = kitchen();
+  g.startPractice(); g.startCook(); g.place();
+  g.addPracticePatty(); g.startCook(); g.place();
+  for(const p of g.patties) P.removePatty(g.state,p);
+  g.refreshButtons(); e.get('btn-cut').click();
+  assert.equal(g.ticketResult.results.length,2); assert.equal(e.get('r-chips').hidden,false);
+  assert.doesNotMatch(e.get('r-chips').innerHTML,/100|Ticket/);
+  g.select(0); assert.equal(g.result.patty,g.patties[0]);
+  g.select(1); assert.equal(g.result.patty,g.patties[1]);
+});
