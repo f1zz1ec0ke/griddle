@@ -39,3 +39,7 @@ Plain HTML, CSS and JavaScript with vendored Three.js.
 npm test          # physics and gameplay tests
 npm run perf      # simulation performance
 ```
+
+## You got a loicense for that burger mate?
+
+No, do whatever you want with this, I don't care. 
