@@ -66,9 +66,44 @@
       if (!Array.from(p.T).every(Number.isFinite)) throw new Error('Invalid temperature grid.');
     }
     if (s.patties.some(p => !g.patties.includes(p)) || !g.ticket || !Array.isArray(g.ticket.items) || !g.shift || !Array.isArray(g.shift.tickets) || !Array.isArray(g.shift.plan)) throw new Error('Invalid ticket.');
+    const A = typeof module !== 'undefined' && module.exports ? require('./assembly') : root.BurgerAssembly;
+    const used = new Set();
+    for (const p of g.patties) {
+      if (p.assembly == null) continue;
+      if (!Array.isArray(p.assembly) || p.assembly.length > 40 || (p.assembly.length && !['rest','cut'].includes(p.where))) throw new Error('Invalid assembly.');
+      let meat = false, heel = null, closed = false;
+      const coldCounts = {};
+      for (const [i,l] of p.assembly.entries()) {
+        if (!l || closed || [!!l.patty, !!l.item, !!l.cold].filter(Boolean).length !== 1) throw new Error('Invalid assembly layer.');
+        if (l.patty) { if (meat) throw new Error('Duplicate patty.'); meat = true; }
+        if (l.item) {
+          const it = l.item;
+          if (!s.items.includes(it) || used.has(it) || it.assembledTo !== p.id || it.burger !== p.id || !['rest','cut'].includes(it.where)) throw new Error('Invalid assembled food.');
+          if (it.kind === 'bun') {
+            if (it.half === 'bottom') { if (i !== 0) throw new Error('Invalid bottom bun.'); heel = it.pair; }
+            else { if (!meat || heel !== it.pair) throw new Error('Invalid top bun.'); closed = true; }
+          } else if (i === 0) throw new Error('Missing base layer.');
+          used.add(it);
+        }
+        if (l.cold) {
+          if (!A.cold[l.cold] || i === 0 || (coldCounts[l.cold]=(coldCounts[l.cold]||0)+1) > (A.cold[l.cold].sauce?1:4)) throw new Error('Invalid cold topping.');
+          if(l.T!=null && (!Number.isFinite(l.T)||l.T < -30||l.T > 300)) throw new Error('Invalid topping temperature.');
+          if(l.age!=null && (!Number.isFinite(l.age)||l.age<0)) throw new Error('Invalid topping age.');
+          if(l.wilt!=null && (!Number.isFinite(l.wilt)||l.wilt<0||l.wilt>1)) throw new Error('Invalid topping condition.');
+        }
+      }
+    }
+    if (s.items.some(it => it.assembledTo != null && !used.has(it))) throw new Error('Detached assembly reference.');
     if (!g.ticket.items.every(targetOK) || (g.selItem && !s.items.includes(g.selItem)) || !Number.isInteger(g.shift.n) || g.shift.n < 0 || g.shift.n > 6) throw new Error('Invalid ticket progress.');
     if (![1, 2, 4, 8].includes(g.speed) || !Number.isFinite(g.ticketClock) || !Number.isFinite(g.probe.depth) || g.probe.depth < 0.1 || g.probe.depth > 0.9) throw new Error('Invalid controls.');
     if (s.oven && (!Number.isFinite(s.oven.T) || s.oven.T < -30 || s.oven.T > 300 || !Number.isFinite(s.oven.target) || (s.oven.target !== 0 && (s.oven.target < 80 || s.oven.target > 250)))) throw new Error('Invalid oven.');
+    if(s.room && (typeof s.room.windowOpen!=='boolean' || !['opening','upper','lower'].every(k=>Number.isFinite(s.room[k])&&s.room[k]>=0) || s.room.opening>1)) throw new Error('Invalid room air.');
+    if(s.pan.film) {
+      const f=s.pan.film;
+      if(f.n!==33 || f.r!==s.pan.floorR || f.cell!==2*f.r/32 || f.area!==f.cell*f.cell || !Number.isFinite(f.total) || f.total<0) throw new Error('Invalid oil film.');
+      for(const key of ['mass','floor','obstacle','head','mask']) if(!ArrayBuffer.isView(f[key]) || f[key].length!==1089 || !Array.from(f[key]).every(Number.isFinite)) throw new Error('Invalid oil grid.');
+      if(Array.from(f.mass).some((m,i)=>m<0 || (!f.mask[i]&&m>0)) || Math.abs(f.mass.reduce((a,b)=>a+b,0)-f.total)>1e-8) throw new Error('Invalid oil mass.');
+    }
     // Stove profiles are code, not save data. Restore them only from the installed model.
     s.stove.profile = P.STOVES[s.stove.id].profile;
     return g;
