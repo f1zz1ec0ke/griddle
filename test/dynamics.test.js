@@ -117,3 +117,53 @@ test('double patties exchange heat through their own surfaces and serve together
   assert.ok(afterTop.T<80&&afterBottom.T>30);assert.ok(Math.abs(afterTop.C*afterTop.T+afterBottom.C*afterBottom.T-before)<1e-6);
   P.serve(s,p);assert.equal(p.where,'cut');assert.equal(q.where,'cut');assert.ok(Number.isFinite(q.serveT));
 });
+
+const M=require('../js/moisture');
+const energy=(n,cp)=>M.capacity(n,cp)*n.T;
+test('water transfer carries sensible heat without creating energy or mass',()=>{
+  for(const [hot,cool] of [[100,20],[20,100]]) {
+    const a={m:.01,w:.04,T:hot},b={m:.005,w:.001,T:cool};const before=energy(a,1500)+energy(b,2000);
+    M.transfer(a,b,.002,1500,2000);
+    assert.ok(Math.abs(energy(a,1500)+energy(b,2000)-before)<1e-8);assert.ok(Math.abs(a.w+b.w-.041)<1e-12);
+  }
+});
+test('boiling and sub-boiling evaporation conserve energy including escaping vapour',()=>{
+  for(const q of [300,4000,40000]) {
+    const n={m:.01,w:.006,T:98},before=energy(n,1500),water=n.w;
+    const boiled=M.heat(n,q,1500);
+    assert.ok(Math.abs(energy(n,1500)+boiled*(4180*100+M.latent)-before-q)<1e-7);
+    assert.ok(Math.abs(n.w+boiled-water)<1e-12);
+    if(n.w>1e-10)assert.ok(n.T<=100);
+  }
+  const n={m:.01,w:.02,T:60},before=energy(n,1500);const out=M.evaporate(n,.1,1500,20);
+  assert.ok(n.T>=20-1e-9);assert.ok(Math.abs(energy(n,1500)+out*(4180*60+M.latent)-before)<1e-7);
+});
+test('insulated onions conserve energy while their water redistributes',()=>{
+  const s=state(),it=P.makeItem('onions');it.bot.T=100;it.top.T=20;it.bot.w=.001;
+  const before=energy(it.bot,it.spec.cpDry)+energy(it.top,it.spec.cpDry);
+  const bc={bottom:{type:'air',T:100,h:0},top:{T:20,h:0,RH:1,rad:false,insulated:true}};
+  for(let i=0;i<100;i++)P.stepItem(s,it,.05,bc);
+  assert.ok(Math.abs(energy(it.bot,it.spec.cpDry)+energy(it.top,it.spec.cpDry)-before)<1e-6);assert.equal(it.lostWater,0);
+});
+test('contact regions dry independently and persist across save, flip and reheating',()=>{
+  for(const kind of ['onions','bacon']) {
+    const s=state(),it=P.makeItem(kind),bc={bottom:{type:'pan',T:300,oil:.005},top:{T:20,h:10,RH:.5,rad:false}};
+    let mixed=false;
+    for(let i=0;i<6000;i++){
+      P.stepItem(s,it,.05,bc);const nodes=it.regions.map(r=>kind==='onions'?r.bot:r.body);
+      if(nodes.some(n=>n.T>120)&&nodes.some(n=>n.T<101))mixed=true;
+    }
+    assert.ok(mixed,kind+' should have hot dry and wet cooler regions at the same time');
+    const copy=S.decode(S.encode(it));P.stepItem(s,it,.05,bc);P.stepItem(s,copy,.05,bc);assert.deepEqual(copy,it);
+    const before=P.itemMass(it);P.flipItem(s,it);assert.ok(Math.abs(P.itemMass(it)-before)<1e-12);
+    it.where='rest';P.stepItem(s,it,.05,{bottom:{type:'air',T:28,h:15},top:{T:20,h:10,RH:.5,rad:false}});assert.ok(it.regions.every(r=>Number.isFinite((r.bot||r.body).T)));
+  }
+});
+test('assembly contact boils wet ingredients immediately and accounts for lost energy',()=>{
+  const s=state(),p=patty(s,80);p.where='rest';A.add(s,p,'patty');A.add(s,p,'tomato');
+  const layer=p.assembly[1],surf=A.surface(p,layer,true);layer.T=99.99;
+  const before=energy(layer,1500);const boiled=A.surface(p,layer,true).add(200);
+  assert.ok(boiled>0);assert.ok(layer.T<=100);assert.equal(layer.lostWater,boiled);
+  assert.ok(Math.abs(energy(layer,1500)+boiled*(4180*100+M.latent)-before-200)<1e-6);
+  const copy=S.decode(S.encode(s));A.stepHeat(s,p,.05);A.stepHeat(copy,copy.patty,.05);assert.deepEqual(copy.patty.assembly,p.assembly);
+});

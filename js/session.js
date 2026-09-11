@@ -66,6 +66,13 @@
       if (!Array.from(p.T).every(Number.isFinite)) throw new Error('Invalid temperature grid.');
     }
     if (s.patties.some(p => !g.patties.includes(p)) || !g.ticket || !Array.isArray(g.ticket.items) || !g.shift || !Array.isArray(g.shift.tickets) || !Array.isArray(g.shift.plan)) throw new Error('Invalid ticket.');
+    for(const it of s.items)if(it.regions) {
+      if(!['bacon','onions'].includes(it.kind)||!Array.isArray(it.regions)||it.regions.length!==3)throw new Error('Invalid food regions.');
+      for(const r of it.regions){
+        if(!r||r.kind!==it.kind||r.regions)throw new Error('Invalid food region.');
+        for(const key of it.kind==='bacon'?['body']:['bot','top'])if(!r[key]||!Number.isFinite(r[key].T)||!['w','m'].every(k=>Number.isFinite(r[key][k])&&r[key][k]>=0))throw new Error('Invalid regional moisture.');
+      }
+    }
     const A = typeof module !== 'undefined' && module.exports ? require('./assembly') : root.BurgerAssembly;
     const used = new Set(), usedMeat=new Set();
     for (const p of g.patties) {
@@ -94,6 +101,7 @@
         if (l.cold) {
           if (!A.cold[l.cold] || i === 0 || (coldCounts[l.cold]=(coldCounts[l.cold]||0)+1) > (A.cold[l.cold].sauce?1:4)) throw new Error('Invalid cold topping.');
           if(l.T!=null && (!Number.isFinite(l.T)||l.T < -30||l.T > 300)) throw new Error('Invalid topping temperature.');
+          if(l.w!=null&&(!['w','m','w0','lostWater'].every(k=>Number.isFinite(l[k])&&l[k]>=0)||l.w>l.w0+1e-9||Math.abs(l.w+l.lostWater-l.w0)>1e-8))throw new Error('Invalid topping moisture.');
           if(l.age!=null && (!Number.isFinite(l.age)||l.age<0)) throw new Error('Invalid topping age.');
           if(l.wilt!=null && (!Number.isFinite(l.wilt)||l.wilt<0||l.wilt>1)) throw new Error('Invalid topping condition.');
         }

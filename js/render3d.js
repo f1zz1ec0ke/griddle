@@ -874,13 +874,18 @@
       const lean = mix3(mix3(ICOL.baconLean, ICOL.baconDone, clamp(brown / 2.5, 0, 1)), ICOL.baconCrisp, clamp(it.crisp * 0.8, 0, 1));
       const fat = mix3(ICOL.baconFat, ICOL.baconDone, clamp((1 - fatLeft) * 0.75 + brown / 8, 0, 1));
       const charF = clamp((it.faceDown.char + it.faceUp.char) / 0.7, 0, 1);
+      const palettes=it.regions?.map(r=>{
+        const b=Math.max(r.faceDown.brown,r.faceUp.brown),f=clamp((r.fs+r.fl+r.fr)/r.fat0,0,1);
+        return {lean:mix3(mix3(ICOL.baconLean,ICOL.baconDone,clamp(b/2.5,0,1)),ICOL.baconCrisp,clamp(r.crisp*.8,0,1)),fat:mix3(ICOL.baconFat,ICOL.baconDone,clamp((1-f)*.75+b/8,0,1)),charF:clamp((r.faceDown.char+r.faceUp.char)/.7,0,1)};
+      });
       for(let i=0;i<NL;i++)for(let j=0;j<NW;j++) {
         const u=i/(NL-1),v=j/(NW-1),q=root.FoodShapes.baconPoint(u,v,it.shrink,curl,it.id);
         for(let side=0;side<2;side++) {
           const k=(side*NL*NW+i*NW+j)*3;
           pos[k]=q.x;pos[k+1]=q.y+(side?0:.0025*(1-.35*it.shrink));pos[k+2]=q.z;
           const mottling=.92+.08*Math.sin(u*71+v*19+it.id);
-          const c=lin(mix3(mix3(fat,lean,q.lean),ICOL.char,charF*(.5+.5*q.lean)));
+          const palette=palettes?.[Math.min(2,Math.floor(u*3))]||{fat,lean,charF};
+          const c=lin(mix3(mix3(palette.fat,palette.lean,q.lean),ICOL.char,palette.charF*(.5+.5*q.lean)));
           col[k]=c[0]*mottling;col[k+1]=c[1]*mottling;col[k+2]=c[2]*mottling;
         }
       }
@@ -930,6 +935,11 @@
       const topC = mix3(colTop, ICOL.char, clamp(it.char / 0.35, 0, 1));
       const colBot = mix3(mix3(ICOL.onionRaw, ICOL.onionGold, clamp(it.carmBot / 0.9, 0, 1)), ICOL.onionDark, clamp((it.carmBot - 0.9) / 2, 0, 1));
       const botC = mix3(colBot, ICOL.char, clamp(it.charBot / 0.6, 0, 1));
+      const localColours=it.regions?.map(r=>{
+        const top=mix3(mix3(mix3(ICOL.onionRaw,[216,203,166],(r.soft||0)*.65),ICOL.onionGold,clamp(r.carm/.9,0,1)),ICOL.onionBrown,clamp((r.carm-.9)/1.3,0,1));
+        const bot=mix3(mix3(ICOL.onionRaw,ICOL.onionGold,clamp(r.carmBot/.9,0,1)),ICOL.onionDark,clamp((r.carmBot-.9)/2,0,1));
+        return {top:mix3(top,ICOL.char,clamp(r.char/.35,0,1)),bot:mix3(bot,ICOL.char,clamp(r.charBot/.6,0,1))};
+      });
       const c = new T.Color();
       for (let i = 0; i < this.onionSpec.length; i++) {
         const o = this.onionSpec[i];
@@ -940,7 +950,8 @@
         const len = o.len * shrink;
         dm.scale.set(len, len * (0.35 + 0.35 * wet), len);
         dm.updateMatrix(); inst.setMatrixAt(i, dm.matrix);
-        const col = lin(o.low ? botC : topC); // the pieces that were against the metal carry its colour
+        const region=localColours?.[Math.floor(((o.a+Math.PI*2)%(Math.PI*2))/(Math.PI*2)*3)];
+        const col = lin(o.low ? region?.bot||botC : region?.top||topC); // the pieces that were against the metal carry its colour
         inst.setColorAt(i, c.setRGB(col[0], col[1], col[2]));
       }
       inst.instanceMatrix.needsUpdate = true; if (inst.instanceColor) inst.instanceColor.needsUpdate = true;

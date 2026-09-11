@@ -977,7 +977,7 @@
       $('h-probe').textContent = this.probe.reading == null ? '—' : fmt(this.probe.reading, 1) + ' °C';
       const it = this.selItem;
       $('h-side').textContent = it
-        ? `${it.label} · ${P.itemState(it).state}${it.where === 'pan' ? ` · ${this.hard ? '' : fmt(P.itemT(it), 0) + ' °C · '}${it.kind==='onions'&&it.bot.w>1e-6&&it.bot.T>=98&&it.bot.T<=101?'steaming off water · ':''}${P.fmtTime(it.timeDown)} this side` : it.burger ? ` · on burger ${it.burger}` : ' · at the pass'}`
+        ? `${it.label} · ${P.itemState(it).state}${it.where === 'pan' ? ` · ${this.hard ? '' : fmt(P.itemT(it), 0) + ' °C · '}${P.fmtTime(it.timeDown)} this side` : it.burger ? ` · on burger ${it.burger}` : ' · at the pass'}`
         : p && where === 'pan' ? `${this.patties.length > 1 ? `patty ${p.id} · ` : ''}face ${p.faceDown.id} down · ${P.fmtTime(p.timeDown)} this side` : '';
       if (st.grill && (st.grill.bank || 0) > 0.05 && !this.hard) {
         $('h-pan').textContent = `${fmt(st.grill.Thot, 0)} / ${fmt(st.grill.Tcool, 0)} °C`;

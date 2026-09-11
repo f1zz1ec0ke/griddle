@@ -26,9 +26,9 @@
  *    where crowding comes from.
  */
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory(require('./assembly'), require('./oil-film'));
-  else root.BurgerPhysics = factory(root.BurgerAssembly, root.BurgerOilFilm);
-})(typeof self !== 'undefined' ? self : this, function (Assembly, Oil) {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./assembly'), require('./oil-film'), require('./moisture'));
+  else root.BurgerPhysics = factory(root.BurgerAssembly, root.BurgerOilFilm, root.BurgerMoisture);
+})(typeof self !== 'undefined' ? self : this, function (Assembly, Oil, Moisture) {
   'use strict';
 
   // ---------------------------------------------------------------- constants
@@ -1405,7 +1405,7 @@
           if (atBot) { const a = Math.min(rem, poolB[j]); poolB[j] -= a; rem -= a; }
           if (atTop) { const a = Math.min(rem, poolT[j]); poolT[j] -= a; rem -= a; }
           w[c] -= rem;
-          Tn = C.Tboil + (excess - m * C.Lvap) / Cn[c];
+          Tn = C.Tboil + (excess - m * C.Lvap) / Math.max(1e-9,Cn[c]-m*C.cpW);
           boil += m; if (k <= 1) boilBottom += m; lostEvap += m;
         }
         T[c] = Tn;
@@ -2170,21 +2170,11 @@
    * Returns the water boiled off, in kg.
    */
   function heatNode(n, q, dt, cpDry, Tcap, wFree) {
-    const Ccap = n.m * cpDry + n.w * C.cpW + 1e-9;
-    const T0 = n.T;
-    let Tn = n.T + (q * dt) / Ccap;
-    let boiled = 0;
-    const avail = wFree == null ? n.w : Math.min(n.w, Math.max(0, wFree));
-    if (Tn > C.Tboil && avail > 1e-9) {
-      const excess = Ccap * (Tn - C.Tboil);
-      boiled = Math.min(avail, excess / C.Lvap);
-      n.w -= boiled;
-      Tn = C.Tboil + (excess - boiled * C.Lvap) / Ccap;
-    }
-    if (Tcap != null && Tn > Math.max(Tcap, T0)) Tn = Math.max(Tcap, T0);
-    n.T = Tn;
+    const T0=n.T,boiled=Moisture.heat(n,q*dt,cpDry,wFree);
+    if(Tcap!=null)n.T=Math.min(n.T,Math.max(Tcap,T0));
     return boiled;
   }
+
   function nodeDry(n, w0) { return w0 > 1e-12 ? clamp(1 - n.w / w0, 0, 1) : 1; }
   /** The same, over the water that was ever free to leave: how dry the frying face itself is. */
   function nodeDryFree(n, w0, bound) { const f = w0 - bound; return f > 1e-12 ? clamp(1 - (n.w - bound) / f, 0, 1) : 1; }
@@ -2439,6 +2429,7 @@
     it = it || s.item; if (!it || it.where !== 'pan') return { ok: false };
     const sp = it.spec;
     if (it.kind === 'onions') {
+      delete it.regions; // stirring mixes the slices, water and their sensible heat
       // stirring is what a flip means for a heap: the layer scorching against the metal goes back
       // into the pile and cold, wet onion comes down to take its place
       const b = it.bot, t = it.top;
@@ -2465,6 +2456,7 @@
         logEvent(s, `The egg is welded to the pan. ${(torn * 100).toFixed(0)} % of the white tore off and stayed there. Egg wants fat under it, or a pan that lets go.`, 'warn');
       }
     }
+    if(it.regions)for(const r of it.regions){const face=r.faceDown;r.faceDown=r.faceUp;r.faceUp=face;}
     const fd = it.faceDown; it.faceDown = it.faceUp; it.faceUp = fd;
     if (it.kind === 'bun') { const f = it.face; it.face = it.up; it.up = f; const w = it.w0f; it.w0f = it.w0u; it.w0u = w; it.faceIsCut = !it.faceIsCut; }
     if (it.kind === 'egg') { const b = it.wBot; it.wBot = it.wTop; it.wTop = b; const w = it.w0b; it.w0b = it.w0t; it.w0t = w; const st = it.setBot; it.setBot = it.setTop; it.setTop = st; it.flipped = !it.flipped; it.secondSide = 0; }
@@ -2602,7 +2594,7 @@
     // straight up to the metal's temperature.
     {
       const ff = face.w / Math.max(face.m + face.w, 1e-9), fbdy = body.w / Math.max(body.m + body.w, 1e-9);
-      if (fbdy > ff) { const wick = Math.min(body.w, sp.wick * (fbdy - ff) * (face.m + face.w) * dt); body.w -= wick; face.w += wick; }
+      if (fbdy > ff) { const wick = Math.min(body.w, sp.wick * (fbdy - ff) * (face.m + face.w) * dt); Moisture.transfer(body,face,wick,sp.cpDry,sp.cpDry); }
     }
     // fat off the pan wicks straight into the crumb: that is what a griddled bun is
     if (onPan && s.pan.oil > 1e-5 && it.fatSoaked < sp.soakMax) {
@@ -2691,11 +2683,11 @@
       // of losing a gram a minute off the top of it for as long as it sits there.
       const aw = 0.25 + 0.75 * (1 - it.setTop);
       evap = Math.min(wt.w - wtBound, C.hMass * aw * Awhite * drive * dt);
-      wt.w -= evap; it.lostWater += evap;
+      evap=Moisture.evaporate(wt,evap,sp.cpWhite,Math.min(wt.T,bt.T),wt.w-wtBound); it.lostWater += evap;
     }
     const cap = Math.max(bottomCap(bc), bt.T);
     const bBot = heatNode(wb, q - qwt - qy, dt, sp.cpWhite, cap, wb.w - wbBound);
-    const bTop = heatNode(wt, qwt + qTopAir - qyTop - (evap * C.Lvap) / dt, dt, sp.cpWhite, cap, wt.w - wtBound);
+    const bTop = heatNode(wt, qwt + qTopAir - qyTop, dt, sp.cpWhite, cap, wt.w - wtBound);
     const bY = heatNode(y, qy + qyTop + qYolkAir, dt, sp.cpYolk, cap); // an over-hard yolk boils too, and that water leaves the egg like any other
     it.lostWater += bBot + bTop + bY; it.steam = (bBot + bTop + bY + evap) / dt;
     // setting: ovotransferrin goes at 62, ovalbumin follows, and it is visibly set by 65
@@ -2760,11 +2752,11 @@
     if (bt.RH < 0.99 && t.w > 1e-9 && t.T > 25) {
       const drive = Math.max(0, rhoVapSat(t.T) - bt.RH * rhoVapSat(bt.T));
       evap = Math.min(t.w, C.hMass * Atop * drive * dt);
-      t.w -= evap; it.lostWater += evap;
+      evap=Moisture.evaporate(t,evap,sp.cpDry,Math.min(t.T,bt.T)); it.lostWater += evap;
     }
     const cap = Math.max(bottomCap(bc), bt.T);
     const bB = heatNode(b, q - qBT, dt, sp.cpDry, cap);
-    const bT = heatNode(t, qBT + qTop - (evap * C.Lvap) / dt, dt, sp.cpDry, cap);
+    const bT = heatNode(t, qBT + qTop, dt, sp.cpDry, cap);
     it.lostWater += bB + bT; it.steam = (bB + bT + evap) / dt;
     // the wet pile keeps re-wetting the layer trying to dry out. This is the whole reason
     // caramelising onions takes a quarter of an hour — and why they burn the moment it runs dry.
@@ -2772,7 +2764,7 @@
     // and once the contact layer has shrivelled it stops soaking anything up: the juice from above
     // runs past it onto the metal and flashes off there. That is the runaway — a layer that starts
     // to dry gets drier — and it is the difference between sweating onions and scorching them.
-    if (ft > fb) { const wick = Math.min(t.w, sp.wickMax * (1 - 0.6 * dryB) * clamp((ft - fb) / 0.4, 0, 1) * dt); t.w -= wick; b.w += wick; }
+    if (ft > fb) { const wick = Math.min(t.w, sp.wickMax * (1 - 0.6 * dryB) * clamp((ft - fb) / 0.4, 0, 1) * dt); Moisture.transfer(t,b,wick,sp.cpDry,sp.cpDry); }
     // deglazing: onion water lifts the fond off the metal and takes its flavour with it
     if (onPan && s.pan.fond > 1e-6 && b.w > 1e-6) {
       const take = Math.min(s.pan.fond, s.pan.fond * 0.03 * dt * clamp(fb / 0.5, 0, 1));
@@ -2814,11 +2806,26 @@
   }
 
   const ITEM_STEP = { bun: stepBun, bacon: stepBacon, egg: stepEgg, onions: stepOnions };
+  function ensureRegions(it) {
+    if(it.regions)return;
+    it.regions=Array.from({length:3},(_,i)=>{
+      const r={...it,spec:{...it.spec,hc:it.spec.hc*(.85+i*.15)},faceDown:{...it.faceDown},faceUp:{...it.faceUp}};
+      for(const k of ['body','bot','top'])if(it[k])r[k]={...it[k],m:it[k].m/3,w:it[k].w/3};
+      for(const k of Moisture.totals)if(typeof r[k]==='number')r[k]/=3;
+      r.A=it.A/3;r.spec.gSteam=(it.spec.gSteam||0)/3;r.spec.wickMax=(it.spec.wickMax||0)/3;
+      return r;
+    });
+  }
   /** Advance one item by dt against the same kind of boundary object a patty gets. */
   function stepItem(s, it, dt, bc) {
     const fn = ITEM_STEP[it.kind]; if (!fn) return;
     it.dFat = 0; it.dJuice = 0;
-    fn(s, it, dt, bc);
+    if(!(dt>0))return;
+    if(it.kind==='onions'||it.kind==='bacon') {
+      ensureRegions(it);
+      for(const r of it.regions){r.where=it.where;r.contactF=it.contactF;r.dFat=r.dJuice=0;fn(s,r,dt,bc);}
+      Moisture.syncRegions(it);
+    } else fn(s, it, dt, bc);
     if (it.where === 'pan') { it.cookTime += dt; it.timeDown += dt; } else it.restT += dt;
   }
 
@@ -3246,7 +3253,7 @@
         stepItem(s, it, dt, bc);
       }
     }
-    for(const p of s.patties) Assembly.stepHeat(s,p,dt);
+    for(const p of s.patties) steamAll+=Assembly.stepHeat(s,p,dt)||0;
     if(s.oven) { const o=s.oven; o.loadW=ovenLoad; o.T+=(o.heaterW-6*(o.T-Tamb)-ovenLoad)*dt/1800; }
     if(!grill) Oil.sync(pan);
     pan.smokeItems = clamp(itemSmoke, 0, 2);
