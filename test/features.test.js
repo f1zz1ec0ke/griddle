@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const P = require('../js/physics');
+const A = require('../js/assembly');
 const S = require('../js/session');
 const { kitchen } = require('./game-harness');
 function cook(stove = 'gas') {
@@ -121,7 +122,7 @@ test('paused frames freeze cooking while allowing the camera to ease into positi
   const time = g.state.t, ticketClock = g.ticketClock;
   g.frame(g.last + 50);
   assert.equal(g.state.t, time); assert.equal(g.ticketClock, ticketClock);
-  assert.equal(updateArgs[1], 0); assert.equal(updateArgs[2], 0.05);
+  assert.equal(updateArgs[1], 0); assert.ok(Math.abs(updateArgs[2] - 0.05) < 1e-12);
 });
 test('full practice session reload restores paused and service saves use a separate slot', () => {
   const { game: g, storage, elements: e } = kitchen();
@@ -324,4 +325,174 @@ test('practice results let the cook inspect each burger independently', () => {
   assert.doesNotMatch(e.get('r-chips').innerHTML,/100|Ticket/);
   g.select(0); assert.equal(g.result.patty,g.patties[0]);
   g.select(1); assert.equal(g.result.patty,g.patties[1]);
+});
+
+
+test('temperature display converts values and ranges without changing the simulation', () => {
+  const U = require('../js/units');
+  assert.equal(U.text('100 °C',true),'212 °F');
+  assert.equal(U.text('54–57 °C',true),'129–135 °F');
+  assert.equal(U.text('54-57 °C',true),'129-135 °F');
+  assert.equal(U.text('−18 °C',true),'0 °F');
+  assert.equal(U.text('−20–−10 °C',true),'-4–14 °F');
+  assert.equal(U.text('180 / 220 °C',true),'356 / 428 °F');
+  assert.equal(U.text('10 °C cooler',true),'18 °F cooler');
+  assert.equal(U.text('Off by 10 °C.',true),'Off by 18 °F.');
+  assert.equal(U.text('10 °C past the top',true),'18 °F past the top');
+  assert.equal(U.text('centre fell 10 °C from its peak',true),'centre fell 18 °F from its peak');
+  const {game:g,elements:e,storage} = kitchen();
+  g.startPractice(); g.startCook(); g.place(); P.setOven(g.state,180);
+  const state = S.encode(g.state); e.get('btn-units').click();
+  assert.equal(g.fahrenheit,true); assert.equal(S.encode(g.state),state);
+  assert.match(e.get('h-pan').textContent,/°F/); assert.match(e.get('oven-status').textContent,/356 °F/);
+  assert.equal(e.get('oven-temp').value,'180'); assert.equal(storage.get('griddle.temperatureUnit'),'F');
+  g.hard=true; g.updateHUD(); assert.equal(e.get('h-pan').textContent,'—');
+  assert.equal(g.maskT('Centre 60 °C'),'Centre ·· °F');
+  const r=kitchen(storage).game; assert.equal(r.fahrenheit,true);
+  e.get('btn-units').click(); assert.equal(g.fahrenheit,false);
+});
+
+test('two bun pairs and four portions of each other topping; discard releases the limit', () => {
+  const {s,p} = cook();
+  for(const kind of ['bun','bacon','egg','onions']) {
+    const limit = kind === 'bun' ? 2 : 4;
+    for(let i=0;i<limit;i++) assert.ok(P.addItem(s,kind).length);
+    assert.deepEqual(P.addItem(s,kind),[]);
+    const old=s.items.find(it=>it.kind===kind); P.discardItem(s,old);
+    assert.ok(P.addItem(s,kind).length);
+  }
+  for(let i=0;i<4;i++) assert.equal(P.addCheese(s,p),true);
+  P.flipPatty(s,p); assert.equal(P.addCheese(s,p),false);
+  assert.equal(p.cheeses.length+p.cheeseUnder.length,4);
+});
+
+test('limit feedback escalates on repeated attempts and bun discard stays available', () => {
+  const {game:g,elements:e} = kitchen(); g.startPractice(); g.startCook();
+  e.get('btn-bun').click(); e.get('btn-bun').click();
+  assert.equal(g.items.length,4);
+  e.get('btn-bun').click();
+  assert.equal(g.items.length,4); assert.equal(g.selItem.kind,'bun');
+  assert.equal(e.get('btn-discard').disabled,false);
+  assert.equal(e.get('btn-discard').textContent,'Discard both bun halves');
+  g.limitWarning(10000); assert.equal(e.get('kitchen-notice').textContent,'Calm down!');
+  g.limitWarning(10100); g.limitWarning(10200);
+  assert.equal(e.get('kitchen-notice').textContent,'CALM DOWN FFS!');
+  g.limitWarning(20000); assert.equal(e.get('kitchen-notice').textContent,'Calm down!');
+  e.get('btn-discard').click(); assert.equal(g.items.length,2);
+  e.get('btn-bun').click(); assert.equal(g.items.length,4);
+});
+
+test('camera follows selected food between pan, plate and oven without fighting manual views', () => {
+  const {game:g,elements:e} = kitchen(); g.startPractice(); g.startCook(); g.place();
+  g.followSelectedFood(); assert.equal(g.cameraPreset,'default');
+  g.remove(); g.followSelectedFood(); assert.equal(g.cameraPreset,'serve');
+  e.get('btn-bun').click(); g.followSelectedFood(); assert.equal(g.cameraPreset,'default');
+  g.cameraPreset = null; g.followSelectedFood(); assert.equal(g.cameraPreset,null);
+  const bun = g.selItem;
+  P.removeItem(g.state,bun); g.followSelectedFood(); assert.equal(g.cameraPreset,'serve');
+  g.reheat(); g.followSelectedFood(); assert.equal(g.cameraPreset,'default');
+  g.select(0); g.followSelectedFood(); assert.equal(g.cameraPreset,'serve');
+  P.putInOven(g.state,g.patty); g.followSelectedFood(); assert.equal(g.cameraPreset,'oven');
+});
+
+test('manual assembly consumes exact food, preserves layer order and frees loose bun capacity', () => {
+  const {s,p} = cook(); P.removePatty(s,p); p.manualAssembly=true;
+  const first=P.addItem(s,'bun'), second=P.addItem(s,'bun');
+  for(const it of first.concat(second)) P.removeItem(s,it);
+  assert.deepEqual(P.addItem(s,'bun'),[]);
+  assert.equal(A.add(s,p,first[1].id),false,'cannot close before placing a patty');
+  assert.ok(A.add(s,p,first[0].id)); assert.deepEqual(P.addItem(s,'bun'),[],'half-built pair still occupies a loose slot');
+  assert.ok(A.add(s,p,'mayo')); assert.ok(A.add(s,p,'patty'));
+  assert.equal(A.add(s,p,'patty'),false);
+  assert.ok(A.add(s,p,'lettuce')); assert.ok(A.add(s,p,'tomato'));
+  assert.equal(A.add(s,p,second[1].id),false,'a crown must match its heel');
+  assert.ok(A.add(s,p,first[1].id)); assert.equal(A.add(s,p,'ketchup'),false);
+  assert.equal(P.reheatItem(s,first[0]),false); assert.equal(P.putInOven(s,p),false);
+  assert.equal(P.addItem(s,'bun').length,2,'assembled pair frees capacity for a third burger');
+  p.requiredBuild=['bun','lettuce','tomato','mayo']; assert.deepEqual(P.buildOf(s,p).missing,[]);
+  P.serve(s,p); assert.equal(first[0].where,'cut'); assert.equal(second[0].where,'rest','loose food is not silently assigned');
+  assert.deepEqual(p.assembly.map(A.label),['Bottom bun','Mayo','Patty','Lettuce','Tomato','Top bun']);
+});
+
+test('unpacking restores cooked ingredients and excludes them from the build', () => {
+  const {s,p}=cook(); P.removePatty(s,p); p.manualAssembly=true;
+  const [b]=P.addItem(s,'bacon'); P.removeItem(s,b); b.faceDown.brown=3;
+  A.add(s,p,'patty'); A.add(s,p,b.id); A.add(s,p,'mustard');
+  assert.equal(A.add(s,p,'mustard'),false);
+  A.unpack(p); assert.equal(b.burger,null); assert.equal(b.assembledTo,null);
+  assert.equal(b.faceDown.brown,3); assert.equal(P.toppingsOf(s,p).length,0);
+  assert.equal(P.reheatItem(s,b),true);
+});
+
+test('assembled practice saves retain shared food references and resume for serving', () => {
+  const {game:g,elements:e,storage}=kitchen(); g.startPractice(); g.startCook(); g.place(); g.remove();
+  const buns=P.addItem(g.state,'bun'); for(const it of buns) P.removeItem(g.state,it);
+  g.buildLayer('item:'+buns[0].id); g.buildLayer('patty'); g.buildLayer('pickles'); g.buildLayer('item:'+buns[1].id);
+  assert.equal(e.get('btn-cut').disabled,false); assert.equal(g.saveSession(),true);
+  const {game:r,elements:re}=kitchen(storage); assert.equal(r.loadSession('practice'),true);
+  assert.equal(r.patty.assembly[0].item,r.items[0]); assert.equal(r.items[0].assembledTo,r.patty.id);
+  r.setPaused(false); re.get('btn-cut').click(); assert.equal(r.phase,'result');
+  assert.ok(P.buildOf(r.state,r.patty).items.some(it=>it.kind==='pickles'));
+});
+
+test('service replacement preserves the order clock, other food, equipment and requested build', () => {
+  const {game:g,elements:e}=kitchen(); e.get('btn-accept').click(); g.startCook(); g.place();
+  const old=g.patty, request=old.requiredBuild.slice(); g.ticketClock=137; P.setKnob(g.state,7);
+  const [b]=P.addItem(g.state,'bacon'); const pan=g.state.pan;
+  e.get('btn-discard').click();
+  assert.notEqual(g.patty,old); assert.equal(g.patty.id,old.id); assert.equal(g.patty.where,'board');
+  assert.deepEqual(g.patty.requiredBuild,request); assert.equal(g.ticketClock,137); assert.equal(g.ticketTiming,true);
+  assert.equal(g.state.pan,pan); assert.equal(g.state.stove.knob,7); assert.equal(g.items[0],b);
+  assert.ok(!g.state.patties.includes(old)); assert.ok(g.state.wasteG>0);
+  g.place(); assert.equal(g.patty.where,'pan');
+});
+
+test('three requested burgers can be built and served within the two loose-pair limit', () => {
+  const s=P.createState({}), patties=[];
+  for(let i=0;i<3;i++) {
+    const p=P.makePatty({id:i+1,target:'medium',massG:150,thicknessMm:20,fatFrac:.2,tempC:4});
+    p.manualAssembly=true; p.requiredBuild=['bun','pickles','mustard'];
+    P.placePatty(s,p); P.removePatty(s,p); patties.push(p);
+    const buns=P.addItem(s,'bun'); buns.forEach(it=>P.removeItem(s,it));
+    for(const key of [buns[0].id,'mustard','patty','pickles',buns[1].id]) assert.equal(A.add(s,p,key),true);
+  }
+  P.serve(s);
+  assert.equal(s.items.length,6);
+  for(const p of patties) { assert.deepEqual(P.buildOf(s,p).missing,[]); assert.equal(P.toppingsOf(s,p).length,2); }
+});
+
+test('assembly validation rejects a saved ingredient shared by two stacks', () => {
+  const {game:g}=kitchen(); g.startPractice(); g.startCook(); g.place(); g.remove();
+  const buns=P.addItem(g.state,'bun'); buns.forEach(it=>P.removeItem(g.state,it));
+  A.add(g.state,g.patty,buns[0].id); A.add(g.state,g.patty,'patty');
+  g.addPracticePatty(); g.startCook(); g.place(); g.remove();
+  g.patty.assembly=[{item:buns[0]},{patty:true}];
+  assert.throws(()=>S.validate(g,P),/assembled food/);
+});
+
+test('the shared discard button follows the selected topping or practice patty', () => {
+  const {game:g,elements:e} = kitchen(); g.startPractice(); g.startCook();
+  for (const kind of ['bun','bacon','egg','onions']) {
+    const made = P.addItem(g.state,kind); g.selectItem(made[0]);
+    assert.equal(e.get('btn-discard').disabled,false);
+    e.get('btn-discard').click();
+    assert.ok(made.every(it => !g.items.includes(it)));
+    assert.equal(g.patties.length,1,'discarding toppings preserves the burger');
+  }
+  g.select(0);
+  assert.equal(e.get('btn-discard').textContent,'Discard patty');
+  e.get('btn-discard').click(); assert.equal(g.patties.length,0);
+});
+
+test('window control is independent of food selection and restores with room smoke',()=>{
+  const {game:g,elements:e,storage}=kitchen();g.startPractice();g.startCook();g.place();
+  const p=g.state.patty,grid=Array.from(p.T);
+  e.get('btn-window').click();assert.equal(g.state.room.windowOpen,true);assert.equal(e.get('btn-window').textContent,'Close window');
+  assert.deepEqual(Array.from(p.T),grid);
+  g.state.diag.smoke=1;for(let i=0;i<100;i++)P.stepRoom(g.state,.05);
+  g.setPaused(true);const before={...g.state.room};g.frame(g.last+50);assert.deepEqual(g.state.room,before);
+  assert.equal(g.saveSession(),true);const saved=S.decode(storage.get('griddle.session.v1.practice'));
+  S.validate(saved,P);assert.deepEqual(saved.state.room,before);
+  saved.state.room.upper=-1;assert.throws(()=>S.validate(saved,P),/room air/);
+  e.get('btn-window').click();assert.equal(g.state.room.windowOpen,false);assert.equal(e.get('btn-window').textContent,'Open window');
 });

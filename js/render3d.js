@@ -15,6 +15,48 @@
   const rand = (a, b) => a + Math.random() * (b - a);
   let tintedId = 0; // identifies a mask canvas in the tinted-mask cache
 
+
+  function bunProfile(R,half) {
+    return half === 'top'
+        ? [{ r: 0, y: 0, v: 0 }, { r: R * 0.97, y: 0, v: 0.15 }, { r: R, y: 0.006, v: 0.3 }, { r: R * 0.93, y: 0.013, v: 0.5 }, { r: R * 0.72, y: 0.02, v: 0.7 }, { r: R * 0.4, y: 0.024, v: 0.85 }, { r: 0, y: 0.025, v: 1 }]
+        : [{ r: 0, y: 0, v: 0 }, { r: R * 0.92, y: 0, v: 0.2 }, { r: R, y: 0.007, v: 0.4 }, { r: R * 0.98, y: 0.017, v: 0.6 }, { r: R * 0.85, y: 0.022, v: 0.8 }, { r: 0, y: 0.022, v: 1 }];
+  }
+  function crumbTexture(seed=41) {
+    const cv=document.createElement('canvas');cv.width=cv.height=256;const c=cv.getContext('2d');
+    c.fillStyle='#fff5df';c.fillRect(0,0,256,256);
+    const rnd=()=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed/4294967296;};
+    for(let i=0;i<1600;i++) {
+      const x=rnd()*256,y=rnd()*256,r=.4+Math.pow(rnd(),3)*3.4;
+      c.fillStyle=`rgba(128,97,53,${.10+rnd()*.22})`;
+      c.beginPath();c.ellipse(x,y,r,r*(.4+rnd()*.7),rnd()*3,0,Math.PI*2);c.fill();
+      c.fillStyle='rgba(255,255,255,.4)';c.fillRect(x-r,y+r,r*1.5,.5);
+    }
+    const tex=new T.CanvasTexture(cv);tex.encoding=T.sRGBEncoding;return tex;
+  }
+  function lettuceGeometry(radius,phase) {
+    const rings=9,segments=48,pos=[],col=[],idx=[];
+    for(let j=0;j<=rings;j++)for(let i=0;i<=segments;i++) {
+      const u=j/rings,a=i/segments*Math.PI*2;
+      const lobes=1+.12*Math.sin(a*5+phase)+.045*Math.sin(a*13+phase);
+      const r=radius*u*lobes;
+      const fold=Math.sin(a*7+phase)*.0018*u*u+Math.sin(u*19+a*4)*.0008*u;
+      pos.push(Math.cos(a)*r, .002*(1-u*u)+fold,Math.sin(a)*r*.77);
+      const vein=Math.pow(Math.max(0,Math.cos(a*7+u*2)),20)*.19;
+      col.push(.20+vein+.07*u,.39+vein+.09*u,.075+vein*.6);
+      if(j<rings&&i<segments){const k=j*(segments+1)+i;idx.push(k,k+segments+1,k+1,k+1,k+segments+1,k+segments+2);}
+    }
+    const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(pos,3));g.setAttribute('color',new T.Float32BufferAttribute(col,3));g.setIndex(idx);g.computeVertexNormals();return g;
+  }
+  function sauceGeometry(radius,height,phase) {
+    const g=new T.CylinderGeometry(radius,radius*.96,height,64,2),a=g.attributes.position;
+    for(let i=0;i<a.count;i++) {
+      const x=a.getX(i),z=a.getZ(i),theta=Math.atan2(z,x),r=Math.hypot(x,z)/radius;
+      const edge=1+.09*Math.sin(theta*3+phase)+.035*Math.cos(theta*7-phase);
+      a.setXYZ(i,x*edge,a.getY(i)+(1-r)*height*.3,z*edge);
+    }
+    g.computeVertexNormals();return g;
+  }
+
   // ------------------------------------------------------------ colour model
   const COL = {
     frozen: [190, 120, 130], raw: [150, 32, 44], rawWarm: [176, 58, 66], pink: [205, 118, 118],
@@ -537,7 +579,7 @@
       if (where === 'pan') g.position.set(position.x, this.vp.panFloorY + 0.0012 * p.cheeseUnder.length + (position.lift || 0), position.z);
       else if (where === 'board') g.position.set(position.x, 0, position.z);
       else {
-        const served = where === 'cut';
+        const served = where === 'cut' && !p.manualAssembly;
         if (served !== this.served) { this.served = served; if (served) this.buildBuns(); else if (this.bunGroup) { g.remove(this.bunGroup); disposeTree(this.bunGroup); this.bunGroup = null; } }
         g.position.set(position.x, position.y + (served ? this.bunBottomH : 0), position.z);
         if (this.bunTop) this.bunTop.position.y = p.h * (1 + 0.28 * p.dome) + p.cheeses.length * 0.0015 + (this.stackH || 0) + 0.001;
@@ -653,7 +695,7 @@
       this.vp = vp; this.it = it;
       this.group = new T.Group(); vp.scene.add(this.group);
       this.group.userData.item = it;
-      this.thickness = { bun: 0.024, bacon: 0.006, egg: 0.013, onions: 0.009 }[it.kind] || 0.006;
+      this.thickness = { bun: it.half==='top'?.025:.022, bacon: 0.006, egg: 0.013, onions: 0.009 }[it.kind] || 0.006;
       ({ bun: () => this.buildBun(), bacon: () => this.buildBacon(), egg: () => this.buildEgg(), onions: () => this.buildOnions() }[it.kind] || (() => {}))();
       this.group.traverse((o) => { o.userData.item = it; }); // so a click anywhere on it selects it
     }
@@ -695,13 +737,12 @@
     // ---- bun half: a domed crown over a flat cut face, and the cut face is the one that toasts
     buildBun() {
       const R = this.it.D / 2;
-      const prof = this.it.half === 'top'
-        ? [{ r: 0, y: 0, v: 0 }, { r: R * 0.97, y: 0, v: 0.15 }, { r: R, y: 0.006, v: 0.3 }, { r: R * 0.93, y: 0.013, v: 0.5 }, { r: R * 0.72, y: 0.02, v: 0.7 }, { r: R * 0.4, y: 0.024, v: 0.85 }, { r: 0, y: 0.025, v: 1 }]
-        : [{ r: 0, y: 0, v: 0 }, { r: R * 0.92, y: 0, v: 0.2 }, { r: R, y: 0.007, v: 0.4 }, { r: R * 0.98, y: 0.017, v: 0.6 }, { r: R * 0.85, y: 0.022, v: 0.8 }, { r: 0, y: 0.022, v: 1 }];
+      const prof=bunProfile(R,this.it.half);
       this.crustMat = new T.MeshStandardMaterial({ color: 0xc98a45, roughness: 0.78 });
       const dome = new T.Mesh(buildLathe(prof, 48, Math.PI * 2), this.crustMat); dome.castShadow = true; dome.receiveShadow = true;
       this.group.add(dome);
-      this.faceMat = new T.MeshStandardMaterial({ color: 0xeedebe, roughness: 0.85, side: T.DoubleSide });
+      const crumb=crumbTexture(this.it.id+41);
+      this.faceMat = new T.MeshStandardMaterial({ color: 0xeedebe, map:crumb,bumpMap:crumb,bumpScale:.00035,roughness: 0.85, side: T.DoubleSide });
       const face = new T.Mesh(new T.CircleGeometry(R * 0.985, 40), this.faceMat);
       face.rotation.x = Math.PI / 2; face.position.y = 0.0004; // the cut plane, facing down
       this.group.add(face); this.faceMesh = face;
@@ -780,7 +821,7 @@
       }
       const geo = new T.BufferGeometry();
       geo.setAttribute('position', new T.BufferAttribute(pos, 3)); geo.setIndex(idx); geo.computeVertexNormals();
-      this.onionMat = new T.MeshPhysicalMaterial({ color: 0xece5d4, roughness: 0.4, clearcoat: 0.5, side: T.DoubleSide, transparent: true, opacity: 0.94 });
+      this.onionMat = new T.MeshPhysicalMaterial({ color: 0xece5d4, roughness: 0.36, clearcoat: 0.65,clearcoatRoughness:.18, side: T.DoubleSide, transparent: true, opacity: 0.87 });
       const inst = new T.InstancedMesh(geo, this.onionMat, N);
       inst.castShadow = true; inst.receiveShadow = true;
       inst.instanceColor = new T.InstancedBufferAttribute(new Float32Array(N * 3).fill(1), 3);
@@ -908,7 +949,7 @@
       inst.instanceMatrix.needsUpdate = true; if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
       this.onionMat.roughness = clamp(0.25 + 0.5 * (1 - wet), 0.2, 0.85);
       this.onionMat.clearcoat = 0.6 * wet;
-      this.onionMat.opacity = lerp(0.98, 0.88, wet); // raw slices are glassy; cooked ones are not
+      this.onionMat.opacity = clamp(.94-.18*soft+.15*(1-wet),.76,1); // raw slices are glassy; cooked ones are not
     }
   }
 
@@ -921,13 +962,13 @@
       this.renderer.shadowMap.enabled = true; this.renderer.shadowMap.type = T.PCFSoftShadowMap;
       this.renderer.localClippingEnabled = true; // the toppings on a served burger are cut with the same plane the patty is
       this.renderer.outputEncoding = T.sRGBEncoding; this.renderer.toneMapping = T.ACESFilmicToneMapping; this.renderer.toneMappingExposure = 0.95;
-      this.scene = new T.Scene(); this.scene.background = new T.Color(0xe4dece);
+      this.scene = new T.Scene(); this.scene.background = new T.Color(0xb7d4df);
       this.scene.fog = new T.Fog(0xe4dece, 5, 12);
       this.camera = new T.PerspectiveCamera(42, 1, 0.005, 20);
       this.clock = 0; this.texBudget = 0;
       this.mode = 'board'; // 'board' | 'stove'
       this.cutaway = false;
-      this._buildLights(); this._buildKitchen(); this._buildStove(); this._buildBoard(); this._buildParticles(); this._buildProbe();
+      this._buildLights(); this._buildKitchen(); this._buildReflections(); this._buildRoomSmoke(); this._buildStove(); this._buildBoard(); this._buildParticles(); this._buildProbe();
       this._buildTextures();
       this.views = new Map(); this.itemViews = new Map(); this.selected = null; this.selectedItem = null; this.previewPatty = null;
       this.peeks = new Map(); // patty → when the cut the cook made in it closes again (wall clock, ms)
@@ -967,6 +1008,82 @@
     _buildKitchen() {
       this.room = root.buildKitchenRoom(T, this.scene);
     }
+    _buildRoomSmoke() {
+      const cv=document.createElement('canvas');cv.width=cv.height=64;
+      const c=cv.getContext('2d'),g=c.createRadialGradient(32,32,0,32,32,32);
+      g.addColorStop(0,'rgba(210,212,204,.65)');g.addColorStop(.4,'rgba(195,199,190,.28)');g.addColorStop(1,'rgba(185,192,182,0)');c.fillStyle=g;c.fillRect(0,0,64,64);
+      const tex=new T.CanvasTexture(cv);this.roomClouds=[];
+      for(let i=0;i<48;i++) {
+        const cloud=new T.Sprite(new T.SpriteMaterial({map:tex,color:0x8e938c,transparent:true,opacity:0,depthWrite:false}));
+        cloud.userData={x:Math.sin(i*7.13)*2.25,z:Math.cos(i*4.71)*1.65,y:i<32?1.05+(i%5)*.13:.15+(i%4)*.19,phase:i*.618%1,upper:i<32};
+        cloud.scale.set(1.35+(i%4)*.25,.65+(i%3)*.18,1);this.scene.add(cloud);this.roomClouds.push(cloud);
+      }
+      this.cleanFog=this.scene.fog;this.smokeFog=new T.FogExp2(0x8f9891,.02);
+    }
+    _updateRoomAir(state) {
+      const air=state.room||{opening:0,upper:0,lower:0},time=state.t||0;
+      for(const w of this.room.userData.windows)w.hinge.rotation.y=w.side*air.opening*1.05;
+      const burden=air.lower*.7+air.upper*.3;
+      this.scene.fog=burden>.01?this.smokeFog:this.cleanFog;
+      this.smokeFog.density=.025+Math.min(.42,burden*.5);
+      for(const cloud of this.roomClouds) {
+        const q=cloud.userData,travel=air.opening*((time*.026+q.phase)%1);
+        cloud.position.set(lerp(q.x,0,travel)+Math.sin(time*.04+q.phase*6)*.10,lerp(q.y,.95,travel),lerp(q.z,2.25,travel));
+        cloud.material.opacity=Math.min(.28,(q.upper?air.upper:air.lower)*.12)*(1-travel);
+        cloud.visible=cloud.material.opacity>.002;
+      }
+    }
+    _buildReflections() {
+      // Capture the actual windows and room once; food and particles never incur
+      // six extra renders per frame. Rough materials use the filtered mip levels.
+      const target=new T.WebGLCubeRenderTarget(128,{generateMipmaps:true,minFilter:T.LinearMipmapLinearFilter});
+      const capture=new T.CubeCamera(.03,16,target); capture.position.set(0,.12,0);
+      capture.update(this.renderer,this.scene);
+      const pmrem=new T.PMREMGenerator(this.renderer);
+      this.roomReflection=pmrem.fromCubemap(target.texture);
+      this.scene.environment=this.roomReflection.texture;
+      target.dispose(); pmrem.dispose();
+    }
+    _buildOil() {
+      const n=33;
+      this.oilPixels=new Uint8Array(n*n*4);
+      this.oilTexture=new T.DataTexture(this.oilPixels,n,n,T.RGBAFormat);
+      this.oilTexture.minFilter=this.oilTexture.magFilter=T.LinearFilter;
+      this.oilUniforms={filmMap:{value:this.oilTexture},filmRange:{value:.001},filmTime:{value:0},filmHeat:{value:0}};
+      this.oilMat=new T.MeshPhysicalMaterial({color:0xb99751,transparent:true,opacity:.42,roughness:.075,metalness:0,clearcoat:1,clearcoatRoughness:.06,envMapIntensity:.65,depthWrite:false});
+      this.oilMat.onBeforeCompile=shader=>{
+        Object.assign(shader.uniforms,this.oilUniforms);
+        shader.vertexShader='varying vec2 vFilmUv;\n'+shader.vertexShader;
+        shader.vertexShader=shader.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\nvFilmUv=vec2(uv.x,1.0-uv.y);');
+        shader.fragmentShader='varying vec2 vFilmUv;\nuniform sampler2D filmMap;\nuniform float filmRange,filmTime,filmHeat;\n'+shader.fragmentShader;
+        shader.fragmentShader=shader.fragmentShader.replace('#include <alphamap_fragment>',`#include <alphamap_fragment>
+          float filmDepth=texture2D(filmMap,vFilmUv).r*filmRange;
+          diffuseColor.a*=smoothstep(.000008,.00009,filmDepth);
+          if(diffuseColor.a<.008) discard;`);
+        shader.fragmentShader=shader.fragmentShader.replace('#include <normal_fragment_maps>',`#include <normal_fragment_maps>
+          float wave=sin(vFilmUv.x*49.+vFilmUv.y*31.+filmTime*.65)*sin(vFilmUv.y*63.-filmTime*.48);
+          normal=normalize(normal+vec3(wave*.016*filmHeat,cos(vFilmUv.x*71.+filmTime*.53)*.012*filmHeat,0.));`);
+      };
+      this.oil=new T.Mesh(new T.PlaneGeometry(1,1,n-1,n-1),this.oilMat);
+      this.oil.rotation.x=-Math.PI/2;this.oil.receiveShadow=true;this.oil.frustumCulled=false;this.panGroup.add(this.oil);
+    }
+    _updateOil(state) {
+      const pan=state.pan,f=root.BurgerOilFilm.ensure(pan),n=f.n;
+      this.oil.visible=pan.oil>1e-6 && this.stoveType!=='charcoal';
+      if(!this.oil.visible)return;
+      this.oil.position.y=this.panFloorY+.00018;
+      const a=this.oil.geometry.attributes.position, scale=920*f.area;
+      let max=.0002;
+      for(let k=0;k<f.mass.length;k++) max=Math.max(max,f.mass[k]/scale);
+      for(let j=0;j<n;j++)for(let i=0;i<n;i++) {
+        const k=j*n+i,depth=f.mass[k]/scale;
+        a.setXYZ(k,i*f.cell-f.r,f.r-j*f.cell,depth);
+        this.oilPixels[k*4]=Math.round(255*depth/max);this.oilPixels[k*4+3]=255;
+      }
+      a.needsUpdate=true;this.oil.geometry.computeVertexNormals();this.oilTexture.needsUpdate=true;
+      this.oilUniforms.filmRange.value=max;this.oilUniforms.filmTime.value=state.t;
+      this.oilUniforms.filmHeat.value=clamp((pan.T-100)/130,0,1);
+    }
     _buildStove() {
       const g = new T.Group(); this.stove = g;
       const top = new T.Mesh(new T.BoxGeometry(0.43, 0.03, 0.40), new T.MeshStandardMaterial({ color: 0x3a4140, roughness: 0.3, metalness: 0.7 }));
@@ -976,8 +1093,7 @@
       this.panGroup = new T.Group(); g.add(this.panGroup);
       this.panMat = new T.MeshStandardMaterial({ color: 0x2b2725, roughness: 0.55, metalness: 0.7 });
       this.sharedRes = new Set([this.panMat]); // materials the viewport keeps across a pan or stove swap
-      this.oilMat = new T.MeshPhysicalMaterial({ color: 0xb07a20, transparent: true, opacity: 0.3, roughness: 0.04, metalness: 0.15, clearcoat: 1, clearcoatRoughness: 0.03, depthWrite: false });
-      this.oil = new T.Mesh(new T.CircleGeometry(1, 64), this.oilMat); this.oil.rotation.x = -Math.PI / 2; this.oil.position.y = 0.0007; this.oil.receiveShadow = true; this.panGroup.add(this.oil);
+      this._buildOil();
       // residue on the pan floor: a canvas texture of fond blotches, burnt specks, welded cheese
       // and meat bits, and a carbon haze, painted from the pan state (positions come from a fixed
       // random sequence so dirt accumulates in place rather than jumping around)
@@ -1381,6 +1497,87 @@
       return d;
     }
     /** Keep one ItemView per topping in `list`. */
+    updateAssemblies(state, list) {
+      const A = root.BurgerAssembly;
+      this.assemblyViews ||= new Map();
+      for (const [p,g] of this.assemblyViews) if (!list.includes(p) || !p.assembly?.length) { this.scene.remove(g); disposeTree(g); this.assemblyViews.delete(p); }
+      for (const p of list) {
+        if (!p.manualAssembly || !p.assembly?.length || !['rest','cut'].includes(p.where)) continue;
+        const pv = this.views.get(p), base = p._viewPos;
+        if (!pv || !base) continue;
+        let group = this.assemblyViews.get(p);
+        const signature = p.assembly.map(l=>l.patty?'patty':l.item?'item'+l.item.id:l.cold).join('|');
+        if (!group || group.userData.signature !== signature) {
+          if (group) { this.scene.remove(group); disposeTree(group); }
+          group = new T.Group(); group.userData.signature = signature; group.userData.layers = new Map(); group.userData.caps = new Map(); this.scene.add(group); this.assemblyViews.set(p,group);
+          p.assembly.forEach((l,i) => {
+            if (l.item?.kind === 'bun' || l.cold) {
+              const R=l.item?l.item.D/2:Math.max(.048,p.D/2)*.94;
+              const height=l.item?.half==='top'?.025:l.item?.kind==='bun'?.022:A.cold[l.cold].height;
+              const profile=l.item ? bunProfile(R,l.item.half).map(pt=>({r:pt.r,y:l.item.half==='bottom'?height-pt.y:pt.y})) : [{r:0,y:0},{r:R,y:0},{r:R,y:height},{r:0,y:height}];
+              const cap=new T.Mesh(new T.ShapeGeometry(crossSectionShape(profile)),new T.MeshStandardMaterial({color:l.item?0xf3e4c4:A.cold[l.cold].color,roughness:.85,side:T.DoubleSide}));
+              if(l.item) {
+                const tex=crumbTexture(l.item.id+73);tex.repeat.set(1/(2*R),1/height);tex.offset.set(.5,0);
+                cap.material.map=tex;cap.material.bumpMap=tex;cap.material.bumpScale=.0003;
+              }
+              if(l.cold)cap.material.color.convertSRGBToLinear();
+              cap.userData.cutCap=true; group.add(cap); group.userData.caps.set(i,cap);
+            }
+            if (!l.cold) return;
+            const spec = A.cold[l.cold], layer = new T.Group(), R = Math.max(.048,p.D/2);
+            const material = new T.MeshPhysicalMaterial({color:l.cold==='lettuce'?0xffffff:spec.color,vertexColors:l.cold==='lettuce',roughness:spec.sauce?.27:.48,clearcoat:spec.sauce?.65:.25,side:T.DoubleSide});
+            if(l.cold!=='lettuce')material.color.convertSRGBToLinear();
+            const count = l.cold==='pickles'?5:l.cold==='lettuce'?7:1;
+            for(let j=0;j<count;j++) {
+              const r = count>1 ? R*.40 : R*.94;
+              const geometry=l.cold==='lettuce'?lettuceGeometry(r,j*1.7):spec.sauce?sauceGeometry(r,spec.height,i*2.4):new T.CylinderGeometry(r,r,spec.height,40);
+              const mesh = new T.Mesh(geometry,material);
+              mesh.position.set(count>1?Math.cos(j*2.4)*R*.57:0,spec.height/2,count>1?Math.sin(j*2.4)*R*.57:0);
+              if(l.cold==='lettuce') { mesh.rotation.y=j*2.4; mesh.rotation.x=(j%2?1:-1)*.15; }
+              mesh.castShadow=true; mesh.receiveShadow=true; layer.add(mesh);
+              if(l.cold==='tomato') {
+                const seedMat=new T.MeshStandardMaterial({color:0xcab15f,roughness:.45});seedMat.color.convertSRGBToLinear();
+                const gelMat=new T.MeshPhysicalMaterial({color:0xa95a29,roughness:.21,clearcoat:.8});gelMat.color.convertSRGBToLinear();
+                const skinMat=new T.MeshStandardMaterial({color:0x9f281b,roughness:.4});skinMat.color.convertSRGBToLinear();
+                const skin=new T.Mesh(new T.RingGeometry(R*.86,R*.94,64),skinMat);skin.rotation.x=-Math.PI/2;skin.position.y=spec.height+.00008;layer.add(skin);
+                for(let k=0;k<5;k++) {
+                  const a=k*Math.PI*2/5,cx=Math.cos(a)*R*.53,cz=Math.sin(a)*R*.53;
+                  const gel=new T.Mesh(new T.CircleGeometry(R*.23,20),gelMat);gel.rotation.x=-Math.PI/2;gel.rotation.z=-a;gel.scale.y=.68;gel.position.set(cx,spec.height+.00013,cz);layer.add(gel);
+                  for(let n=0;n<3;n++) {const seed=new T.Mesh(new T.SphereGeometry(.0018,6,4),seedMat);seed.scale.set(1,.22,.55);seed.rotation.y=a;seed.position.set(cx+Math.cos(a+n*2.1)*R*.12,spec.height+.00035,cz+Math.sin(a+n*2.1)*R*.12);layer.add(seed);}
+                }
+              }
+            }
+            group.add(layer); group.userData.layers.set(i,layer);
+          });
+        }
+        group.position.set(base.x,base.y,base.z);
+        const phi=pv.cutPhi||0, clipping=this.cutaway&&p===this.selected;
+        let h=0;
+        p.assembly.forEach((l,i) => {
+          const cap=group.userData.caps.get(i);
+          if(cap) { cap.visible=clipping; cap.position.y=h; cap.rotation.y=-phi; }
+          if(l.patty) { pv.group.position.set(base.x,base.y+h,base.z); h+=p.h*(1+.28*p.dome)+p.cheeses.length*.0015; }
+          else if(l.item) {
+            const v=this.itemViews.get(l.item); if(!v)return;
+            v.update(state,0,'rest',{x:base.x,y:base.y+h,z:base.z},this.mode);
+            if(l.item.kind==='bun' && l.item.half==='top') { v.group.rotation.x=0; v.group.position.y=base.y+h; }
+            if(this.cutaway && p===this.selected) { const phi=pv.cutPhi||0; v.setClipAt(-Math.sin(phi),Math.cos(phi),base.x,base.z); } else v.setClip(null);
+            h+=v.layerH();
+          } else {
+            const v=group.userData.layers.get(i),spec=A.cold[l.cold]; v.position.y=h;
+            if(spec.sauce) { const spread=.72+.28*(1-Math.exp(-(l.age||0)/22));v.scale.set(spread,1/(spread*spread),spread); }
+            if(l.cold==='lettuce') {v.scale.y=1-.45*(l.wilt||0);v.children.forEach(m=>m.material.color.setRGB(1-.18*(l.wilt||0),1-.12*(l.wilt||0),1));}
+            if(cap)cap.scale.set(v.scale.x,v.scale.y,1);
+            h+=spec.height*(spec.sauce?v.scale.y:l.cold==='lettuce'?v.scale.y:1);
+          }
+        });
+        if(!A.hasPatty(p)) pv.group.position.x=base.x-.13;
+        group.userData.height=h;
+        const plane=group.userData.plane||(group.userData.plane=new T.Plane());
+        plane.normal.set(-Math.sin(phi),0,Math.cos(phi)); plane.constant=Math.sin(phi)*base.x-Math.cos(phi)*base.z;
+        group.traverse(o=>{if(o.isMesh&&!o.userData.cutCap) { if(!!o.material.clippingPlanes!==clipping)o.material.needsUpdate=true; o.material.clippingPlanes=clipping?[plane]:null; }});
+      }
+    }
     syncItems(list) {
       const keep = new Set(list);
       for (const [it, v] of this.itemViews) if (!keep.has(it)) { v.dispose(); this.itemViews.delete(it); }
@@ -1438,6 +1635,7 @@
     update(state, dt, cameraDt = dt) {
       this.clock += dt; this.texBudget = 1;
       const pan = state.pan, p = state.patty;
+      this._updateRoomAir(state);
       if (this.peeks.size) {
         const now = root.performance ? performance.now() : Date.now();
         for (const [q, until] of this.peeks) {
@@ -1515,14 +1713,9 @@
       // pan colour with temperature (very hot steel dulls / blues slightly, cast iron just dries)
       const hot = clamp((pan.T - 150) / 250, 0, 1);
       this.panMat.emissive = this.panMat.emissive || new T.Color(0); this.panMat.emissive.setRGB(0.06 * hot * hot, 0.01 * hot, 0);
-      // oil: a spreading film until the floor is covered, then a level that rises up the wall
-      const oilV = pan.oil / 920, depth = pan.oilDepth || 0;
-      let r, oilY;
-      if (depth < 0.0008) { r = Math.min(this.panR * 0.98, Math.sqrt(oilV / (Math.PI * 0.0006))); oilY = this.panFloorY + 0.0007; }
-      else { r = this.panR * 0.99; oilY = this.panFloorY + depth; }
-      this.oil.visible = r > 0.004 && this.stoveType !== 'charcoal'; this.oil.scale.set(r, r, 1); this.oil.position.y = oilY;
-      const deep = clamp(depth / 0.02, 0, 1);
-      this.oilMat.opacity = 0.2 + 0.2 * clamp(pan.oil / 0.01, 0, 1) + 0.3 * deep;
+      this._updateOil(state);
+      const depth=pan.oilDepth||0, deep=clamp(depth/.02,0,1);
+      this.oilMat.opacity=.32+.3*deep;
       // lid: on/off, and a light fogging that follows the steam trapped under it
       if (this.lid) {
         this.lid.visible = !!state.lid && this.stoveType !== 'charcoal';
@@ -1653,6 +1846,7 @@
         }
         v.update(state, dt, it.where, pos, this.mode);
       }
+      this.updateAssemblies(state, list);
       this.forceTex = false;
       // the spatula: it slides in under the patty and back out over the second the scrape takes,
       // from whichever side the camera is on, because that is the side the cook is standing
@@ -1686,22 +1880,49 @@
       this._updateParticles(state, dt, list, stoveOn);
 
       this.controls.update(cameraDt);
+      // Keep bounced light subtle; explicit wet-surface reflection strengths survive.
+      this.scene.traverse(o=>{if(o.isMesh && o.material?.envMapIntensity===1)o.material.envMapIntensity=.22;});
       this.renderer.render(this.scene, this.camera);
     }
     /** Sizzle, steam, smoke, spatter, juice beads and fat drips around every patty on the pan. */
     _updateParticles(state, dt, list, stoveOn) {
       const d = state.diag;
-      const onPan = list.filter((q) => q.where === 'pan');
-      const gy = this.panFloorY, oilDepth = this.stoveType === 'charcoal' ? 0 : (state.pan.oilDepth || 0);
-      const surfY = gy + Math.max(0.002, oilDepth);
-      const pick = () => onPan[Math.floor(Math.random() * onPan.length)];
-      const edge = () => { const q = pick(); const a = Math.random() * Math.PI * 2; const rr = (q.D / 2) * rand(0.9, 1.15); return [q.pos.x + Math.cos(a) * rr, surfY, q.pos.y + Math.sin(a) * rr]; };
-      const anywhereTop = () => { const q = pick(); const a = Math.random() * Math.PI * 2; const rr = Math.sqrt(Math.random()) * (q.D / 2) * 0.9; return [q.pos.x + Math.cos(a) * rr, Math.max(surfY, gy + q.h + 0.003), q.pos.y + Math.sin(a) * rr]; };
-      const panSpot = () => { const a = Math.random() * Math.PI * 2; const rr = Math.sqrt(Math.random()) * this.panR * 0.8; return [Math.cos(a) * rr, surfY, Math.sin(a) * rr]; };
-      const any = onPan.length > 0;
-      let evapTopAll = 0; for (const q of onPan) evapTopAll += q.evapTop || 0;
-      const steamRate = stoveOn ? (any ? d.evapBottom * 6000 + evapTopAll * 3000 : 0) + d.evapPan * 5000 : 0;
-      this.steam.update(dt, Math.min(steamRate, 160), () => (Math.random() < 0.7 && any ? edge() : any && Math.random() < 0.5 ? anywhereTop() : panSpot()), 0.01);
+      const patties=list.filter(q=>q.where==='pan');
+      const onPan=patties.concat((state.items||[]).filter(q=>q.where==='pan'));
+      const gy=this.panFloorY,oilDepth=this.stoveType==='charcoal'?0:(state.pan.oilDepth||0);
+      const surfY=gy+Math.max(.0005,oilDepth);
+      const weight=(q,kind)=>kind==='fat'?(q.fatRate || (q.lostFat>0?q.sc?.res?.fatDrip:0) || 0)
+        :kind==='smoke'?(q.smoke || (q.faceDown?.charRate||0)*40):q.steamRate || q.steam || 0;
+      const pick=(kind='steam')=>{
+        let total=0;for(const q of onPan)total+=weight(q,kind);
+        let choice=Math.random()*total;
+        for(const q of onPan){choice-=weight(q,kind);if(choice<0)return q;}
+        return null;
+      };
+      const panSpot=()=>{const a=Math.random()*Math.PI*2,rr=Math.sqrt(Math.random())*this.panR*.8;return[Math.cos(a)*rr,surfY,Math.sin(a)*rr];};
+      const residueSpot=()=>{
+        const count=Math.min(this.dirtSpots.length,Math.round(state.pan.fondBurnt/.000015));
+        if(!count)return panSpot();
+        const sp=this.dirtSpots[(Math.floor(Math.random()*count)*3+1)%this.dirtSpots.length];
+        return[(sp.x-256)/256*this.panR,surfY,-(sp.y-256)/256*this.panR];
+      };
+      const oilSpot=()=>{
+        const f=state.pan.film;if(!f?.total)return panSpot();let choice=Math.random()*f.total;
+        for(let k=0;k<f.mass.length;k++){choice-=f.mass[k];if(choice<=0)return[(k%f.n)*f.cell-f.r,gy+f.mass[k]/(920*f.area),Math.floor(k/f.n)*f.cell-f.r];}
+        return panSpot();
+      };
+      const smokeSpot=()=>{
+        if(lidOn)return ventSpot();if(kettle)return panSpot();
+        const choice=Math.random()*Math.max(.001,d.smoke),p=state.pan;
+        if(choice<(p.smokeChar||0)+(p.smokeItems||0))return edge('smoke');
+        return choice<(p.smokeChar||0)+(p.smokeItems||0)+(p.smokeFond||0)?residueSpot():oilSpot();
+      };
+      const edge=(kind='steam')=>{const q=pick(kind);if(!q)return panSpot();const a=Math.random()*Math.PI*2,rr=q.D*.51;return[q.pos.x+Math.cos(a)*rr,surfY,q.pos.y+Math.sin(a)*rr];};
+      const anywhereTop=()=>{const q=pick();if(!q)return panSpot();const a=Math.random()*Math.PI*2,rr=Math.sqrt(Math.random())*q.D*.43;return[q.pos.x+Math.cos(a)*rr,gy+(q.h||this.itemViews.get(q)?.layerH()||.006)+.001,q.pos.y+Math.sin(a)*rr];};
+      const any=onPan.length>0;
+      const steamRate=stoveOn?d.steam*5000:0;
+      const panSteamChance=d.steam>0?d.evapPan/d.steam:0;
+      this.steam.update(dt,Math.min(steamRate,160),()=>Math.random()<panSteamChance?panSpot():Math.random()<.55?edge():anywhereTop(),.006);
       // Smoke: its colour and body are the fire's, not a constant. Thin blue smoke is volatiles
       // burning as they leave the wood; thick white smoke is volatiles that never found any air.
       // With the lid on, all of it leaves through the top vent, so that is where it is drawn from —
@@ -1719,7 +1940,7 @@
       const ventSpot = () => { const a = Math.random() * Math.PI * 2, rr = Math.sqrt(Math.random()) * 0.022; return [this.ventPos.x + Math.cos(a) * rr, this.ventPos.y, this.ventPos.z + Math.sin(a) * rr]; };
       // a lid with the vent shut lets almost nothing out: the smoke stays in there, on the meat
       const smokeRate = stoveOn ? clamp(d.smoke, 0, 2) * 45 * (lidOn ? clamp(d.ventOut, 0, 1) : 1) : 0;
-      this.smoke.update(dt, smokeRate, () => (lidOn ? ventSpot() : Math.random() < 0.6 && any ? edge() : panSpot()), lidOn ? 0.005 : 0.02);
+      this.smoke.update(dt, smokeRate, smokeSpot, lidOn ? 0.005 : 0.006);
       const bubbleRate = stoveOn ? (any ? d.evapBottom * 9000 : 0) + d.evapPan * 6000 + d.oilBubble * 40 : 0;
       this.bubbles.acc += Math.min(bubbleRate, 250) * dt;
       while (this.bubbles.acc >= 1) { this.bubbles.acc -= 1; const e = any && Math.random() < 0.8 ? edge() : panSpot(); this.bubbles.spawn({ x: e[0], y: e[1], z: e[2], age: 0, life: rand(0.08, 0.3), s: rand(0.4, 1.0) }); }
@@ -1736,7 +1957,7 @@
       // juice beads on every top surface that is not under oil
       {
         const parts = this.beads.parts;
-        for (const q of onPan) {
+        for (const q of patties) {
           if (oilDepth > q.h) { for (let i = parts.length - 1; i >= 0; i--) if (parts[i].q === q) parts.splice(i, 1); continue; }
           const want = clamp(Math.round(q.poolTop / 0.00001), 0, 120); let have = 0; for (const b of parts) if (b.q === q) have++;
           // a bead sits at a fixed place on the meat, not at a fixed place on the pan: keep its
@@ -1750,7 +1971,7 @@
         this.beads.update(dt, () => true);
       }
       this.drips.acc += (stoveOn && any ? clamp(d.fatDrip * 3000, 0, 12) : 0) * dt;
-      while (this.drips.acc >= 1) { this.drips.acc -= 1; const q = pick(); const a = Math.random() * Math.PI * 2; this.drips.spawn({ q, x: q.pos.x + Math.cos(a) * (q.D / 2) * 1.01, y: gy + q.h * rand(0.3, 0.9), z: q.pos.y + Math.sin(a) * (q.D / 2) * 1.01, a, age: 0, s: rand(0.6, 1.2), sy: 1.8 }); }
+      while (this.drips.acc >= 1) { this.drips.acc -= 1; const q = pick('fat'); if(!q)continue; const a = Math.random() * Math.PI * 2; this.drips.spawn({ q, x: q.pos.x + Math.cos(a) * (q.D / 2) * 1.01, y: gy + (q.h||this.itemViews.get(q)?.layerH()||.006) * rand(0.3, 0.9), z: q.pos.y + Math.sin(a) * (q.D / 2) * 1.01, a, age: 0, s: rand(0.6, 1.2), sy: 1.8 }); }
       const dripFloor = this.stoveType === 'charcoal' ? this.coalY + 0.012 : gy + 0.001;
       this.drips.update(dt, (b, dt) => { const q = b.q; if (q.where !== 'pan') return false; const free = b.y < gy - 0.002; b.vy = free ? (b.vy || 0) + 9.81 * dt : 0; b.y -= (free ? b.vy : 0.008) * dt; if (!free) { b.x = q.pos.x + Math.cos(b.a) * (q.D / 2) * 1.02; b.z = q.pos.y + Math.sin(b.a) * (q.D / 2) * 1.02; } b.age += dt; return b.y > dripFloor && b.age < 6; });
     }
@@ -1840,14 +2061,16 @@
     preset(name) {
       this.zoomStack = null;
       const pg = this.vp.pattyGroup && this.vp.patty ? this.vp.pattyGroup.position.clone().setY(this.vp.pattyGroup.position.y + (this.vp.patty.h || 0.02) / 2) : null;
-      const t = pg || (this.vp.mode === 'stove' ? new T.Vector3(0, this.vp.PAN_Y + 0.01, 0) : new T.Vector3(0, 0.01, 0));
+      const itemView = this.vp.selectedItem && this.vp.itemViews.get(this.vp.selectedItem);
+      const stack = this.vp.assemblyViews?.get(this.vp.selected);
+      const t = itemView ? itemView.group.position.clone().add(new T.Vector3(0, .01, 0)) : stack ? stack.position.clone().add(new T.Vector3(0,(stack.userData.height||0)*.45,0)) : pg || (this.vp.mode === 'stove' ? new T.Vector3(0, this.vp.PAN_Y + 0.01, 0) : new T.Vector3(0, 0.01, 0));
       if (name === 'oven') this.goal = { target: new T.Vector3(.10, -.43, -.29), azimuth: -Math.PI/2, polar: 1.38, dist: .95 };
       if (name === 'room') this.goal = { target: new T.Vector3(0, -.13, .12), azimuth: -1.05, polar: 1.07, dist: 2.5 };
       if (name === 'top') this.goal = { target: t, azimuth: this.goal.azimuth, polar: 0.12, dist: 0.5 };
       if (name === 'side') this.goal = { target: t.clone().setY(t.y + 0.01), azimuth: -Math.PI / 2, polar: 1.45, dist: 0.32 };
       if (name === 'close') this.goal = { target: t.clone().setY(t.y + 0.01), azimuth: this.goal.azimuth, polar: 1.1, dist: 0.16 };
       if (name === 'serve') { const az = -0.9; this.goal = { target: t.clone().add(new T.Vector3(0, 0.015, 0)), azimuth: az, polar: 1.2, dist: 0.34 }; }
-      if (name === 'default') this.reset(this.vp.mode);
+      if (name === 'default') { this.reset(this.vp.mode); this.goal.target.copy(t); }
     }
     dolly(f) { this.goal.dist = clamp(this.goal.dist * f, 0.06, 2.5); }
     onDown(e) {

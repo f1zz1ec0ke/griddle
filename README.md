@@ -29,7 +29,7 @@ Open [localhost:8000](http://localhost:8000). GG
 | C | Toggle cutaway |
 | 1–4 / R | Camera presets / reset |
 
-Use the bottom dock for cooking, **Heat**, **Ingredients** and **Utensils** for extras, and **Menu** for saves and settings. **Help** has the full controls. You can pause, reheat food, and replace ruined toppings.
+Use the dock to cook, then **Build** to stack rested food, fresh toppings and sauces. **Undo layer** or **Unpack** lets you change it. **Replace patty** starts a fresh one during service; the order clock keeps running. **Open window** clears lingering smoke. **Menu** has saves and settings; **Help** has the full controls.
 
 Service and practice save separately in your browser. Resume picks up paused; nothing cooks while you're away.
 

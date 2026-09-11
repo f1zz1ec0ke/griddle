@@ -6,6 +6,7 @@
 (function (root) {
   'use strict';
   const P = root.BurgerPhysics;
+  const A = root.BurgerAssembly;
   const $ = (id) => document.getElementById(id);
   const sum = (arr) => { let t = 0; for (const v of arr) t += v; return t; };
   const fmt = (v, d = 0) => (v == null || Number.isNaN(v) ? '—' : v.toFixed(d));
@@ -22,11 +23,11 @@
   const SHORT = { rare: 'Rare', 'medium-rare': 'MR', medium: 'Med', 'medium-well': 'MW', 'well-done': 'WD' };
 
   const TICKETS = [
-    { who: 'Table 3', line: '“Rare. Like, actually rare. I will send it back.”', items: ['rare'], builds: [["bun"]] },
-    { who: 'Table 7', line: '“Medium-rare, please, and a good crust on it.”', items: ['medium-rare'], builds: [["bun", "cheese"]] },
-    { who: 'The regular at the bar', line: '“Medium. Warm pink centre, not red, not grey.”', items: ['medium'], builds: [["bun", "bacon", "cheese"]] },
-    { who: 'Table 12', line: '“Medium-well — just a hint of pink.”', items: ['medium-well'], builds: [["bun", "onions"]] },
-    { who: 'A dad', line: '“Well done. No pink. Don\'t burn it though.”', items: ['well-done'], builds: [["bun", "egg"]] },
+    { who: 'Table 3', line: '“Rare. Like, actually rare. I will send it back.”', items: ['rare'], builds: [["bun", "pickles", "mustard"]] },
+    { who: 'Table 7', line: '“Medium-rare, please, and a good crust on it.”', items: ['medium-rare'], builds: [["bun", "cheese", "lettuce", "tomato"]] },
+    { who: 'The regular at the bar', line: '“Medium. Warm pink centre, not red, not grey.”', items: ['medium'], builds: [["bun", "bacon", "cheese", "mayo"]] },
+    { who: 'Table 12', line: '“Medium-well — just a hint of pink.”', items: ['medium-well'], builds: [["bun", "onions", "mustard"]] },
+    { who: 'A dad', line: '“Well done. No pink. Don\'t burn it though.”', items: ['well-done'], builds: [["bun", "egg", "ketchup"]] },
     { who: 'Table 9, two covers', line: '“One medium-rare, one well done — she doesn\'t trust pink. Together, please.”', items: ['medium-rare', 'well-done'], builds: [["bun", "cheese"], ["bun", "bacon"]] },
     { who: 'Two regulars', line: '“Both medium. Same time, same plate.”', items: ['medium', 'medium'], builds: [["bun", "onions"], ["bun", "egg"]] },
     { who: 'Date night', line: '“Rare for me, medium-well for him. Don\'t let mine sit while his cooks.”', items: ['rare', 'medium-well'], builds: [["bun"], ["bun", "cheese", "bacon"]] },
@@ -37,7 +38,7 @@
   const SHIFT_LEN = 6;                  // six tickets is a service
   const SAVE_KEY = 'griddle.session.v1';
   const SNAPSHOT_FIELDS = ['mode', 'phase', 'state', 'patties', 'forms', 'equip', 'ticket', 'shift', 'sel', 'selItem', 'probe', 'speed', 'hard', 'ticketTarget', 'ticketClock', 'ticketTiming', 'ticketRecorded', 'stoveUsed', 'practiceNextId', 'addingPractice', 'shownShiftEnd'];
-  const BUILD_NAMES = { bun: 'bun halves', cheese: 'cheese', bacon: 'bacon', egg: 'egg', onions: 'onions' };
+  const BUILD_NAMES = { bun: 'bun halves', cheese: 'cheese', bacon: 'bacon', egg: 'egg', onions: 'onions', ...Object.fromEntries(Object.entries(A.cold).map(([k,v]) => [k,v.label.toLowerCase()])) };
   const BEST_KEY = 'griddle.bestShift'; // localStorage: the best shift this browser has ever cooked
   const money = (v) => '$' + (v || 0).toFixed(2);
 
@@ -45,6 +46,8 @@
     constructor() {
       this.vp = new root.BurgerRender.Viewport($('view'));
       this.audio = new root.KitchenAudio();
+      this.fahrenheit = false;
+      try { this.fahrenheit = localStorage.getItem('griddle.temperatureUnit') === 'F'; } catch (_) {}
       this.speed = 1; this.phase = 'order'; this.hard = false;
       this.mode = 'service'; this.paused = false; this.autosaveClock = 0;
       this.probe = { inserted: false, depth: 0.5, reading: null };
@@ -57,6 +60,9 @@
       this.shift = this.emptyShift();
       this.bind();
       this.newOrder();
+      this.unitLabels = Array.from(document.querySelectorAll('option, #help p, #help li')).map(el => [el, el.innerHTML]);
+      this.unitTitles = Array.from(document.querySelectorAll('[title]')).filter(el => el.title.includes('°C')).map(el => [el, el.title]);
+      this.syncUnits();
       $('btn-load').textContent = 'Resume saved service';
       try { $('btn-service-load').hidden = $('btn-load').hidden = !localStorage.getItem(SAVE_KEY + '.service'); $('btn-practice-load').hidden = !localStorage.getItem(SAVE_KEY + '.practice'); } catch (_) {}
       this.last = performance.now(); this.acc = 0;
@@ -106,6 +112,7 @@
       } catch (_) { $('save-status').textContent = 'Saved session could not be read. Your current kitchen is unchanged.'; return false; }
       this.vp.setPatty(null);
       for (const k of SNAPSHOT_FIELDS) this[k] = snapshot[k];
+      if (this.phase !== 'result') for (const p of this.patties) { p.manualAssembly = true; p.assembly ||= []; }
       this.previews = []; this.stateForPreview = null;
       this.sel = Math.max(0, Math.min(this.sel || 0, this.forms.length - 1));
       this.chipsHTML = this.assignHTML = this.clockHTML = ''; this.logN = -1;
@@ -119,7 +126,7 @@
       this.layoutSpots(); this.applyEquipUI(); this.updateOrderText(); this.updateShiftBar(); this.updateTicketClock();
       $('knob').value = this.state.stove.knob; $('knob-v').textContent = this.state.stove.knob;
       $('e-fatg-v').textContent = this.equip.fatG + ' g'; $('e-coalg-v').textContent = this.equip.coalG + ' g';
-      this.syncProbe(); $('btn-lid').textContent = this.state.lid ? 'Lid off' : 'Lid on';
+      this.syncProbe(); this.syncUnits(); $('btn-lid').textContent = this.state.lid ? 'Lid off' : 'Lid on';
       $('h-sense').hidden = true; this.senseNote = '';
       $('shiftend').hidden = true;
       $('btn-load').hidden = false; $('btn-load').textContent = 'Resume saved ' + this.mode;
@@ -135,6 +142,9 @@
       $('probe-depth').value = Math.round(this.probe.depth * 100);
       $('probe-depth-v').textContent = $('probe-depth').value + ' %';
       $('btn-probe').textContent = this.probe.inserted ? 'Pull probe' : 'Insert probe';
+      $('ro-probe').setAttribute('aria-pressed', String(this.probe.inserted));
+      $('ro-probe').setAttribute('aria-label', $('btn-probe').textContent);
+      $('ro-probe').title = $('btn-probe').textContent;
     }
     startPractice() {
       this.mode = 'practice'; this.paused = false; this.addingPractice = false; this.practiceNextId = 1;
@@ -163,6 +173,7 @@
     }
     reheat() {
       const it = this.selItem, p = this.patty;
+      if (it?.assembledTo != null || (!it && p?.assembly?.length)) return;
       if (it) { if (!P.reheatItem(this.state, it)) return; }
       else { if (!p || !['rest', 'oven'].includes(p.where)) return; P.placePatty(this.state, p, P.freeSpot(this.state, p.D / 2).pos); }
       this.setPhase('cook'); this.vp.forceTex = true;
@@ -172,11 +183,21 @@
       if (this.selItem) {
         if (!P.discardItem(this.state, this.selItem)) return;
         this.selItem = null; P.selectItem(this.state, null);
-      } else if (this.mode === 'practice' && this.patty) {
+      } else if (this.patty) {
         const p = this.patty;
+        A.unpack(p);
         if (p.where === 'pan') P.removePatty(this.state, p);
         this.state.patties = this.state.patties.filter(q => q !== p);
         for (const it of this.items) if (it.burger === p.id) it.burger = null;
+        this.state.wasteG = (this.state.wasteG || 0) + P.pattyMass(p) * 1000;
+        if (this.mode === 'service') {
+          const fresh = this.makeFromForm(this.form, this.sel); fresh.id = p.id;
+          this.patties[this.sel] = fresh;
+          P.selectPatty(this.state, fresh); this.probe.inserted = false; this.probe.reading = null; this.syncProbe();
+          this.vp.setPatty(null); this.setPhase('cook');
+          P.logEvent(this.state, `Patty ${p.id} discarded. Fresh replacement on the board; the order clock keeps running.`, 'action');
+          return;
+        }
         this.patties.splice(this.sel, 1); this.forms.splice(this.sel, 1);
         this.sel = Math.max(0, this.sel - 1);
         this.state.patty = this.patty; this.state.where = this.patty ? this.patty.where : 'board';
@@ -190,9 +211,8 @@
       if (this.mode === 'practice') { el.textContent = ''; return; }
       const rows = (this.ticket.builds || []).map((build, i) => {
         const p = this.patties[i];
-        const tops = p ? this.items.filter(it => P.plannedBurger(this.state, it) === p) : [];
         return `<div><b>${i + 1} ${this.label(this.ticket.items[i])}</b>: ` + build.map(k => {
-          const have = p && (k === 'cheese' ? p.cheeses.length > 0 : k === 'bun' ? ['top', 'bottom'].every(half => tops.some(it => it.kind === k && it.half === half)) : tops.some(it => it.kind === k));
+          const have = p && !P.buildOf(this.state,p).missing.includes(k);
           return `<span class="${have ? 'ready' : 'missing'}">${have ? '✓' : '○'} ${BUILD_NAMES[k]}</span>`;
         }).join(' · ') + '</div>';
       });
@@ -228,7 +248,8 @@
       $('order-range').textContent = items.map((id) => { const d = P.DONENESS.find((x) => x.id === id); return `${d.label} ${d.lo}–${d.hi} °C`; }).join(' · ') + ' at the centre after resting' + (items.length > 1 ? `. ${items.length} burgers, one pan, and they all have to land hot at the same time.` : '');
       $('ticket-target').textContent = items.map((id) => this.label(id)).join(' + ');
       const hint = items.map((id) => { const d = P.DONENESS.find((x) => x.id === id); return `${d.label}: ${d.lo}–${d.hi} °C`; }).join(' · ') + ' at the centre, measured at its peak after resting';
-      $('ticket').dataset.hint = hint; $('ticket').title = hint;
+      $('order-range').textContent = this.tempText($('order-range').textContent);
+      $('ticket').dataset.hint = this.tempText(hint); $('ticket').title = this.tempText(hint);
       $('order-builds').textContent = (this.ticket.builds || []).map((build, i) => `${i + 1} ${this.label(items[i])}: ${build.map(k => BUILD_NAMES[k]).join(', ')}`).join(' · ');
     }
     // ------------------------------------------------------------ the shift: six tickets and a till
@@ -344,8 +365,6 @@
       this.sel = i;
       if (this.phase === 'form') { this.loadForm(); this.rebuildPreview(); }
       else if (this.patty) {
-        if (this.patty.where === 'oven') this.cameraPreset = 'oven';
-        else if (this.state.patty && this.state.patty.where === 'oven') this.cameraPreset = this.patty.where === 'pan' ? 'default' : 'serve';
         P.selectPatty(this.state, this.patty);
         this.probe.reading = null;
         if (this.phase === 'result') { this.showPattyResult(); this.vp.controls.preset('serve'); }
@@ -355,7 +374,6 @@
     /** Select a topping instead of a patty: the flip and remove buttons point at it. */
     selectItem(it) {
       if (!it) return;
-      if (this.patty && this.patty.where === 'oven') this.cameraPreset = 'default';
       this.selItem = it; P.selectItem(this.state, it);
       this.refreshButtons(); this.updateChips();
     }
@@ -382,7 +400,7 @@
         const st = P.itemState(it);
         // where it is going: assigned by hand, or the default the build step would pick (shown in
         // brackets, so the cook sees the plan while there is still time to change it)
-        const plan = this.patties.length > 1 && it.burger == null ? P.plannedBurger(this.state, it) : null;
+        const plan = this.patties.length > 1 && it.burger == null && !this.patties.some(p=>p.manualAssembly) ? P.plannedBurger(this.state, it) : null;
         const dest = it.burger ? ` → ${it.burger}` : plan ? ` → (${plan.id})` : '';
         const status = it.where === 'pan' ? `${P.fmtTime(it.cookTime)} · ${st.state}` : `${st.state}${dest}`;
         return `<button class="chip item${it === this.selItem ? ' on' : ''}" data-item="${i}" title="Select this topping"><b>${it.spec.short}</b> <small>${status}</small></button>`;
@@ -412,6 +430,7 @@
       const blend = P.BLENDS.find((b) => b.id === f.blend);
       const p = P.makePatty({ id: i + 1, target: f.target, massG: f.massG, thicknessMm: f.thicknessMm, fatFrac: blend.fat, tempC: temp, dimple: f.dimple, work: f.work, salt: f.salt });
       p.requiredBuild = this.mode === 'practice' ? [] : (this.ticket.builds && this.ticket.builds[i]) || [];
+      p.manualAssembly = true; p.assembly = [];
       return p;
     }
     rebuildPreview() {
@@ -427,6 +446,7 @@
       $('f-time').textContent = `~${(tHalf / 60 * 0.6).toFixed(0)}–${(tHalf / 60 * 0.9).toFixed(0)} min total (thermal diffusion estimate)`;
       const d = P.DONENESS.find((x) => x.id === f.target);
       $('f-warn').textContent = f.temp === 'frozen' ? 'Frozen: the outside will be well done before the middle thaws.' : f.thicknessMm < 10 ? 'This thin, it is a smash patty. There will be no pink centre whatever you do.' : f.thicknessMm > 32 ? 'Very thick: expect a wide grey band unless you flip often and keep the pan moderate.' : (this.mode !== 'practice' && d.hi < 60 && f.thicknessMm < 15) ? `Thin for a ${d.label.toLowerCase()}: the centre will race past ${d.hi} °C before a crust forms.` : (this.mode !== 'practice' && d.lo >= 65 && f.thicknessMm > 22) ? `Thick for a ${d.label.toLowerCase()}: a long cook, and a wide grey band before the centre gets there.` : '';
+      $('f-warn').textContent = this.tempText($('f-warn').textContent);
       const board = this.stateForPreview || (this.stateForPreview = P.createState({}));
       board.patty = p; board.where = 'board';
       this.vp.setPatty(p);
@@ -451,6 +471,7 @@
         $('knob').value = st.stove.knob; $('knob-v').textContent = String(st.stove.knob);
       } else {
         this.state = P.createState({ pan: this.equip.pan, stove: this.equip.stove });
+        this.state.room=P.roomAir(st);
         this.vp.setStove(this.equip.stove); this.vp.setPan(this.equip.pan); this.vp.clearStains();
         $('knob').value = 0; $('knob-v').textContent = '0';
       }
@@ -507,10 +528,22 @@
     // ------------------------------------------------------------ binding
     bind() {
       const s = this;
-      for (const name of ['heat', 'toppings', 'tools']) {
+      for (const name of ['heat', 'toppings', 'tools', 'build']) {
         $('open-' + name).onclick = () => s.setDrawer(s.drawer === name ? null : name);
         $('close-' + name).onclick = () => s.setDrawer(null, true);
       }
+      $('open-build').onclick = () => {
+        if (s.drawer === 'build') { s.setDrawer(null); return; }
+        s.selItem = null; P.selectItem(s.state,null); s.cameraPreset = 'serve';
+        s.refreshButtons(); s.updateChips(); s.setDrawer('build');
+      };
+      $('assembly-controls').addEventListener('click', e => {
+        const b = e.target.closest('[data-build]'); if (!b || b.disabled) return;
+        const key = b.dataset.build;
+        if (key.startsWith('select:')) { s.select(Number(key.slice(7))); s.cameraPreset = 'serve'; }
+        else s.buildLayer(key);
+      });
+      $('btn-window').onclick = () => { P.toggleWindow(s.state); s.stoveUsed=true; s.updateHUD(); };
       $('btn-pause').onclick = () => s.setPaused(!s.paused);
       $('btn-save').onclick = () => s.saveSession();
       $('btn-load').onclick = () => s.loadSession();
@@ -546,7 +579,7 @@
       });
       this.vp.onPick = (o) => { const i = s.patties.indexOf(o); if (i >= 0) s.select(i); else if (s.items.indexOf(o) >= 0) s.selectItem(o); };
       // equipment
-      const swapStove = () => { s.state = P.createState({ pan: s.equip.pan, stove: s.equip.stove }); s.vp.setStove(s.equip.stove); s.vp.setPan(s.equip.pan); s.vp.clearStains(); $('knob').value = 0; $('knob-v').textContent = '0'; s.layoutSpots(); s.applyEquipUI(); s.refreshButtons(); $('btn-lid').textContent = s.state.lid ? 'Lid off' : 'Lid on'; P.logEvent(s.state, s.state.grill ? 'Wheeled the kettle out. Cold coals, cold grate: light it and wait.' : `Swapped to ${s.state.pan.name.toLowerCase()} on ${s.state.stove.name.split(' (')[0].toLowerCase()}: a cold pan.`, 'action'); s.logN = -1; };
+      const swapStove = () => { const air=P.roomAir(s.state); s.state = P.createState({ pan: s.equip.pan, stove: s.equip.stove }); s.state.room=air; s.vp.setStove(s.equip.stove); s.vp.setPan(s.equip.pan); s.vp.clearStains(); $('knob').value = 0; $('knob-v').textContent = '0'; s.layoutSpots(); s.applyEquipUI(); s.refreshButtons(); $('btn-lid').textContent = s.state.lid ? 'Lid off' : 'Lid on'; P.logEvent(s.state, s.state.grill ? 'Wheeled the kettle out. Cold coals, cold grate: light it and wait.' : `Swapped to ${s.state.pan.name.toLowerCase()} on ${s.state.stove.name.split(' (')[0].toLowerCase()}: a cold pan.`, 'action'); s.logN = -1; };
       $('e-stove').addEventListener('change', (e) => { s.equip.stove = e.target.value; if (s.phase === 'cook' && !s.anyPlaced()) swapStove(); });
       $('e-pan').addEventListener('change', (e) => { s.equip.pan = e.target.value; if (s.phase === 'cook' && !s.anyPlaced()) swapStove(); });
       $('e-fat').addEventListener('change', (e) => { s.equip.fat = e.target.value; });
@@ -587,6 +620,7 @@
         // the pan during the rest puts the stove back in front of you
         if (s.phase === 'rest') { s.setPhase('cook'); P.logEvent(s.state, 'Back on the stove: something else is going in the pan while the meat rests.', 'action'); }
         const made = P.addItem(s.state, kind);
+        if (made && !made.length) { if (kind === 'bun') s.selectItem(s.items.find(it => it.kind === 'bun')); s.limitWarning(); }
         if (made && made.length) { s.selectItem(made[0]); s.audio.hiss(0.5); }
         s.refreshButtons(); s.updateChips();
       };
@@ -594,13 +628,6 @@
       $('btn-bacon').onclick = () => addExtra('bacon');
       $('btn-egg').onclick = () => addExtra('egg');
       $('btn-onion').onclick = () => addExtra('onions');
-      $('assign-btns').addEventListener('click', (e) => {
-        const b = e.target.closest('[data-burger]'); if (!b || !s.selItem) return;
-        const p = s.patties[Number(b.dataset.burger)];
-        P.assignTopping(s.state, s.selItem, p);
-        P.logEvent(s.state, `${s.selItem.label} goes on burger ${p.id}.`, 'action');
-        s.refreshButtons(); s.updateChips();
-      });
       // ---- the cook's own senses. In hard mode they are all there is; in normal mode a real cook
       // uses them anyway, and they cost exactly the same either way.
       $('btn-presstest').onclick = () => {
@@ -637,12 +664,13 @@
       $('btn-press').onclick = () => { P.pressPatty(s.state, false, s.patty); s.audio.hiss(0.5); s.vp.forceTex = true; };
       $('btn-smash').onclick = () => { P.pressPatty(s.state, true, s.patty); s.audio.hiss(0.9); s.vp.forceTex = true; s.refreshButtons(); };
       $('btn-lid').onclick = () => { P.toggleLid(s.state); $('btn-lid').textContent = s.state.lid ? 'Lid off' : 'Lid on'; };
-      $('btn-cheese').onclick = () => { P.addCheese(s.state, s.patty); s.refreshButtons(); };
+      $('btn-cheese').onclick = () => { if (!P.addCheese(s.state, s.patty)) s.limitWarning(); s.refreshButtons(); };
       $('btn-baste').onclick = () => { P.basteButter(s.state); s.audio.hiss(0.4); };
       $('btn-wash').onclick = () => { if (P.washPan(s.state)) { s.audio.hiss(Math.min(1, (s.state.pan.T - 30) / 100)); s.vp.forceTex = true; } };
       $('btn-wipe').onclick = () => { P.wipeStove(s.state); s.vp.clearStains(); };
       $('btn-remove').onclick = () => { if (s.selItem) { if (P.removeItem(s.state, s.selItem)) { s.maybeRest(); s.refreshButtons(); s.updateChips(); } } else s.remove(); };
-      $('btn-probe').onclick = () => { s.probe.inserted = !s.probe.inserted; s.probe.reading = null; $('btn-probe').textContent = s.probe.inserted ? 'Pull probe' : 'Insert probe'; };
+      $('btn-probe').onclick = () => { s.probe.inserted = !s.probe.inserted; s.probe.reading = null; s.syncProbe(); };
+      $('ro-probe').onclick = () => { if (!$('help').hidden) return; $('btn-probe').click(); };
       $('probe-depth').addEventListener('input', (e) => { s.probe.depth = Number(e.target.value) / 100; $('probe-depth-v').textContent = e.target.value + ' %'; });
       $('btn-cut').onclick = () => { if (s.stopped || $('btn-cut').disabled) return; s.selItem = null; P.selectItem(s.state, null); s.ticketTiming = false; P.serve(s.state); s.setPhase('result'); }; // the clock stops when the plates leave the pass
       // everything this ticket had goes with it: the toppings too, or the next order's form phase
@@ -655,6 +683,7 @@
       $('r-chips').addEventListener('click', (e) => { const b = e.target.closest('[data-chip]'); if (b) s.select(Number(b.dataset.chip)); });
       for (const b of document.querySelectorAll('[data-speed]')) b.onclick = () => s.setSpeed(Number(b.dataset.speed));
       for (const b of document.querySelectorAll('[data-view]')) b.onclick = () => s.vp.controls.preset(b.dataset.view);
+      $('btn-units').onclick = () => { this.fahrenheit = !this.fahrenheit; try { localStorage.setItem('griddle.temperatureUnit', this.fahrenheit ? 'F' : 'C'); } catch (_) {} this.syncUnits(); };
       $('btn-audio').onclick = () => { const on = s.audio.toggle(); $('btn-audio').textContent = on ? 'Sound on' : 'Sound off'; };
       $('hard').addEventListener('change', (e) => {
         s.hard = e.target.checked; document.body.classList.toggle('hard', s.hard);
@@ -719,7 +748,22 @@
       }, true);
     }
     /** The last thing the cook's eyes, ears, fingers or hand reported, on the HUD as well as the log. */
-    note(text) { this.senseNote = text; $('h-sense-v').textContent = text; $('h-sense').hidden = false; }
+    tempText(text) { return root.TemperatureUnits.text(text, this.fahrenheit); }
+    syncUnits() {
+      $('btn-units').textContent = this.fahrenheit ? '°F · switch to °C' : '°C · switch to °F';
+      for (const [el, source] of this.unitLabels || []) el.innerHTML = this.tempText(source);
+      for (const [el, source] of this.unitTitles || []) el.title = this.tempText(source);
+      this.updateOrderText(); this.updateHUD(); this.logN = -1; this.updateLog();
+      if (this.phase === 'result') this.renderResultDetails();
+      if (this.form && this.phase === 'form') this.rebuildPreview();
+    }
+    limitWarning(now = performance.now()) {
+      this.limitHits = now - (this.lastLimitHit ?? -Infinity) < 5000 ? (this.limitHits || 0) + 1 : 1;
+      this.lastLimitHit = now; this.noticeUntil = now + 3000;
+      $('kitchen-notice').textContent = this.limitHits >= 3 ? 'CALM DOWN FFS!' : 'Calm down!';
+      $('kitchen-notice').hidden = false;
+    }
+    note(text) { this.senseNote = text; $('h-sense-v').textContent = this.tempText(text); $('h-sense').hidden = false; }
     /** Test/debug hook: advance the physics by `seconds` without rendering. */
     fastForward(seconds) { if (this.stopped) return; let n = Math.round(seconds / DT); while (n-- > 0) P.step(this.state, DT); if (this.ticketTiming) { this.ticketClock += seconds; this.updateTicketClock(); } this.vp.forceTex = true; }
     setSpeed(v) { this.speed = v; for (const b of document.querySelectorAll('[data-speed]')) b.classList.toggle('on', Number(b.dataset.speed) === v); }
@@ -789,11 +833,18 @@
       $('practice-tools').hidden = this.mode !== 'practice' || !['cook', 'rest'].includes(this.phase);
       $('btn-add-patty').disabled = this.patties.length >= 4;
       $('btn-add-patty').textContent = this.patties.length >= 4 ? 'Four patties on the bench' : 'Form another patty';
-      $('btn-reheat').disabled = !(it ? it.where === 'rest' : p && ['rest', 'oven'].includes(p.where));
-      $('btn-discard').disabled = !(it && it.where !== 'cut') && !(this.mode === 'practice' && p);
-      $('btn-discard').textContent = it && it.pair != null ? 'Discard both bun halves' : it ? 'Discard ' + it.spec.short : this.mode === 'practice' ? 'Discard patty' : 'Discard topping';
+      $('btn-reheat').disabled = !(it ? it.where === 'rest' && it.assembledTo == null : p && ['rest', 'oven'].includes(p.where) && !p.assembly?.length);
+      $('btn-discard').disabled = !(it && it.where !== 'cut') && !(p && p.where !== 'cut');
+      $('btn-discard').textContent = it && it.pair != null ? 'Discard both bun halves' : it ? 'Discard ' + it.spec.short : this.mode === 'practice' ? 'Discard patty' : 'Replace patty';
+      $('btn-discard').title = !it && this.mode === 'service' ? 'Discard this patty and put a fresh one on the board. The order clock keeps running.' : 'Discard selected food';
+      $('open-build').disabled = !p || p.where !== 'rest';
+      this.renderAssembly();
       $('btn-cut').hidden = !(this.phase === 'rest' || (this.mode === 'practice' && this.phase === 'cook'));
       if (it && this.items.indexOf(it) < 0) this.selItem = null;
+      const air=P.roomAir(this.state);
+      $('btn-window').textContent=air.windowOpen?'Close window':'Open window';
+      $('btn-window').setAttribute('aria-pressed',String(air.windowOpen));
+      $('btn-window').title=air.windowOpen?'Fresh air is clearing the room':air.upper+air.lower>.35?'Smoke is gathering — open the window to clear the room':'Ventilate the kitchen';
       const where = p ? p.where : 'board';
       const inPan = on && where === 'pan';
       const itemOn = on && !!it && it.where === 'pan';
@@ -803,7 +854,7 @@
       // the flip and remove buttons act on whichever chip is selected — a patty or a topping
       $('btn-flip').disabled = it ? !itemOn : !inPan;
       $('btn-flip').textContent = it ? (it.kind === 'onions' ? 'Stir' : 'Turn') : 'Flip';
-      $('btn-oven').disabled = !!it || !p || !['cook', 'rest'].includes(this.phase) || !['pan', 'rest'].includes(where);
+      $('btn-oven').disabled = !!it || !p || !!p.assembly?.length || !['cook', 'rest'].includes(this.phase) || !['pan', 'rest'].includes(where);
       $('btn-remove').disabled = it ? !itemOn : !(inPan || where === 'oven');
       $('btn-remove').textContent = it ? 'Lift off' : where === 'oven' ? 'Out & rest' : 'Rest';
       // a pan lid is for what is in the pan; a kettle lid is part of the fire (it is half the
@@ -813,25 +864,15 @@
       const onMetal = it ? itemOn : inPan;
       $('btn-scrape').disabled = !inPan || !!it; // only meat welds itself down
       for (const id of ['btn-move-in', 'btn-move-out']) $(id).disabled = !onMetal;
-      if (inPan && !it) { const raw = P.gridMean(p, p.dM) < 0.25; $('btn-smash').disabled = !raw || p.h < 0.006 || !!this.state.grill; $('btn-cheese').disabled = p.cheeses.length >= 24; $('btn-baste').disabled = !!this.state.grill; }
+      if (inPan && !it) { const raw = P.gridMean(p, p.dM) < 0.25; $('btn-smash').disabled = !raw || p.h < 0.006 || !!this.state.grill; $('btn-cheese').disabled = false; $('btn-baste').disabled = !!this.state.grill; }
       for (const id of ['btn-bun', 'btn-bacon', 'btn-egg', 'btn-onion']) $(id).disabled = !(on || this.phase === 'rest');
-      // the build step: with more than one burger on the ticket, say which one this topping is for
-      const many = this.patties.length > 1;
-      const live = on || this.phase === 'rest';
-      $('assign-row').hidden = !live || !it || !many;
-      if (live && it && many) {
-        // the burger this topping would go to if nothing is said: shown as a dotted outline, so the
-        // default build is visible before the plate goes out rather than on the results card
-        const plan = it.burger == null ? P.plannedBurger(this.state, it) : null;
-        const html = this.patties.map((q, i) => `<button data-burger="${i}" class="${it.burger === q.id ? 'on' : plan && plan.id === q.id ? 'plan' : ''}">${i + 1} ${this.mode === 'practice' ? 'Patty' : SHORT[q.target]}</button>`).join(' ')
-          + (plan ? ` <small>burger ${plan.id} unless you say otherwise${it.pair ? ' — both halves of a bun go together' : ''}</small>` : '');
-        if (html !== this.assignHTML) { $('assign-btns').innerHTML = html; this.assignHTML = html; }
-      }
       // the senses act on the selected patty, on the metal or resting; the hand only needs a stove
       const canSense = (on || this.phase === 'rest') && !!p && (where === 'pan' || where === 'rest') && !it;
       $('btn-presstest').disabled = !canSense; $('btn-peek').disabled = !canSense;
       $('btn-hand').disabled = !(on || this.phase === 'rest');
       $('btn-probe').disabled = !(inPan || (p && ['rest', 'oven'].includes(where))) || this.hard; // hard mode: no thermometers at all
+      $('ro-probe').disabled = $('btn-probe').disabled;
+      this.syncProbe();
       $('btn-wash').disabled = !on || this.inPan().length > 0 || this.items.some((q) => q.where === 'pan'); $('btn-wipe').disabled = !on;
       // the fire: wood and coals go on any time there is a kettle, ash only comes out of a cold one
       if (this.state.grill) {
@@ -841,10 +882,11 @@
       }
       $('e-stove').disabled = $('e-pan').disabled = this.anyPlaced() || this.items.length > 0;
       if (this.state.grill) { $('btn-fat').disabled = true; }
-      $('btn-cut').disabled = !this.patties.length || this.patties.some(q => q.where === 'board' || q.where === 'oven') || this.inPan().length > 0 || this.items.some((q) => q.where === 'pan');
+      $('btn-cut').disabled = !this.patties.length || this.patties.some(q => q.where === 'board' || q.where === 'oven' || (q.assembly?.length && (!A.hasPatty(q) || (q.assembly.some(l=>l.item?.half==='bottom') && !A.closed(q))))) || this.inPan().length > 0 || this.items.some((q) => q.where === 'pan');
     }
     // ------------------------------------------------------------ loop
     frame(now) {
+      if (this.noticeUntil && now >= this.noticeUntil) { $('kitchen-notice').hidden = true; this.noticeUntil = 0; }
       const visualDt = Math.max(0, Math.min(0.1, (now - this.last) / 1000));
       const real = this.stopped ? 0 : visualDt; this.last = now;
       const st = this.state;
@@ -869,7 +911,7 @@
           this.updateLog();
           this.updateChips();
           this.btnClock = (this.btnClock || 0) + real; if (this.btnClock > 0.5) { this.btnClock = 0; this.refreshButtons(); } // smash/empty-ash follow the physics, not only clicks
-          if (this.phase === 'rest') { const p = this.patty; $('rest-t').textContent = P.fmtTime(p ? p.restT || 0 : st.rest.t); $('rest-c').textContent = this.hard || !p ? '—' : fmt(P.centerT(p), 1) + ' °C'; }
+          if (this.phase === 'rest') { const p = this.patty; $('rest-t').textContent = P.fmtTime(p ? p.restT || 0 : st.rest.t); $('rest-c').textContent = this.hard || !p ? '—' : this.tempText(fmt(P.centerT(p), 1) + ' °C'); }
         }
       } else {
         this.audio.update({ sizzle: 0, spatter: 0 }, 0, real);
@@ -880,10 +922,21 @@
       const viewState = this.phase === 'form' ? this.stateForPreview : this.phase === 'order' ? (this.stateForPreview || P.createState({})) : st;
       if (this.phase === 'form' || this.phase === 'order') { viewState.diag = viewState.diag || {}; viewState.where = 'board'; }
       this.vp.setProbe(this.probe.inserted && !!this.state.patty && (this.phase === 'cook' || this.phase === 'rest'), this.probe.depth);
+      viewState.room=P.roomAir(st);
       this.vp.update(viewState, real, visualDt);
       // Position the food first, then ease the camera toward its new station.
+      this.followSelectedFood();
       if (this.cameraPreset) { this.vp.controls.preset(this.cameraPreset); this.cameraPreset = null; }
       requestAnimationFrame((t) => this.frame(t));
+    }
+    followSelectedFood() {
+      if (!['cook', 'rest'].includes(this.phase)) { this.cameraFood = null; return; }
+      const food = this.selItem || this.patty;
+      if (!food) { this.cameraFood = null; return; }
+      if (food !== this.cameraFood || food.where !== this.cameraFoodWhere) {
+        this.cameraFood = food; this.cameraFoodWhere = food.where;
+        this.cameraPreset = food.where === 'oven' ? 'oven' : food.where === 'rest' || food.where === 'cut' ? 'serve' : 'default';
+      }
     }
     updateProbe(dt) {
       const p = this.state.patty; if (!this.probe.inserted || !p || p.where === 'board') { this.probe.reading = null; return; }
@@ -894,6 +947,10 @@
     }
     updateHUD() {
       const st = this.state, p = st.patty, d = st.diag;
+      const air=P.roomAir(this.state);
+      $('btn-window').textContent=air.windowOpen?'Close window':'Open window';
+      $('btn-window').setAttribute('aria-pressed',String(air.windowOpen));
+      $('btn-window').title=air.windowOpen?'Fresh air is clearing the room':air.upper+air.lower>.35?'Smoke is gathering — open the window to clear the room':'Ventilate the kitchen';
       const where = p ? p.where : 'board';
       const irTemperature = st.grill ? st.pan.T : st.pan.Tcenter;
       $('h-pan').textContent = this.hard ? '—' : fmt(irTemperature + (Math.random() - 0.5) * 1.5, 0) + ' °C';
@@ -947,7 +1004,7 @@
           add('Bed raked', fmt((g.bank || 0) * 100, 0) + ' % to one side' + ((g.bank || 0) > 0.05 ? ` · bars ${fmt(g.Thot, 0)} °C over the coals, ${fmt(g.Tcool, 0)} °C off them` : ' (spread flat)'));
           add('Dome air', (this.hard ? '—' : fmt(g.Tdome, 0) + ' °C') + (st.lid ? ' (lid on)' : ''));
         } else add('Burner power to pan', fmt(st.stove.pDelivered, 0) + ' W');
-        add(st.grill ? 'Grate temperature' : 'Pan temperature', fmt(st.pan.T, 1) + ' °C mean · centre ' + fmt(st.pan.Tcenter, 0) + ' · edge ' + fmt(st.pan.Tedge, 0));
+        add(st.grill ? 'Grate temperature' : 'Pan temperature', fmt(st.pan.T, 1) + ' °C mean · centre ' + fmt(st.pan.Tcenter, 0) + ' °C · edge ' + fmt(st.pan.Tedge, 0) + ' °C');
         add('Oil / fat in pan', fmt(st.pan.oil * 1000, 1) + ' g' + (st.pan.oilKind !== 'none' ? ` (${st.pan.oilKind})` : ''));
         add('Water on pan', fmt(st.pan.water * 1000, 2) + ' g');
         add('Fond', fmt(st.pan.fond * 1000, 1) + ' (burnt ' + fmt(st.pan.fondBurnt * 1000, 1) + ')');
@@ -1001,22 +1058,65 @@
             add('Stirs / fond lifted', sit.stirs + ' · ' + fmt(sit.fond * 1000, 2) + ' g');
           }
         }
-        $('insp-table').innerHTML = rows.join('');
+        $('insp-table').innerHTML = this.tempText(rows.join(''));
         this.drawChart($('chart'), st.trace);
       }
+      for (const id of ['h-pan','h-probe','h-side','h-fire','oven-status']) $(id).textContent = this.tempText($(id).textContent);
+      if (this.senseNote) $('h-sense-v').textContent = this.tempText(this.senseNote);
     }
     /** Hard mode has no thermometers, so nothing the game writes gets to quote one either. */
-    maskT(t) { return this.hard ? String(t).replace(/(?:[-−]?\d+(?:\.\d+)?\s*[–—-]\s*)?[-−]?\d+(?:\.\d+)?\s*°C/g, '·· °C') : t; } // a range (“60–63 °C”) goes as one
+    maskT(t) { return this.tempText(this.hard ? String(t).replace(/(?:[-−]?\d+(?:\.\d+)?\s*[–—-]\s*)?[-−]?\d+(?:\.\d+)?\s*°C/g, '·· °C') : t); } // a range (“60–63 °C”) goes as one
     updateLog() {
       const ev = this.state.events; const el = $('log');
       if (this.logN === ev.length) return; this.logN = ev.length;
       el.innerHTML = ev.slice(-14).map((e) => `<div class="ev ${e.kind}"><span>${P.fmtTime(e.t)}</span>${this.maskT(e.text)}</div>`).join('');
       el.scrollTop = el.scrollHeight;
     }
+    buildLayer(key) {
+      const p = this.patty; if (!p || p.where !== 'rest') return false;
+      let ok;
+      if (key === 'undo') ok = A.pop(p);
+      else if (key === 'unpack') { A.unpack(p); ok = true; }
+      else ok = A.add(this.state,p,key.startsWith('item:') ? Number(key.slice(5)) : key);
+      if (!ok) return false;
+      this.selItem = null; P.selectItem(this.state,null);
+      this.vp.forceTex = true; this.cameraPreset = 'serve';
+      this.refreshButtons(); this.updateChips();
+      return true;
+    }
+    renderAssembly() {
+      const p = this.patty, el = $('assembly-controls');
+      if (!p) { el.innerHTML = ''; return; }
+      const stack = A.layers(p), closed = A.closed(p), ready = p.where === 'rest';
+      const button = (key,label,disabled=false,icon='') => `<button data-build="${key}" ${disabled?'disabled':''}>${icon ? `<img alt="" src="assets/icons/${icon}.svg">` : ''}${label}</button>`;
+      let html = '<div class="assembly-burgers">' + this.patties.map((q,i) => button('select:'+i,`Burger ${i+1}`,i===this.sel)).join('') + '</div>';
+      html += `<p class="assembly-hint">${!ready ? 'Rest this patty before building.' : closed ? 'Closed. Ready for the pass.' : 'Stack from the bottom up. Undo lifts the last layer.'}</p>`;
+      html += '<ol class="assembly-stack">' + stack.map(l => `<li>${A.label(l)}</li>`).join('') + '</ol>';
+      if (!stack.length) html += '<p class="assembly-empty">Your plate is empty.</p>';
+      html += '<div class="assembly-edit">'+button('undo','Undo layer',!ready||!stack.length)+button('unpack','Unpack',!ready||!stack.length)+'</div>';
+      html += '<h3>From the pass</h3><div class="assembly-options">';
+      html += button('patty','Patty',!ready||closed||A.hasPatty(p),'burger');
+      for (const it of this.items.filter(it => it.where === 'rest' && it.assembledTo == null)) {
+        const bottom = it.kind === 'bun' && it.half === 'bottom', top = it.kind === 'bun' && it.half === 'top';
+        const blocked = !ready || closed || (bottom ? stack.length>0 : top ? !A.hasPatty(p)||!stack.some(l=>l.item?.pair===it.pair&&l.item.half==='bottom') : !stack.length);
+        html += button('item:'+it.id,it.kind==='bun'?`${it.half==='top'?'Top':'Bottom'} bun · ${it.pair}`:it.spec.short+' · '+it.id,blocked,it.kind==='onions'?'onion':it.kind);
+      }
+      html += '</div><h3>Fresh & sauces</h3><div class="assembly-options">';
+      for (const [key,spec] of Object.entries(A.cold)) html += button(key,spec.label,!ready||closed||!stack.length||stack.filter(l=>l.cold===key).length>=(spec.sauce?1:4),key);
+      html += '</div>';
+      if (el.innerHTML !== html) {
+        const key = el.contains(document.activeElement) && document.activeElement.dataset.build;
+        el.innerHTML = html;
+        if (key) {
+          const next = el.querySelector(`[data-build="${key}"]:not(:disabled)`) || el.querySelector('[data-build="undo"]:not(:disabled)');
+          if(next?.focus) next.focus({preventScroll:true}); else $('close-build').focus({preventScroll:true});
+        }
+      }
+    }
     setDrawer(view, restoreFocus = false) {
       const previous = this.drawer;
       this.drawer = view;
-      for (const name of ['heat', 'toppings', 'tools']) {
+      for (const name of ['heat', 'toppings', 'tools', 'build']) {
         $('drawer-' + name).hidden = name !== view;
         $('open-' + name).setAttribute('aria-expanded', String(name === view));
       }
@@ -1035,9 +1135,10 @@
       ctx.fillStyle = '#16130f'; ctx.fillRect(0, 0, W, H);
       if (trace.length < 2) return;
       const t0 = trace[0].t, t1 = trace[trace.length - 1].t; const span = Math.max(60, t1 - t0);
+      ctx.fillStyle = '#c9bfae'; ctx.fillText(this.fahrenheit ? '°F' : '°C', 4, 10);
       const Tmax = 320; const X = (t) => 36 + ((t - t0) / span) * (W - 44); const Y = (T) => H - 16 - (T / Tmax) * (H - 24);
       ctx.strokeStyle = '#3a332b'; ctx.fillStyle = '#8a8070'; ctx.font = '10px sans-serif';
-      for (let T = 0; T <= Tmax; T += 50) { ctx.beginPath(); ctx.moveTo(36, Y(T)); ctx.lineTo(W - 8, Y(T)); ctx.stroke(); ctx.fillText(T + '°', 4, Y(T) + 3); }
+      for (let T = 0; T <= Tmax; T += 50) { ctx.beginPath(); ctx.moveTo(36, Y(T)); ctx.lineTo(W - 8, Y(T)); ctx.stroke(); ctx.fillText(Math.round(this.fahrenheit ? T * 1.8 + 32 : T) + '°', 4, Y(T) + 3); }
       const series = [['pan', '#e0a04a'], ['surf', '#d75b3a'], ['bottom', '#b8825a'], ['center', '#ff6b7a'], ['top', '#6bb3ff']];
       for (const [k, col] of series) {
         ctx.strokeStyle = col; ctx.lineWidth = k === 'center' ? 2 : 1; ctx.beginPath(); let started = false;
@@ -1178,16 +1279,18 @@
           ? r.build.items.map((b) => `${b.label} — <b>${b.state}</b>`).join('<br>') + (r.build.penalty ? `<br><span class="pen">− ${r.build.penalty.toFixed(1)} on the ticket</span>` : '') + (r.build.bonus ? `<br><span class="bon">+ ${r.build.bonus.toFixed(1)} on the ticket</span>` : '')
           : 'Nothing on it but the patty'],
       ].filter(([k]) => this.mode !== 'practice' || !['Ordered', 'Grey band'].includes(k)).map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+      $('r-stats').innerHTML = this.tempText($('r-stats').innerHTML);
       $('r-notes').innerHTML = r.notes.map((n) => `<li>${this.maskT(n)}</li>`).join('');
       // the two charts are thermometer traces with a °C axis, so hard mode does not get them either
       if (!this.hard) { this.drawChart($('r-chart'), st.trace); this.drawProfile($('r-profile'), r.patty || st.patty); }
     }
     drawProfile(cv, p) {
       const ctx = cv.getContext('2d'); const W = cv.width, H = cv.height; ctx.fillStyle = '#16130f'; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#c9bfae'; ctx.fillText(this.fahrenheit ? '°F' : '°C', 4, 10);
       const N = p.Nz; const Tmax = 110;
       const X = (i) => 36 + (i / (N - 1)) * (W - 44); const Y = (T) => H - 16 - (T / Tmax) * (H - 24);
       ctx.strokeStyle = '#3a332b'; ctx.fillStyle = '#8a8070'; ctx.font = '10px sans-serif';
-      for (let T = 0; T <= 100; T += 25) { ctx.beginPath(); ctx.moveTo(36, Y(T)); ctx.lineTo(W - 8, Y(T)); ctx.stroke(); ctx.fillText(T + '°', 4, Y(T) + 3); }
+      for (let T = 0; T <= 100; T += 25) { ctx.beginPath(); ctx.moveTo(36, Y(T)); ctx.lineTo(W - 8, Y(T)); ctx.stroke(); ctx.fillText(Math.round(this.fahrenheit ? T * 1.8 + 32 : T) + '°', 4, Y(T) + 3); }
       // doneness colour strip along the thickness, on the axis
       for (let i = 0; i < N; i++) { const c = root.BurgerRender.nodeColour(p, i, 0); ctx.fillStyle = `rgb(${c[0] | 0},${c[1] | 0},${c[2] | 0})`; ctx.fillRect(X(i) - (W - 44) / N / 2, H - 12, (W - 44) / N + 1, 10); }
       // centre column (solid) and the rim column (dotted)

@@ -36,7 +36,10 @@
       tiles.setColorAt(n++,color.setHex((ix+iz)%2?0xc4c5ae:0xeee3ce));
     }
     tiles.receiveShadow=true;room.add(tiles);
-    box(.09,2.65,5.6,-2.8,.425,0,cream);box(.09,2.65,5.6,2.8,.425,0,cream);
+    box(.09,2.65,5.6,-2.8,.425,0,cream);
+    // Right wall is built around an opening, not covered by a picture.
+    box(.09,2.65,1.5,2.8,.425,-2.05,cream);box(.09,2.65,2.8,2.8,.425,1.4,cream);
+    box(.09,.96,1.3,2.8,-.42,-.65,cream);box(.09,.51,1.3,2.8,1.495,-.65,cream);
     box(1.15,2.65,.09,-2.225,.425,-2.8,0xe5d9c3);
     box(3.6,2.65,.09,1.0,.425,-2.8,0xe5d9c3);
     box(.85,.53,.09,-1.225,1.485,-2.8,0xe5d9c3);
@@ -51,22 +54,54 @@
     box(1.7,1,.09,0,-.4,1.95,cream);box(1.7,.48,.09,0,1.51,1.95,cream);
     for(const x of [-2.75,2.75])box(.018,.10,5.5,x,-.81,0,0xf8efd9);
     box(5.5,.10,.022,0,-.81,-2.745,0xf8efd9);box(5.5,.10,.022,0,-.81,1.895,0xf8efd9);
-    // Window with visible sky, garden silhouettes and wooden mullions.
-    const sky = new T.Mesh(new T.PlaneGeometry(1.7,1.2),new T.MeshBasicMaterial({color:0xbadce1,side:T.DoubleSide}));
-    sky.position.set(0,.7,1.985);sky.rotation.y=Math.PI;room.add(sky);
-    for(let i=0;i<6;i++) {
-      const m=new T.Mesh(new T.SphereGeometry(.23,9,7),mat(i%2?0x9ab888:0x82a887));
-      m.position.set(-.72+i*.29,.15+(i%3)*.05,1.97);m.scale.set(1,.75,.09);room.add(m);
+    // A real garden beyond the walls. Distinct depths provide parallax through
+    // either window; no scenery card is attached to the glass.
+    box(8,.07,7,0,-.87,5.5,0x77915c);
+    box(4,.07,5,4.85,-.87,0,0x77915c);
+    box(2.2,.04,1.05,0,-.81,2.56,0xc8b997);
+    for(let i=0;i<7;i++)box(.52,.028,.43,.12*Math.sin(i*.8),-.815,3.25+i*.53,0xd4c8aa);
+    for(const x of [-1.7,1.7]) {
+      box(.85,.20,2.25,x,-.76,3.95,oak);box(.77,.02,2.17,x,-.65,3.95,0x514a32);
+      for(let j=0;j<7;j++)plant(x+(j%2?.16:-.16),-.64,3.05+j*.29,1.1+(j%3)*.22);
     }
-    for(const x of [-.85,0,.85])box(.045,1.23,.09,x,.70,1.885,0xf9f0dc);
-    for(const y of [.09,.70,1.31])box(1.74,.045,.09,0,y,1.885,0xf9f0dc);
-    box(1.84,.045,.24,0,.065,1.81,oak);
+    // Fence, trees and layered shrubs sit metres behind the near planting.
+    for(let i=0;i<29;i++)box(.20,1.05,.07,-3.5+i*.25,-.34,7.0, i%3?0xbaa079:0xb2976f);
+    for(const y of [-.55,-.05])box(7.25,.07,.10,0,y,6.93,0x8d7658);
+    function tree(x,z,size) {
+      cylinder(.065*size,.09*size,1.25*size,x,-.84+.625*size,z,0x786248);
+      for(let j=0;j<5;j++) {
+        const canopy=new T.Mesh(new T.SphereGeometry(.43*size,10,8),mat(j%2?0x668154:0x81975d));
+        canopy.position.set(x+Math.cos(j*2.4)*.25*size,-.84+(1.2+(j%2)*.25)*size,z+Math.sin(j*2.4)*.22*size);
+        canopy.scale.y=1.18;canopy.castShadow=true;room.add(canopy);
+      }
+    }
+    tree(-2.25,5.2,1.5);tree(2.4,5.65,1.8);tree(.6,7.7,2.0);tree(4.8,-.6,1.6);
+    for(let i=0;i<12;i++) {
+      const bush=new T.Mesh(new T.SphereGeometry(.32,9,7),mat(i%2?0x94a46a:0x69875b));
+      bush.position.set(-3.1+i*.56,-.56,6.35+(i%3)*.17);bush.scale.set(1.3,.9,1);room.add(bush);
+    }
+    const windows=[];
+    function windowFrame(x,y,z,w,h,rotation=0) {
+      const frame=new T.Group();frame.position.set(x,y,z);frame.rotation.y=rotation;room.add(frame);
+      const beam=(w,h,d,x,y,z,color)=>{const m=new T.Mesh(cube,mat(color));m.scale.set(w,h,d);m.position.set(x,y,z);m.castShadow=m.receiveShadow=true;frame.add(m);return m;};
+      for(const x of [-w/2,w/2])beam(.055,h+.08,.18,x,0,0,0xf9f0dc);
+      for(const y of [-h/2,h/2])beam(w+.08,.055,.18,0,y,0,0xf9f0dc);
+      beam(w+.18,.045,.22,0,-h/2-.035,-.03,oak);
+      for(const side of [-1,1]) {
+        const hinge=new T.Group();hinge.position.x=side*(w/2-.035);frame.add(hinge);
+        const leaf=new T.Group();leaf.position.x=-side*(w/4-.025);hinge.add(leaf);
+        const part=(ww,hh,dd,xx,yy,color)=>{const m=new T.Mesh(cube,mat(color));m.scale.set(ww,hh,dd);m.position.set(xx,yy,-.045);m.castShadow=true;leaf.add(m);};
+        for(const xx of [-w/4+.025,w/4-.025])part(.035,h-.04,.045,xx,0,0xf9f0dc);
+        for(const yy of [-h/2+.025,0,h/2-.025])part(w/2-.03,.035,.045,0,yy,0xf9f0dc);
+        part(.018,.10,.055,-side*(w/4-.075),-.08,brass);
+        const glass=new T.Mesh(new T.PlaneGeometry(w/2-.07,h-.08),new T.MeshPhysicalMaterial({color:0xc7e5df,transparent:true,opacity:.10,roughness:.08,metalness:.1,side:T.DoubleSide,depthWrite:false}));
+        glass.position.z=-.04;leaf.add(glass);windows.push({hinge,side});
+      }
+    }
+    windowFrame(0,.70,1.95,1.7,1.2);
+    windowFrame(2.8,.65,-.65,1.3,1.18,Math.PI/2);
+    room.userData.windows=windows;
     plant(-.63,.088,1.79,.85);plant(.64,.088,1.79,.65);
-    const sideSky = new T.Mesh(new T.PlaneGeometry(1.25,1.12),sky.material);
-    sideSky.rotation.y=-Math.PI/2;sideSky.position.set(2.744,.65,-.65);room.add(sideSky);
-    for(const z of [-1.30,-.65,0])box(.09,1.18,.04,2.70,.65,z,0xf9f0dc);
-    for(const y of [.06,.65,1.24])box(.09,.04,1.34,2.70,y,-.65,0xf9f0dc);
-    box(.22,.04,1.43,2.66,.04,-.65,oak);
     // Small framed prints keep the other orbit directions from becoming blank walls.
     for(const z of [-.65,.05]) {
       box(.035,.57,.43,-2.735,.65,z,oak);
@@ -77,16 +112,22 @@
     // Cabinets sit against the wall, leaving a clear walking aisle around the island.
     for(let i=0;i<6;i++) {
       const x=-1.5+i*.60;
-      box(.594,.78,.52,x,-.46,1.58,sage);
+      box(.594,i === 3 ? .56 : .78,.52,x,i === 3 ? -.57 : -.46,1.58,sage);
       box(.55,.66,.025,x,-.42,1.303,darkSage);
       box(.49,.60,.029,x,-.42,1.284,sage);
       box(.14,.013,.023,x,-.15,1.258,brass,.65);
     }
-    box(3.68,.05,.64,0,-.045,1.57,0xf3e8d1);
+    // Four countertop sections leave an actual opening over the basin.
+    box(1.87,.05,.64,-.905,-.045,1.57,0xf3e8d1);
+    box(1.31,.05,.64,1.185,-.045,1.57,0xf3e8d1);
+    box(.50,.05,.13,.28,-.045,1.315,0xf3e8d1);
+    box(.50,.05,.19,.28,-.045,1.795,0xf3e8d1);
     box(3.6,.11,.035,0,.035,1.865,0xd5ddd0);
     // Simple sink and curved brass tap, offset from the window plants.
-    box(.48,.008,.31,.28,-.015,1.54,0x8c9c9b,.65);
-    box(.40,.01,.24,.28,-.009,1.54,0x566e6d,.35);
+    box(.50,.018,.32,.28,-.175,1.54,0xaabfbb);
+    for(const x of [.039,.521])box(.018,.16,.32,x,-.09,1.54,0xd4ded7);
+    for(const z of [1.389,1.691])box(.50,.16,.018,.28,-.09,z,0xd4ded7);
+    cylinder(.025,.025,.005,.28,-.163,1.54,0x303d3b);
     const tap=new T.Mesh(new T.TorusGeometry(.065,.008,7,20,Math.PI),mat(brass,.7));
     tap.position.set(.28,.14,1.72);room.add(tap);
     cylinder(.008,.008,.15,.215,.055,1.72,brass);
@@ -99,9 +140,9 @@
       }
     }
     // Tall fridge and a little open shelf on the opposite wall.
-    box(.61,1.43,.58,-1.97,-.12,1.52,0xf0e6d2);
-    box(.57,.80,.025,-1.97,.18,1.216,0xfaf0da);box(.57,.49,.025,-1.97,-.49,1.216,0xfaf0da);
-    box(.023,.25,.035,-1.75,.14,1.185,brass,.65);box(.023,.15,.035,-1.75,-.40,1.185,brass,.65);
+    box(.61,1.43,.58,-2.20,-.12,1.52,0xf0e6d2);
+    box(.57,.80,.025,-2.20,.18,1.216,0xfaf0da);box(.57,.49,.025,-2.20,-.49,1.216,0xfaf0da);
+    box(.023,.25,.035,-1.98,.14,1.185,brass,.65);box(.023,.15,.035,-1.98,-.40,1.185,brass,.65);
     box(1.18,.035,.23,.75,.55,-2.63,oak);
     for(let i=0;i<5;i++)box(.055,.20+(i%2)*.04,.12,.40+i*.063,.66,-2.62,[0xb9694a,0x8da293,0xd9b56b][i%3]);
     plant(1.07,.57,-2.62,1.05);

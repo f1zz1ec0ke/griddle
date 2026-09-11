@@ -45,7 +45,6 @@ summary::-webkit-details-marker { display: none; }
 #h-lid::before { background-image: url('../assets/icons/lid.svg'); }
 .row { margin: 14px 0; }
 #btn-place:disabled, #btn-reheat:disabled, #btn-discard:disabled { display: none; }
-.row.two:has(#btn-reheat:disabled):has(#btn-discard:disabled) { display: none; }
 .row.probe { background: #ebeede; padding: 10px; border-radius: 12px; gap: 10px; }
 .row.probe button { background: transparent; border: 0; padding: 2px; font-size: 11px; }
 .row.probe label { font-size: 10px; }
@@ -122,6 +121,14 @@ summary::-webkit-details-marker { display: none; }
 #action-dock button:disabled { display: none; }
 #action-dock .dock-launch { border-left: 1px solid #d8cbb6; }
 #action-dock #btn-cut { min-width: 108px; background: #b8432f; color: #fff9ed; }
+#action-dock #btn-discard { margin-left: 12px; border-left: 1px solid #d6ac9d; color: #a23b2a; background: #f9e7df; border-radius: 14px; }
+#action-dock #btn-discard:hover:not(:disabled) { background: #f1d3c7; }
+#btn-smash { --icon: url('../assets/icons/smash.svg'); }
+#ro-probe { display: flex; flex-direction: column; align-items: flex-start; text-align: left; padding: 3px 8px; border-radius: 10px; }
+#ro-probe .instrument-label { font-size: 8px; font-weight: 400; letter-spacing: .08em; color: #666451; }
+#ro-probe[aria-pressed=true] { background: #e8eddc; }
+#ro-probe:hover:not(:disabled) { background: #e8ddc6; box-shadow: none; }
+
 .heat-dial { position: absolute; left: 24px; bottom: 131px; width: 190px; border-radius: 18px; padding: 13px 16px; background: #fff6e7ed; box-shadow: 0 6px 20px #0003; }
 .heat-dial label { font-size: 11px; }.heat-dial label b { color: var(--accent); font-size: 22px; margin-left: 15px; }
 .heat-dial input { margin: 4px 0 0; }
@@ -141,7 +148,7 @@ summary::-webkit-details-marker { display: none; }
 #drawer-toppings { width: 560px; }
 #extras label { font-size: 11px; color: var(--muted); }
 #extras label small { display: none; }
-#extras .four { display: grid; grid-template-columns: repeat(4,1fr); gap: 9px; margin-top: 10px; }
+#extras .four { display: grid; grid-template-columns: repeat(5,1fr); gap: 9px; margin-top: 10px; }
 #extras .four button { min-height: 98px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; font-size: 12px; border-radius: 17px; }
 #extras .four button::before { width: 42px; height: 44px; margin: 0; }
 #practice-tools { display: flex; gap: 8px; padding-top: 14px; border-top: 1px solid var(--line); }
@@ -204,7 +211,31 @@ body:has(.prep-tray:not([hidden])) .world-hint { display: none; }
 @media (max-width: 1150px) { .readouts { top: 89px; } }
 
 #btn-oven { --icon: url('../assets/icons/oven.svg'); }
+#open-build { --icon: url('../assets/icons/burger.svg'); }
+#drawer-build { left: auto; right: 24px; transform: none; width: 320px; bottom: 130px; max-height: calc(100vh - 220px); padding: 20px; }
+#drawer-build h2 { font-size: 25px; }
+#drawer-build .drawer-heading { position: sticky; top: -20px; z-index: 1; margin: -20px -20px 12px; padding: 18px 20px 12px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.assembly-burgers, .assembly-edit, .assembly-options { display: flex; flex-wrap: wrap; gap: 7px; }
+.assembly-options button { display: flex; align-items: center; gap: 6px; padding: 7px 9px; font-size: 11px; flex: 1 0 42%; }
+.assembly-options img { width: 26px; height: 28px; }
+.assembly-hint, .assembly-empty { font-size: 12px; color: var(--muted); line-height: 1.5; margin: 12px 0; }
+.assembly-stack { padding-left: 24px; font-size: 12px; }
+.assembly-stack li { padding: 5px; border-bottom: 1px solid var(--line); }
+#drawer-build h3 { font-size: 12px; margin: 16px 0 8px; }
+.assembly-burgers button, .assembly-edit button { font-size: 11px; padding: 6px 9px; }
 .oven-status { position: absolute; bottom: 175px; left: 50%; transform: translateX(-50%); background: #fff6e7ed; border: 1px solid #d8cbb6; border-radius: 16px; padding: 10px 16px; font-size: 12px; }
 .oven-status:hover:not(:disabled) { transform: translateX(-50%); }
 #oven-status::before { display: none; }
 body:has(.drawer:not([hidden])) .oven-status { display: none; }
+
+#kitchen-notice { position: fixed; z-index: 30; left: 50%; bottom: 240px; transform: translateX(-50%); padding: 15px 25px; border-radius: 18px; background: #b8432f; color: #fff8ec; font-weight: 750; box-shadow: 0 8px 25px #0003; pointer-events: none; }
+#btn-units::before { display: none; }
+
+body[data-phase="order"] #flight-deck { z-index: 21; }
+#help { z-index: 40; }
+
+#btn-window { --icon: url(../assets/icons/window.svg); }
+#btn-window[aria-pressed="true"] { background: #dce8cd; color: #38513d; }
+
+#btn-window { position: fixed; right: 24px; top: 88px; padding: 9px 13px; border: 1px solid #e5dfcf; border-radius: 16px; background: #fff7e8; box-shadow: 0 5px 18px #33332212; font-size: 12px; z-index: 5; }
+#btn-window::before { display: inline-block; width: 21px; height: 23px; margin-right: 7px; }
