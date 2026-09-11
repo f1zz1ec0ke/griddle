@@ -481,7 +481,7 @@
     applyEquipUI() {
       const grill = !!this.state.grill;
       $('knob-label').textContent = grill ? 'Vents' : 'Burner';
-      $('h-pan-label').textContent = grill ? 'IR gun · grate' : 'IR gun · pan';
+      $('h-pan-label').textContent = grill ? 'IR gun · grate' : 'IR gun · pan centre';
       $('btn-wash').textContent = grill ? 'Brush grate' : 'Wash pan';
       $('btn-wash').title = grill ? 'Wire-brush the bars while they are hot.' : 'Empty and scrub the pan under the tap. Cools it, leaves it wet.';
       $('btn-fat').disabled = grill; $('e-fat').disabled = grill; $('e-fatg').disabled = grill;
@@ -867,7 +867,8 @@
     updateHUD() {
       const st = this.state, p = st.patty, d = st.diag;
       const where = p ? p.where : 'board';
-      $('h-pan').textContent = this.hard ? '—' : fmt(st.pan.T + (Math.random() - 0.5) * 1.5, 0) + ' °C';
+      const irTemperature = st.grill ? st.pan.T : st.pan.Tcenter;
+      $('h-pan').textContent = this.hard ? '—' : fmt(irTemperature + (Math.random() - 0.5) * 1.5, 0) + ' °C';
       $('h-time').textContent = p && where === 'pan' ? P.fmtTime(p.cookTime) : p && (where === 'rest' || where === 'cut') ? 'rest ' + P.fmtTime(p.restT || 0) : P.fmtTime(st.t);
       $('h-probe').textContent = this.probe.reading == null ? '—' : fmt(this.probe.reading, 1) + ' °C';
       const it = this.selItem;
@@ -877,7 +878,7 @@
       if (st.grill && (st.grill.bank || 0) > 0.05 && !this.hard) {
         $('h-pan').textContent = `${fmt(st.grill.Thot, 0)} / ${fmt(st.grill.Tcool, 0)} °C`;
         $('h-pan-label').textContent = 'IR gun · hot / cool';
-      } else if (st.grill) $('h-pan-label').textContent = 'IR gun · grate';
+      } else $('h-pan-label').textContent = st.grill ? 'IR gun · grate' : 'IR gun · pan centre';
       // the kettle's own readout: what is left of the fire, what is choking it, and what is coming
       // off it. The bed temperature is a number, so hard mode does not get it — the hand test does.
       $('ro-fire').hidden = !st.grill;

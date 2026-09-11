@@ -10,6 +10,29 @@ function cook(stove = 'gas') {
   P.placePatty(s, p, { x: 0, y: 0 }); P.setKnob(s, 8);
   return { s, p };
 }
+
+test('pan IR reads the centre while Inspector retains mean and edge temperatures', () => {
+  const { game: g, elements: e } = kitchen();
+  g.startPractice(); g.startCook(); P.setKnob(g.state, 8); g.fastForward(157);
+  e.get('inspector').hidden = false;
+  const time = g.state.t;
+  g.updateHUD();
+  const pan = g.state.pan;
+  assert.ok(pan.Tcenter - pan.T > 30, 'preheated pan should have a meaningful temperature gradient');
+  assert.ok(Math.abs(parseFloat(e.get('h-pan').textContent) - pan.Tcenter) < 1.3);
+  assert.equal(e.get('h-pan-label').textContent, 'IR gun · pan centre');
+  assert.ok(e.get('insp-table').innerHTML.includes(pan.T.toFixed(1) + ' °C mean'));
+  assert.ok(e.get('insp-table').innerHTML.includes('edge ' + pan.Tedge.toFixed(0)));
+  g.hard = true; g.updateHUD(); assert.equal(e.get('h-pan').textContent, '—');
+  assert.equal(g.state.t, time, 'reading the display must not advance physics');
+  g.hard = false; g.state = P.createState({ stove: 'charcoal' });
+  g.state.pan.T = 150; g.state.pan.Tcenter = 250; g.updateHUD();
+  assert.equal(e.get('h-pan-label').textContent, 'IR gun · grate');
+  assert.ok(Math.abs(parseFloat(e.get('h-pan').textContent) - 150) < 1.3);
+  g.state.grill.bank = 1; g.state.grill.Thot = 300; g.state.grill.Tcool = 120; g.updateHUD();
+  assert.equal(e.get('h-pan').textContent, '300 / 120 °C');
+  assert.equal(e.get('h-pan-label').textContent, 'IR gun · hot / cool');
+});
 test('reheating preserves the patty grid, face damage and peak history', () => {
   const { s, p } = cook();
   for (let i = 0; i < 100; i++) P.step(s, 0.05);
