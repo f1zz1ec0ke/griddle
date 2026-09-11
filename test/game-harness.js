@@ -40,7 +40,7 @@ function kitchen(storage = new Map()) {
     setCutaway(v) { this.cutaway = v; }
   }
   class Audio { click() {} hiss() {} update() {} start() {} toggle() { return false; } }
-  const root = { BurgerPhysics: P, GriddleSession: Session, BurgerRender: { Viewport, nodeColour: () => [0, 0, 0] }, KitchenAudio: Audio,
+  const root = { CookingCues: require('../js/cues'), BurgerPhysics: P, GriddleSession: Session, BurgerRender: { Viewport, nodeColour: () => [0, 0, 0] }, KitchenAudio: Audio,
     addEventListener(name, fn) { listeners.set(name, fn); } };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../js/game.js'), 'utf8'), {
     window: root, document, performance, requestAnimationFrame() {}, localStorage: { getItem: k => storage.get(k) || null, setItem: (k, v) => storage.set(k, v) },

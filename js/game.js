@@ -53,6 +53,7 @@
       this.equip = { stove: 'gas', pan: 'castiron', fat: 'canola', fatG: 8, wood: 'hickory', coalG: 500 };
       this.state = P.createState({ pan: this.equip.pan, stove: this.equip.stove });
       this.chipsHTML = '';
+      this.cues = new root.CookingCues(); this.cuesHTML = '';
       this.shift = this.emptyShift();
       this.bind();
       this.newOrder();
@@ -323,6 +324,7 @@
       $('shiftend').hidden = false;
     }
     setPhase(ph) {
+      this.setStation('cook');
       this.phase = ph;
       this.cameraPreset = ph === 'rest' || ph === 'result' ? 'serve' : ph === 'cook' ? 'default' : null;
       $('station-state').textContent = { order: 'Ready', form: 'Prep', cook: 'On the heat', rest: 'At the pass', result: 'Service' }[ph];
@@ -503,6 +505,7 @@
     // ------------------------------------------------------------ binding
     bind() {
       const s = this;
+      for (const view of ['cook', 'toppings', 'tools']) $('station-' + view).onclick = () => s.setStation(view);
       $('btn-pause').onclick = () => s.setPaused(!s.paused);
       $('btn-save').onclick = () => s.saveSession();
       $('btn-load').onclick = () => s.loadSession();
@@ -637,7 +640,7 @@
       $('r-chips').addEventListener('click', (e) => { const b = e.target.closest('[data-chip]'); if (b) s.select(Number(b.dataset.chip)); });
       for (const b of document.querySelectorAll('[data-speed]')) b.onclick = () => s.setSpeed(Number(b.dataset.speed));
       for (const b of document.querySelectorAll('[data-view]')) b.onclick = () => s.vp.controls.preset(b.dataset.view);
-      $('btn-audio').onclick = () => { const on = s.audio.toggle(); $('btn-audio').textContent = on ? '🔊 Sound on' : '🔇 Sound off'; };
+      $('btn-audio').onclick = () => { const on = s.audio.toggle(); $('btn-audio').textContent = on ? 'Sound on' : 'Sound off'; };
       $('hard').addEventListener('change', (e) => {
         s.hard = e.target.checked; document.body.classList.toggle('hard', s.hard);
         $('btn-inspector').hidden = s.hard; if (s.hard) $('inspector').hidden = true; // the inspector is a wall of thermometers
@@ -660,12 +663,17 @@
       });
       $('btn-help-close').onclick = () => s.closeHelp();
       $('help').addEventListener('click', (e) => { if (e.target === $('help')) s.closeHelp(); });
-      document.addEventListener('pointerdown', () => { if (!s.audio.ctx && !s.audioAsked) { s.audioAsked = true; s.audio.start(); $('btn-audio').textContent = '🔊 Sound on'; } }, { once: true });
+      document.addEventListener('pointerdown', () => { if (!s.audio.ctx && !s.audioAsked) { s.audioAsked = true; s.audio.start(); $('btn-audio').textContent = 'Sound on'; } }, { once: true });
       window.addEventListener('beforeunload', (e) => { if ((s.hasUnfinishedShift() || s.mode === 'practice') && !s.saveSession(true)) { e.preventDefault(); e.returnValue = ''; } }); // a reload loses the shift; the browser asks first
       window.addEventListener('keydown', (e) => {
         if (!$('help').hidden) {
           if (e.key === 'Escape') { e.preventDefault(); s.closeHelp(); }
-          else if (e.key === 'Tab') { e.preventDefault(); $('btn-help-close').focus(); }
+          else if (e.key === 'Tab') {
+            const focusable = Array.from($('help').querySelectorAll('button, summary'));
+            const first = focusable[0] || $('btn-help-close'), last = focusable[focusable.length - 1] || first;
+            if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+            else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+          }
           e.stopImmediatePropagation(); return;
         }
         if (e.target && (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName) || e.target.isContentEditable)) return;
@@ -848,6 +856,7 @@
         this.audio.update({ sizzle: 0, spatter: 0 }, 0, real);
       }
       this.autosaveClock += real;
+      this.updateCues(now);
       if (this.autosaveClock >= 15) { this.autosaveClock = 0; this.saveSession(true); }
       const viewState = this.phase === 'form' ? this.stateForPreview : this.phase === 'order' ? (this.stateForPreview || P.createState({})) : st;
       if (this.phase === 'form' || this.phase === 'order') { viewState.diag = viewState.diag || {}; viewState.where = 'board'; }
@@ -891,7 +900,7 @@
           + (smk ? ` · ${smk}` : '') + (st.lid ? ` · lid vent ${fmt(g.topVent * 100, 0)} %` : '');
         $('h-fire-label').textContent = this.hard ? 'the fire (no numbers)' : 'bed · coal · ash';
       }
-      $('h-smoke').hidden = d.smoke < 0.25; $('h-smoke').textContent = d.smoke > 1.2 ? '🚨 Heavy smoke — open a window' : '💨 Smoking';
+      $('h-smoke').hidden = d.smoke < 0.25; $('h-smoke').textContent = d.smoke > 1.2 ? 'Heavy smoke' : 'Smoking';
       $('h-lid').hidden = !st.lid;
       // inspector
       if (!$('inspector').hidden) {
@@ -980,6 +989,18 @@
       if (this.logN === ev.length) return; this.logN = ev.length;
       el.innerHTML = ev.slice(-14).map((e) => `<div class="ev ${e.kind}"><span>${P.fmtTime(e.t)}</span>${this.maskT(e.text)}</div>`).join('');
       el.scrollTop = el.scrollHeight;
+    }
+    setStation(view) {
+      $('panel').dataset.station = view;
+      for (const name of ['cook', 'toppings', 'tools']) $('station-' + name).setAttribute('aria-pressed', String(name === view));
+      $('panel').scrollTop = 0;
+    }
+    updateCues(now) {
+      const active = this.phase === 'cook' || this.phase === 'rest';
+      const cues = this.cues.update(active ? this.patties.concat(this.items) : [], now, this.stopped);
+      const escape = text => String(text).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+      const html = cues.map(c => `<div class="cook-cue ${c.level === 3 ? 'burn' : ''}" data-cue="${c.id}"><img src="assets/icons/${c.icon}.svg" alt=""><div><small>${escape(c.label)}</small><strong>${c.title}</strong></div></div>`).join('');
+      if (html !== this.cuesHTML) { $('cooking-cues').innerHTML = html; this.cuesHTML = html; }
     }
     drawChart(cv, trace) {
       const ctx = cv.getContext('2d'); const W = cv.width, H = cv.height;
