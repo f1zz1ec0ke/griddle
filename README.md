@@ -44,4 +44,4 @@ npm run perf      # simulation performance
 
 ## You got a loicense for that burger mate?
 
-No, do whatever you want with this, I don't care. 
+You may not sell this or repurpose/reuse it in any way with the intention of selling it. Beyond that I don’t care.
