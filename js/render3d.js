@@ -171,13 +171,13 @@
   const BANDS = { side: [0.02, 0.48], topCap: { cx: 0.25, cy: 0.75 }, bottomCap: { cx: 0.75, cy: 0.75 } };
   function pattyProfile(R, h, dome, dimple, rawness) {
     const pr = [];
-    const nb = 10, ns = 8, nt = 12;
+    const nb = 10, ns = 16, nt = 12, bevel=Math.min(.0025,h*.18);
     const cup = dome * 0.12 * h; // bottom lifts at centre when the patty domes
     const capB = { ...BANDS.bottomCap, R: R * 1.06 }, capT = { ...BANDS.topCap, R: R * 1.06 };
-    for (let i = 0; i <= nb; i++) { const t = i / nb; const r = R * t; const y = cup * (1 - t * t); pr.push({ r, y: y, cap: capB }); }
-    for (let i = 0; i <= ns; i++) { const t = i / ns; const bulge = Math.sin(t * Math.PI) * 0.06 * R * (0.3 + 0.7 * (1 - rawness)); pr.push({ r: R + bulge, y: t * h, v: lerp(BANDS.side[0], BANDS.side[1], t) }); }
+    for (let i = 0; i <= nb; i++) { const t = i / nb; const r = (R-bevel) * t; const y = cup * (1 - t * t); pr.push({ r, y: y, cap: capB }); }
+    for (let i = 0; i <= ns; i++) { const t = i / ns; const edge = bevel*(1-Math.pow(Math.sin(t*Math.PI),.35)); pr.push({ r: R-edge, y: t * h, v: lerp(BANDS.side[0], BANDS.side[1], t) }); }
     for (let i = 0; i <= nt; i++) {
-      const t = i / nt; const r = R * (1 - t);
+      const t = i / nt; const r = (R-bevel) * (1 - t);
       let y = h + dome * 0.28 * h * (1 - (1 - t) * (1 - t));
       if (dimple) { const rr = r / (0.45 * R); if (rr < 1) y -= 0.18 * h * rawness * (1 - rr * rr); }
       pr.push({ r, y, cap: capT, hard: false });
@@ -669,7 +669,7 @@
   // shrinks on caramelisation and water lost. Nothing here is on a timer.
   const ICOL = {
     crumb: [238, 222, 190], crust: [201, 138, 69],
-    baconLean: [188, 92, 92], baconFat: [242, 228, 214], baconDone: [150, 74, 38], baconCrisp: [104, 48, 22],
+    baconLean: [164, 64, 57], baconFat: [222, 199, 173], baconDone: [150, 74, 38], baconCrisp: [104, 48, 22],
     whiteRaw: [232, 236, 232], whiteSet: [252, 250, 245],
     yolkRaw: [232, 146, 28], yolkSet: [236, 188, 96],
     onionRaw: [238, 232, 216], onionGold: [206, 154, 78], onionBrown: [128, 72, 30], onionDark: [58, 34, 16],
@@ -712,7 +712,7 @@
     layerH() {
       const it = this.it;
       if (it.kind === 'egg') { const set = clamp(it.yolkSet, 0, 1); return 0.0035 + 0.004 * set + 0.021 * (0.42 + 0.28 * set) + 0.0005; } // yolk centre + its own half-height
-      if (it.kind === 'bacon') return this.thickness + 0.006 * Math.abs(clamp(it.curl, -1, 1));
+      if (it.kind === 'bacon') return .004 + .010 * Math.abs(clamp(it.curl, -1, 1));
       if (it.kind === 'onions') return 0.0016 + 0.009 * (0.55 + 0.45 * clamp((it.bot.w + it.top.w) / it.w0, 0, 1));
       return this.thickness;
     }
@@ -759,10 +759,18 @@
     }
     // ---- a rasher: a ribbon that shortens and curls, striped lean and fat along its length
     buildBacon() {
-      const NL = 20, NW = 4;
-      const pos = new Float32Array(NL * NW * 3), col = new Float32Array(NL * NW * 3), nor = new Float32Array(NL * NW * 3);
+      const NL = 48, NW = 18;
+      const pos = new Float32Array(NL * NW * 6), col = new Float32Array(NL * NW * 6), nor = new Float32Array(NL * NW * 6);
       const idx = [];
       for (let i = 0; i < NL - 1; i++) for (let j = 0; j < NW - 1; j++) { const a = i * NW + j; idx.push(a, a + NW, a + 1, a + 1, a + NW, a + NW + 1); }
+      const count=NL*NW, top=idx.slice();
+      for(let n=0;n<top.length;n+=3)idx.push(top[n]+count,top[n+2]+count,top[n+1]+count);
+      const edge=[];
+      for(let i=0;i<NL;i++)edge.push(i*NW);
+      for(let j=1;j<NW;j++)edge.push((NL-1)*NW+j);
+      for(let i=NL-2;i>=0;i--)edge.push(i*NW+NW-1);
+      for(let j=NW-2;j>0;j--)edge.push(j);
+      for(let i=0;i<edge.length;i++){const a=edge[i],b=edge[(i+1)%edge.length];idx.push(a,b,a+count,b,b+count,a+count);}
       const g = new T.BufferGeometry();
       g.setAttribute('position', new T.BufferAttribute(pos, 3));
       g.setAttribute('color', new T.BufferAttribute(col, 3));
@@ -866,25 +874,14 @@
       const lean = mix3(mix3(ICOL.baconLean, ICOL.baconDone, clamp(brown / 2.5, 0, 1)), ICOL.baconCrisp, clamp(it.crisp * 0.8, 0, 1));
       const fat = mix3(ICOL.baconFat, ICOL.baconDone, clamp((1 - fatLeft) * 0.75 + brown / 8, 0, 1));
       const charF = clamp((it.faceDown.char + it.faceUp.char) / 0.7, 0, 1);
-      // a 20 cm rasher does not lie straight in a 30 cm pan: it goes in as a horseshoe, which is why
-      // its footprint is an 11 cm disc and not a 20 cm line. The arc keeps its angle and tightens
-      // its radius as the strip shortens.
-      const arcTot = 2.6, arcR = L / arcTot;
-      for (let i = 0; i < NL; i++) {
-        const u = i / (NL - 1);
-        const th = (u - 0.5) * arcTot, ct = Math.cos(th), stq = Math.sin(th);
-        // it curls up at the ends, away from whichever face has dried and contracted more, and
-        // ripples along its length where the fat bands have pulled
-        const lift = curl * (0.011 * (2 * u - 1) ** 2 + 0.004 * Math.sin(u * 9 + it.id));
-        const wave = 0.0015 * Math.sin(u * 6.3 + it.id * 1.7) * (0.3 + 0.7 * Math.abs(curl));
-        for (let j = 0; j < NW; j++) {
-          const v = j / (NW - 1), k = (i * NW + j) * 3;
-          const stripe = 0.5 + 0.5 * Math.sin(v * 7.5 + u * 2.2 + it.id); // lean and fat bands run the length of a rasher
-          const rad = arcR + (v - 0.5) * W;
-          pos[k] = stq * rad; pos[k + 1] = Math.abs(lift) * (0.5 + 0.5 * (1 - Math.abs(v - 0.5) * 2)) + wave; pos[k + 2] = ct * rad;
-          const base = mix3(fat, lean, stripe);
-          const c = lin(mix3(base, ICOL.char, charF * (0.5 + 0.5 * stripe)));
-          col[k] = c[0]; col[k + 1] = c[1]; col[k + 2] = c[2];
+      for(let i=0;i<NL;i++)for(let j=0;j<NW;j++) {
+        const u=i/(NL-1),v=j/(NW-1),q=root.FoodShapes.baconPoint(u,v,it.shrink,curl,it.id);
+        for(let side=0;side<2;side++) {
+          const k=(side*NL*NW+i*NW+j)*3;
+          pos[k]=q.x;pos[k+1]=q.y+(side?0:.0025*(1-.35*it.shrink));pos[k+2]=q.z;
+          const mottling=.92+.08*Math.sin(u*71+v*19+it.id);
+          const c=lin(mix3(mix3(fat,lean,q.lean),ICOL.char,charF*(.5+.5*q.lean)));
+          col[k]=c[0]*mottling;col[k+1]=c[1]*mottling;col[k+2]=c[2]*mottling;
         }
       }
       this.baconGeo.attributes.position.needsUpdate = true;
@@ -1108,7 +1105,7 @@
       this.dirtSig = ''; this.dirtClock = 0;
       // fat that overflowed the pan, spreading on the stovetop
       this.spillMat = new T.MeshPhysicalMaterial({ color: 0x8a5a16, transparent: true, opacity: 0.7, roughness: 0.05, clearcoat: 1, depthWrite: false });
-      this.spill = new T.Mesh(new T.CircleGeometry(1, 64), this.spillMat); this.spill.rotation.x = -Math.PI / 2; this.spill.visible = false; g.add(this.spill);
+      this.spill = new T.Mesh(this.puddleGeometry(96,2.1), this.spillMat); this.spill.rotation.x = -Math.PI / 2; this.spill.visible = false; g.add(this.spill);
       // grease-fire flames around the pan rim (any stove type), shown only while pan.flare > 0
       this.flareFlames = [];
       const flareGeo = new T.ConeGeometry(0.012, 1, 6); flareGeo.translate(0, 0.5, 0);
@@ -1126,7 +1123,7 @@
       this.finger = this._buildFinger(); this.finger.visible = false; g.add(this.finger);
       this.stainGroup = new T.Group(); g.add(this.stainGroup); this.stains = [];
       this.stainMat = new T.MeshStandardMaterial({ color: 0x6b4a1e, transparent: true, opacity: 0.6, roughness: 0.3, depthWrite: false });
-      this.stainGeo = new T.CircleGeometry(1, 10);
+      this.stainGeo = this.puddleGeometry(32,5.7);
       this.setPan('castiron');
       this.scene.add(g);
     }
@@ -1551,17 +1548,24 @@
           });
         }
         group.position.set(base.x,base.y,base.z);
-        const phi=pv.cutPhi||0, clipping=this.cutaway&&p===this.selected;
+        const clipping=this.cutaway&&(p===this.selected||p.assembly.some(l=>l.meat===this.selected));
+        const phi=clipping?(this.views.get(this.selected)?.cutPhi||0):(pv.cutPhi||0);
+        if(pv.cutaway!==clipping || (clipping&&pv.cutPhi!==phi))pv.setCutaway(clipping,phi);
         let h=0;
         p.assembly.forEach((l,i) => {
           const cap=group.userData.caps.get(i);
           if(cap) { cap.visible=clipping; cap.position.y=h; cap.rotation.y=-phi; }
-          if(l.patty) { pv.group.position.set(base.x,base.y+h,base.z); h+=p.h*(1+.28*p.dome)+p.cheeses.length*.0015; }
+          if(l.patty) {
+            const meat=l.meat||p,mv=this.views.get(meat);
+            mv.group.position.set(base.x,base.y+h,base.z);
+            if(mv.cutaway!==clipping || (clipping&&mv.cutPhi!==phi))mv.setCutaway(clipping,phi);
+            h+=meat.h*(1+.28*meat.dome)+meat.cheeses.length*.0015;
+          }
           else if(l.item) {
             const v=this.itemViews.get(l.item); if(!v)return;
             v.update(state,0,'rest',{x:base.x,y:base.y+h,z:base.z},this.mode);
             if(l.item.kind==='bun' && l.item.half==='top') { v.group.rotation.x=0; v.group.position.y=base.y+h; }
-            if(this.cutaway && p===this.selected) { const phi=pv.cutPhi||0; v.setClipAt(-Math.sin(phi),Math.cos(phi),base.x,base.z); } else v.setClip(null);
+            if(clipping) { const phi=pv.cutPhi||0; v.setClipAt(-Math.sin(phi),Math.cos(phi),base.x,base.z); } else v.setClip(null);
             h+=v.layerH();
           } else {
             const v=group.userData.layers.get(i),spec=A.cold[l.cold]; v.position.y=h;
@@ -1571,7 +1575,7 @@
             h+=spec.height*(spec.sauce?v.scale.y:l.cold==='lettuce'?v.scale.y:1);
           }
         });
-        if(!A.hasPatty(p)) pv.group.position.x=base.x-.13;
+        if(!A.hasPatty(p)) {const at=this.passLayout.get('loose:'+p.id);if(at)pv.group.position.set(at.x,at.y,at.z);}
         group.userData.height=h;
         const plane=group.userData.plane||(group.userData.plane=new T.Plane());
         plane.normal.set(-Math.sin(phi),0,Math.cos(phi)); plane.constant=Math.sin(phi)*base.x-Math.cos(phi)*base.z;
@@ -1614,8 +1618,10 @@
       const ray = new T.Raycaster(); ray.setFromCamera(ndc, this.camera);
       const targets = []; for (const v of this.views.values()) { targets.push(v.mesh); if (v.cutMesh.visible) targets.push(v.cutMesh); }
       for (const v of this.itemViews.values()) if (v.group.visible) v.group.traverse((o) => { if (o.isMesh) targets.push(o); });
+      if(this.mode==='stove'&&this.panMesh)targets.push(this.panMesh);
       const hits = ray.intersectObjects(targets, false);
       if (!hits.length) return null;
+      if(hits[0].object===this.panMesh)return 'pan';
       const d = hits[0].object.userData;
       return d.patty || d.item || null;
     }
@@ -1726,7 +1732,7 @@
       }
       // spilled fat on the stovetop
       const spillR = Math.min(0.45, Math.sqrt((pan.overflow || 0) / 920 / (Math.PI * 0.0015)));
-      this.spill.visible = spillR > 0.01; this.spill.scale.set(spillR * 1.15, spillR, 1); this.spill.position.y = (this.stainY || 0.0012) + 0.0003;
+      this.spill.visible = spillR > 0.01; this.spill.scale.set(spillR * 1.25, spillR*.85, 1);this.spill.position.x=this.panR*.4;this.spill.position.z=-this.panR*.35; this.spill.position.y = (this.stainY || 0.0012) + 0.0003;
       // grease fire around a pan, or flare-ups coming up through the grate under the meat
       const grill = this.stoveType === 'charcoal' && state.grill ? state.grill : null;
       const grillFlare = grill ? grill.flare : 0;
@@ -1782,13 +1788,29 @@
       const stoveOn = this.mode === 'stove';
       const plateBase = stoveOn ? { x: 0.42, y: 0.009, z: 0.12 } : { x: 0, y: 0, z: 0 };
       const offPan = list.filter((q) => q.where === 'rest' || q.where === 'cut');
-      if (this.plate) { this.plate.scale.set(1 + 0.55 * Math.max(0, offPan.length - 1), 1, 1); }
+      if (this.plate) this.plate.visible=false;
       // ---- the toppings: on the pan where they were put down, waiting on the pass once they are
       // off the heat, and stacked on the burger they were built onto once it is served
       const items = this.mode === 'stove' && state.items ? state.items : []; // toppings only exist once there is a stove under them
       this.syncItems(items);
       this.selectedItem = state.item || null;
-      const waiting = items.filter((q) => q.where === 'rest' || (q.where === 'cut' && q.burger == null));
+      const waiting = items.filter(q => q.assembledTo==null && (q.where==='rest'||(q.where==='cut'&&q.burger==null)));
+      const entries=offPan.filter(q=>q.assembledTo==null).map(q=>({key:q,r:Math.max(q.D/2,...(q.assembly||[]).map(l=>l.item?l.item.D/2:l.meat?l.meat.D/2:0))}));
+      for(const q of offPan)if(q.assembly?.length&&!root.BurgerAssembly.hasPatty(q))entries.push({key:'loose:'+q.id,r:q.D/2});
+      for(const it of waiting)entries.push({key:it,r:it.D/2});
+      const layoutKey=entries.map(e=>(typeof e.key==='string'?e.key:(e.key.kind?'i':'p')+e.key.id)+':'+e.r.toFixed(3)).join('|');
+      if(layoutKey!==this.passLayoutKey){this.passLayout=root.FoodShapes.passLayout(entries);this.passLayoutKey=layoutKey;}
+      const pass=this.passLayout;
+      const tiers=Math.max(0,...[...pass.values()].map(p=>p.tier));
+      if(this.passTiers!==tiers) {
+        if(this.passRack){this.scene.remove(this.passRack);disposeTree(this.passRack);}
+        this.passRack=new T.Group();this.scene.add(this.passRack);this.passTiers=tiers;
+        const mat=new T.MeshStandardMaterial({color:0xb3bab4,metalness:.55,roughness:.35});
+        for(let i=1;i<=tiers;i++) {
+          const tray=new T.Mesh(new T.BoxGeometry(.61,.008,.97),mat);tray.position.set(.555,i*.18-.003,0);tray.receiveShadow=tray.castShadow=true;this.passRack.add(tray);
+          for(const x of [.262,.848])for(const z of [-.473,.473]){const leg=new T.Mesh(new T.CylinderGeometry(.004,.004,i*.18,8),mat);leg.position.set(x,i*.09,z);this.passRack.add(leg);}
+        }
+      }
       const stackOf = new Map();
       for (const q of list) {
         if (q.where !== 'cut') continue;
@@ -1818,7 +1840,7 @@
         }
         else if (where === 'oven') { const i = list.filter(q => q.where === 'oven').indexOf(q); pos = { x: .10 + (i % 2 ? .10 : -.10), y: -.48, z: -.34 + Math.floor(i / 2) * .20 }; }
         else if (where === 'board') pos = { x: 0, y: 0, z: 0 };
-        else { const i = offPan.indexOf(q); pos = { x: plateBase.x + (i - (offPan.length - 1) / 2) * 0.115, y: plateBase.y, z: plateBase.z }; }
+        else { pos=pass.get(q)||pass.get(list.find(p=>p.id===q.assembledTo))||plateBase; }
         if (this.forceTex) v.forceTex = true;
         v.stackH = stackOf.get(q) || 0;
         v.update(state, dt, where, pos, this.mode);
@@ -1840,8 +1862,7 @@
           } else pos = { x: plateBase.x, y: plateBase.y, z: plateBase.z };
         } else {
           // waiting at the pass: a row along the front of the stovetop, in front of the plate
-          const i = waiting.indexOf(it);
-          pos = { x: 0.16 + (i >= 0 ? i : 0) * 0.1, y: (this.stainY || 0.0012) + 0.0006, z: 0.26 };
+          pos = pass.get(it)||plateBase;
           v.setClip(null);
         }
         v.update(state, dt, it.where, pos, this.mode);
@@ -2017,6 +2038,11 @@
       }
       this.dirtTex.needsUpdate = true;
     }
+    puddleGeometry(n,seed) {
+      const shape=new T.Shape();
+      for(let i=0;i<=n;i++){const a=i/n*Math.PI*2,r=root.FoodShapes.puddleRadius(a,seed),x=Math.cos(a)*r,y=Math.sin(a)*r;i?shape.lineTo(x,y):shape.moveTo(x,y);}
+      return new T.ShapeGeometry(shape);
+    }
     _addStain(x, z, s) {
       if (this.stains.length > 150) { const old = this.stains.shift(); this.stainGroup.remove(old); }
       const m = new T.Mesh(this.stainGeo, this.stainMat); m.rotation.x = -Math.PI / 2; m.position.set(x, this.stainY || 0.0012, z); const sc = 0.002 * s * rand(0.8, 1.6); m.scale.set(sc, sc * rand(0.7, 1.3), 1); m.rotation.z = Math.random() * 3;
@@ -2064,6 +2090,7 @@
       const itemView = this.vp.selectedItem && this.vp.itemViews.get(this.vp.selectedItem);
       const stack = this.vp.assemblyViews?.get(this.vp.selected);
       const t = itemView ? itemView.group.position.clone().add(new T.Vector3(0, .01, 0)) : stack ? stack.position.clone().add(new T.Vector3(0,(stack.userData.height||0)*.45,0)) : pg || (this.vp.mode === 'stove' ? new T.Vector3(0, this.vp.PAN_Y + 0.01, 0) : new T.Vector3(0, 0.01, 0));
+      if (name === 'pan') { this.reset(this.vp.mode);this.goal.target.set(0,this.vp.panFloorY+.01,0);this.goal.dist=Math.max(.48,this.vp.panR*3.4); }
       if (name === 'oven') this.goal = { target: new T.Vector3(.10, -.43, -.29), azimuth: -Math.PI/2, polar: 1.38, dist: .95 };
       if (name === 'room') this.goal = { target: new T.Vector3(0, -.13, .12), azimuth: -1.05, polar: 1.07, dist: 2.5 };
       if (name === 'top') this.goal = { target: t, azimuth: this.goal.azimuth, polar: 0.12, dist: 0.5 };

@@ -591,7 +591,7 @@
   }
 
   function placePatty(s, patty, pos) {
-    if (patty.where === 'pan' || patty.where === 'cut' || patty.assembly?.length) return;
+    if (patty.where === 'pan' || patty.where === 'cut' || (patty.assembly?.length || patty.assembledTo!=null)) return;
     const reheating = patty.where === 'rest' || patty.where === 'oven';
     if (reheating) { patty.restT = 0; patty.serveT = null; }
     if (!s.patties.includes(patty)) s.patties.push(patty);
@@ -847,7 +847,7 @@
     return true;
   }
   function putInOven(s, p = s.patty) {
-    if (!p || p.assembly?.length || !['pan', 'rest'].includes(p.where)) return false;
+    if (!p || p.assembly?.length || p.assembledTo!=null || !['pan', 'rest'].includes(p.where)) return false;
     if (p.where === 'pan') removePatty(s, p);
     s.oven ||= { T: s.env.Tamb, target: 0 };
     p.where = 'oven'; p.restT = 0; p.ovenTime ||= 0;
@@ -3185,7 +3185,8 @@
         const bc = psc.bcAir || (psc.bcAir = { bottom: { type: 'air', h: 15, T: 0 }, top: { h: C.hAirTop, T: 0, RH: 0, oil: false, rad: false }, side: { T: 0, oilDepth: 0, oilT: 0, rad: false, h: 0 } });
         bc.bottom.h=15; bc.top.h=C.hAirTop; bc.top.insulated=false;
         bc.bottom.T = Tamb + 8; bc.top.T = Tamb; bc.top.RH = s.env.RH; bc.side.T = Tamb;
-        Assembly.cover(p,bc);
+        const owner=p.assembledTo!=null?s.patties.find(q=>q.id===p.assembledTo):null;
+        Assembly.cover(owner||p,bc,null,owner?p:null);
         stepPattyGuarded(s, p, dt, bc);
         p.restT = (p.restT || 0) + dt;
       }
@@ -3435,7 +3436,8 @@
     return s;
   }
   function serve(s, patty) {
-    const list = (patty ? [patty] : s.patties).filter(p => p.where === 'rest' || p.where === 'cut');
+    const host=patty?.assembledTo!=null?s.patties.find(p=>p.id===patty.assembledTo):patty;
+    const list = (host ? [host,...Assembly.layers(host).filter(l=>l.meat).map(l=>l.meat)] : s.patties).filter(p => p.where === 'rest' || p.where === 'cut');
     // the build step: anything off the heat that the cook has not already put on a burger goes to
     // whichever burger it came off the pan next to
     for (const it of s.items) if (it.where !== 'pan' && it.burger == null) { const b = plannedBurger(s, it); if (b && !b.manualAssembly) it.burger = b.id; }
@@ -3494,7 +3496,7 @@
     let pen = 0, bon = 0;
     for (const b of items) { if (b.score < 0) pen -= b.score; else bon += b.score; }
     const tops = toppingsOf(s, patty);
-    const missing = (patty.requiredBuild || []).filter(kind => kind === 'cheese' ? !patty.cheeses.length
+    const missing = (patty.requiredBuild || []).filter(kind => kind === 'double' ? Assembly.layers(patty).filter(l=>l.patty).length<2 : kind === 'cheese' ? !patty.cheeses.length && !Assembly.layers(patty).some(l=>l.meat?.cheeses.length)
       : kind === 'bun' ? !['bottom', 'top'].every(half => tops.some(it => it.kind === 'bun' && it.half === half))
       : !items.some(it => it.kind === kind));
     return { items, missing, penalty: clamp(pen + missing.length * 5, 0, 10), bonus: clamp(bon, 0, 5) };
@@ -3623,6 +3625,18 @@
   function evaluateTicket(s) {
     const list = s.patties.filter((p) => p.where === 'cut' || p.where === 'rest').sort((a, b) => a.id - b.id);
     const results = list.map((p) => Object.assign(evaluate(s, p.target, p), { patty: p }));
+    const plates=results.filter(r=>r.patty.assembledTo==null);
+    for(const r of plates) {
+      const second=results.find(q=>q.patty.assembledTo===r.patty.id);
+      if(!second) continue;
+      // The worse cooked patty determines whether this burger should go back.
+      r.plateScore=Math.min(r.total,second.total);
+      r.notes.push('Double burger: both patties were evaluated; the lower score counts.');
+      const coldSecond=(second.patty.serveT??centerT(second.patty))<45, burntSecond=second.faces.down.char>.3||second.faces.up.char>.3;
+      r.build.items.push({kind:'patty',label:'Second patty',state:coldSecond?'cold':burntSecond?'burnt':second.got.label,note:'Second patty: '+second.got.label,score:second.total<45||coldSecond||burntSecond?-4:0});
+      r.build.penalty=Math.max(r.build.penalty,second.total<45||coldSecond||burntSecond?4:0);
+      r.plateVerdict={...(second.total<r.total?second:r),id:r.id,patty:r.patty,build:r.build,cheeseSlices:r.cheeseSlices+second.cheeseSlices,total:r.plateScore};
+    }
     const notes = [];
     let cold = 0;
     for (const p of list) {
@@ -3635,15 +3649,15 @@
     // the build: up to ten points off the ticket for anything sent out raw or burnt, and a few
     // back for toppings that were actually cooked properly
     let bPen = 0, bBon = 0;
-    for (const r of results) { bPen += r.build.penalty; bBon += r.build.bonus; }
-    const buildPenalty = list.length ? bPen / list.length : 0, buildBonus = list.length ? bBon / list.length : 0;
+    for (const r of plates) { bPen += r.build.penalty; bBon += r.build.bonus; }
+    const buildPenalty = plates.length ? bPen / plates.length : 0, buildBonus = plates.length ? bBon / plates.length : 0;
     for (const r of results) for (const b of r.build.items) if (b.score <= -3) notes.push(`Burger ${r.id}: ${b.label.toLowerCase()} went out ${b.state}. That is a send-back.`);
     for (const r of results) for (const kind of r.build.missing) notes.push(`Burger ${r.id}: missing the requested ${kind === 'bun' ? 'bun halves' : kind}. That is a send-back.`);
     const rests = list.map((p) => p.restT || 0);
     const spread = rests.length > 1 ? Math.max(...rests) - Math.min(...rests) : 0;
     if (list.length > 1 && spread < 90 && coldPenalty < 0.5 && list.every(p => (p.serveT == null ? centerT(p) : p.serveT) >= 45)) notes.push('All the burgers landed together, still hot. That is the hard part of a multi-burger ticket.');
     else if (spread >= 240) notes.push(`The burgers came off the pan ${fmtTime(spread)} apart. Start the well-done one first and the rare one last so they finish together.`);
-    const mean = results.length ? results.reduce((a, r) => a + r.total, 0) / results.length : 0;
+    const mean = plates.length ? plates.reduce((a, r) => a + (r.plateScore??r.total), 0) / plates.length : 0;
     const total = Math.round(clamp(mean - coldPenalty - buildPenalty + buildBonus, 0, 100));
     return { total, mean: Math.round(mean), coldPenalty: Math.round(coldPenalty), buildPenalty: Math.round(buildPenalty * 10) / 10, buildBonus: Math.round(buildBonus * 10) / 10, spread, results, notes };
   }

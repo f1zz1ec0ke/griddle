@@ -32,13 +32,14 @@
     { who: 'Two regulars', line: '“Both medium. Same time, same plate.”', items: ['medium', 'medium'], builds: [["bun", "onions"], ["bun", "egg"]] },
     { who: 'Date night', line: '“Rare for me, medium-well for him. Don\'t let mine sit while his cooks.”', items: ['rare', 'medium-well'], builds: [["bun"], ["bun", "cheese", "bacon"]] },
     { who: 'Birthday table', line: '“Three burgers: rare, medium, medium-well. All at once or not at all.”', items: ['rare', 'medium', 'medium-well'], builds: [["bun", "cheese"], ["bun", "bacon"], ["bun", "onions"]] },
+    { who: 'Two hungry regulars', line: '“Two doubles, medium, cheese and pickles. Make them count.”', items: ['medium','medium'], builds: [['bun','double','cheese','pickles'],['bun','double','cheese','pickles']] },
     { who: 'Family of three', line: '“Medium-rare, medium-well, and a well-done for the kid. Hot, please.”', items: ['medium-rare', 'medium-well', 'well-done'], builds: [["bun", "cheese"], ["bun", "egg"], ["bun", "bacon"]] },
   ];
   const DEFAULT_FORM = { massG: 150, thicknessMm: 20, blend: '80/20', temp: 'fridge', work: 0.35, dimple: true, salt: 'surface' };
   const SHIFT_LEN = 6;                  // six tickets is a service
   const SAVE_KEY = 'griddle.session.v1';
   const SNAPSHOT_FIELDS = ['mode', 'phase', 'state', 'patties', 'forms', 'equip', 'ticket', 'shift', 'sel', 'selItem', 'probe', 'speed', 'hard', 'ticketTarget', 'ticketClock', 'ticketTiming', 'ticketRecorded', 'stoveUsed', 'practiceNextId', 'addingPractice', 'shownShiftEnd'];
-  const BUILD_NAMES = { bun: 'bun halves', cheese: 'cheese', bacon: 'bacon', egg: 'egg', onions: 'onions', ...Object.fromEntries(Object.entries(A.cold).map(([k,v]) => [k,v.label.toLowerCase()])) };
+  const BUILD_NAMES = { double: 'two patties', bun: 'bun halves', cheese: 'cheese', bacon: 'bacon', egg: 'egg', onions: 'onions', ...Object.fromEntries(Object.entries(A.cold).map(([k,v]) => [k,v.label.toLowerCase()])) };
   const BEST_KEY = 'griddle.bestShift'; // localStorage: the best shift this browser has ever cooked
   const money = (v) => '$' + (v || 0).toFixed(2);
 
@@ -147,6 +148,7 @@
       $('ro-probe').title = $('btn-probe').textContent;
     }
     startPractice() {
+      this.vp.setCutaway(false);$('btn-cutaway').classList.remove('on');
       this.mode = 'practice'; this.paused = false; this.addingPractice = false; this.practiceNextId = 1;
       this.state = P.createState({ pan: this.equip.pan, stove: this.equip.stove }); this.stoveUsed = false;
       this.ticket = { who: 'Free practice', line: '', items: [] };
@@ -163,6 +165,12 @@
       this.forms.push({ ...DEFAULT_FORM, target: 'medium' }); this.sel = this.forms.length - 1;
       this.selItem = null; this.setPhase('form');
     }
+    addSecondPatty() {
+      const p=this.patty;
+      if(!p || p.assembledTo!=null || p.extraFor!=null || A.layers(p).filter(l=>l.patty).length>=2 || this.patties.some(q=>q.extraFor===p.id) || this.patties.length >= (this.mode==='practice'?4:6)) return false;
+      this.forms.push({...this.form,extraFor:p.id});this.sel=this.forms.length-1;
+      this.addingPractice=true;this.selItem=null;this.setPhase('form');return true;
+    }
     clearPractice() {
       if (this.mode !== 'practice') return;
       this.state.patties = []; this.state.patty = null; this.state.items = []; this.state.item = null;
@@ -173,7 +181,7 @@
     }
     reheat() {
       const it = this.selItem, p = this.patty;
-      if (it?.assembledTo != null || (!it && p?.assembly?.length)) return;
+      if (it?.assembledTo != null || (!it && (p?.assembly?.length || p?.assembledTo!=null))) return;
       if (it) { if (!P.reheatItem(this.state, it)) return; }
       else { if (!p || !['rest', 'oven'].includes(p.where)) return; P.placePatty(this.state, p, P.freeSpot(this.state, p.D / 2).pos); }
       this.setPhase('cook'); this.vp.forceTex = true;
@@ -190,6 +198,7 @@
         this.state.patties = this.state.patties.filter(q => q !== p);
         for (const it of this.items) if (it.burger === p.id) it.burger = null;
         this.state.wasteG = (this.state.wasteG || 0) + P.pattyMass(p) * 1000;
+        if (p.assembledTo!=null) { const owner=this.patties.find(q=>q.id===p.assembledTo); if(owner) A.unpack(owner); }
         if (this.mode === 'service') {
           const fresh = this.makeFromForm(this.form, this.sel); fresh.id = p.id;
           this.patties[this.sel] = fresh;
@@ -198,6 +207,8 @@
           P.logEvent(this.state, `Patty ${p.id} discarded. Fresh replacement on the board; the order clock keeps running.`, 'action');
           return;
         }
+        for(const q of this.patties)if(q.extraFor===p.id)q.extraFor=null;
+        for(const f of this.forms)if(f.extraFor===p.id)f.extraFor=null;
         this.patties.splice(this.sel, 1); this.forms.splice(this.sel, 1);
         this.sel = Math.max(0, this.sel - 1);
         this.state.patty = this.patty; this.state.where = this.patty ? this.patty.where : 'board';
@@ -233,6 +244,8 @@
       this.ticketTarget = P.ticketTargetTime(items) + ((this.ticket.builds || []).some(b => b.includes('onions')) ? 600 : (this.ticket.builds || []).some(b => b.includes('bacon')) ? 300 : (this.ticket.builds || []).length ? 120 : 0);
       this.ticketClock = 0; this.ticketTiming = false; this.ticketRecorded = false; this.verdicts = null;
       this.forms = items.map((id) => ({ ...DEFAULT_FORM, target: id }));
+      (this.ticket.builds||[]).forEach((build,i)=>{if(build.includes('double'))this.forms.push({...DEFAULT_FORM,target:items[i],extraFor:i+1});});
+      if(this.forms.length>items.length)this.ticketTarget+=180;
       this.previews = []; this.patties = []; this.sel = 0; this.selItem = null; this.result = null; this.ticketResult = null;
       this.updateOrderText();
       this.updateShiftBar(); this.updateTicketClock();
@@ -388,6 +401,7 @@
         if (this.phase === 'form') status = `${f.thicknessMm} mm · ${f.massG} g`;
         else if (this.phase === 'result') { const r = this.ticketResult && this.ticketResult.results.find((x) => x.patty === p); status = r ? this.mode === 'practice' ? r.got.label : `${r.total}/100` : '—'; }
         else if (!p || p.where === 'board') status = 'on the board';
+        else if (p.assembledTo!=null) status = `in burger ${p.assembledTo}`;
         else if (p.where === 'oven') status = `in the oven ${P.fmtTime(p.ovenTime || 0)}`;
         else if (p.where === 'pan') status = `in the pan ${P.fmtTime(p.cookTime)}`;
         else status = `resting ${P.fmtTime(p.restT || 0)}`;
@@ -429,7 +443,8 @@
       const temp = { fridge: 4, room: 18, frozen: -18 }[f.temp];
       const blend = P.BLENDS.find((b) => b.id === f.blend);
       const p = P.makePatty({ id: i + 1, target: f.target, massG: f.massG, thicknessMm: f.thicknessMm, fatFrac: blend.fat, tempC: temp, dimple: f.dimple, work: f.work, salt: f.salt });
-      p.requiredBuild = this.mode === 'practice' ? [] : (this.ticket.builds && this.ticket.builds[i]) || [];
+      p.extraFor=f.extraFor;
+      p.requiredBuild = this.mode === 'practice' || f.extraFor!=null ? [] : (this.ticket.builds && this.ticket.builds[i]) || [];
       p.manualAssembly = true; p.assembly = [];
       return p;
     }
@@ -453,8 +468,8 @@
       this.updateChips();
     }
     startCook() {
-      if (this.mode === 'practice' && this.addingPractice) {
-        const p = this.makeFromForm(this.form, this.sel); p.id = this.practiceNextId++;
+      if (this.addingPractice) {
+        const p = this.makeFromForm(this.form, this.sel); p.id = Math.max(0,...this.patties.map(q=>q.id),(this.practiceNextId||1)-1)+1; this.practiceNextId=p.id+1;
         this.patties.push(p); this.addingPractice = false; this.layoutSpots();
         P.selectPatty(this.state, p); this.probe.reading = null;
         this.vp.setPatty(null); this.setPhase('cook'); return;
@@ -571,13 +586,13 @@
       $('f-temp').addEventListener('change', (e) => { s.form.temp = e.target.value; s.rebuildPreview(); });
       $('f-salt').addEventListener('change', (e) => { s.form.salt = e.target.value; s.rebuildPreview(); });
       $('f-dimple').addEventListener('change', (e) => { s.form.dimple = e.target.checked; s.rebuildPreview(); });
-      $('btn-copy').onclick = () => { const f = s.form; for (let i = 0; i < s.forms.length; i++) if (i !== s.sel) s.forms[i] = { ...f, target: s.forms[i].target }; s.updateChips(); };
+      $('btn-copy').onclick = () => { const f = s.form; for (let i = 0; i < s.forms.length; i++) if (i !== s.sel) s.forms[i] = { ...f, target: s.forms[i].target, extraFor:s.forms[i].extraFor }; s.updateChips(); };
       $('btn-to-stove').onclick = () => s.startCook();
       $('chips').addEventListener('click', (e) => {
         const b = e.target.closest('[data-chip]'); if (b) { s.select(Number(b.dataset.chip)); return; }
         const it = e.target.closest('[data-item]'); if (it) s.selectItem(s.items[Number(it.dataset.item)]);
       });
-      this.vp.onPick = (o) => { const i = s.patties.indexOf(o); if (i >= 0) s.select(i); else if (s.items.indexOf(o) >= 0) s.selectItem(o); };
+      this.vp.onPick = (o) => { if(o==='pan') { s.cameraFood=s.selItem||s.patty;s.cameraFoodWhere=s.cameraFood?.where;s.cameraPreset='pan';return; } const i = s.patties.indexOf(o); if (i >= 0) s.select(i); else if (s.items.indexOf(o) >= 0) s.selectItem(o); };
       // equipment
       const swapStove = () => { const air=P.roomAir(s.state); s.state = P.createState({ pan: s.equip.pan, stove: s.equip.stove }); s.state.room=air; s.vp.setStove(s.equip.stove); s.vp.setPan(s.equip.pan); s.vp.clearStains(); $('knob').value = 0; $('knob-v').textContent = '0'; s.layoutSpots(); s.applyEquipUI(); s.refreshButtons(); $('btn-lid').textContent = s.state.lid ? 'Lid off' : 'Lid on'; P.logEvent(s.state, s.state.grill ? 'Wheeled the kettle out. Cold coals, cold grate: light it and wait.' : `Swapped to ${s.state.pan.name.toLowerCase()} on ${s.state.stove.name.split(' (')[0].toLowerCase()}: a cold pan.`, 'action'); s.logN = -1; };
       $('e-stove').addEventListener('change', (e) => { s.equip.stove = e.target.value; if (s.phase === 'cook' && !s.anyPlaced()) swapStove(); });
@@ -771,7 +786,7 @@
     inPan() { return this.patties.filter((p) => p.where === 'pan'); }
     place() {
       const p = this.patty; if (!p || p.where !== 'board') return;
-      let pos = this.spots[this.sel];
+      let pos = this.spots[this.sel] || P.freeSpot(this.state,p.D/2).pos;
       const g = this.state.grill;
       // a banked fire has a searing side and a finishing side, and meat goes on over the coals
       const want = g && (g.bank || 0) > 0.05 ? { x: 0.55 * this.state.pan.floorR + pos.x * 0.4, y: pos.y } : pos;
@@ -833,7 +848,7 @@
       $('practice-tools').hidden = this.mode !== 'practice' || !['cook', 'rest'].includes(this.phase);
       $('btn-add-patty').disabled = this.patties.length >= 4;
       $('btn-add-patty').textContent = this.patties.length >= 4 ? 'Four patties on the bench' : 'Form another patty';
-      $('btn-reheat').disabled = !(it ? it.where === 'rest' && it.assembledTo == null : p && ['rest', 'oven'].includes(p.where) && !p.assembly?.length);
+      $('btn-reheat').disabled = !(it ? it.where === 'rest' && it.assembledTo == null : p && ['rest', 'oven'].includes(p.where) && !p.assembly?.length && p.assembledTo==null);
       $('btn-discard').disabled = !(it && it.where !== 'cut') && !(p && p.where !== 'cut');
       $('btn-discard').textContent = it && it.pair != null ? 'Discard both bun halves' : it ? 'Discard ' + it.spec.short : this.mode === 'practice' ? 'Discard patty' : 'Replace patty';
       $('btn-discard').title = !it && this.mode === 'service' ? 'Discard this patty and put a fresh one on the board. The order clock keeps running.' : 'Discard selected food';
@@ -854,7 +869,7 @@
       // the flip and remove buttons act on whichever chip is selected — a patty or a topping
       $('btn-flip').disabled = it ? !itemOn : !inPan;
       $('btn-flip').textContent = it ? (it.kind === 'onions' ? 'Stir' : 'Turn') : 'Flip';
-      $('btn-oven').disabled = !!it || !p || !!p.assembly?.length || !['cook', 'rest'].includes(this.phase) || !['pan', 'rest'].includes(where);
+      $('btn-oven').disabled = !!it || !p || !!p.assembly?.length || p.assembledTo!=null || !['cook', 'rest'].includes(this.phase) || !['pan', 'rest'].includes(where);
       $('btn-remove').disabled = it ? !itemOn : !(inPan || where === 'oven');
       $('btn-remove').textContent = it ? 'Lift off' : where === 'oven' ? 'Out & rest' : 'Rest';
       // a pan lid is for what is in the pan; a kettle lid is part of the fire (it is half the
@@ -882,7 +897,7 @@
       }
       $('e-stove').disabled = $('e-pan').disabled = this.anyPlaced() || this.items.length > 0;
       if (this.state.grill) { $('btn-fat').disabled = true; }
-      $('btn-cut').disabled = !this.patties.length || this.patties.some(q => q.where === 'board' || q.where === 'oven' || (q.assembly?.length && (!A.hasPatty(q) || (q.assembly.some(l=>l.item?.half==='bottom') && !A.closed(q))))) || this.inPan().length > 0 || this.items.some((q) => q.where === 'pan');
+      $('btn-cut').disabled = !this.patties.length || this.patties.some(q => (this.mode==='service'&&q.extraFor!=null&&q.assembledTo==null)||q.where === 'board' || q.where === 'oven' || (q.assembly?.length && (!A.hasPatty(q) || (q.assembly.some(l=>l.item?.half==='bottom') && !A.closed(q))))) || this.inPan().length > 0 || this.items.some((q) => q.where === 'pan');
     }
     // ------------------------------------------------------------ loop
     frame(now) {
@@ -962,7 +977,7 @@
       $('h-probe').textContent = this.probe.reading == null ? '—' : fmt(this.probe.reading, 1) + ' °C';
       const it = this.selItem;
       $('h-side').textContent = it
-        ? `${it.label} · ${P.itemState(it).state}${it.where === 'pan' ? ` · ${this.hard ? '' : fmt(P.itemT(it), 0) + ' °C · '}${P.fmtTime(it.timeDown)} this side` : it.burger ? ` · on burger ${it.burger}` : ' · at the pass'}`
+        ? `${it.label} · ${P.itemState(it).state}${it.where === 'pan' ? ` · ${this.hard ? '' : fmt(P.itemT(it), 0) + ' °C · '}${it.kind==='onions'&&it.bot.w>1e-6&&it.bot.T>=98&&it.bot.T<=101?'steaming off water · ':''}${P.fmtTime(it.timeDown)} this side` : it.burger ? ` · on burger ${it.burger}` : ' · at the pass'}`
         : p && where === 'pan' ? `${this.patties.length > 1 ? `patty ${p.id} · ` : ''}face ${p.faceDown.id} down · ${P.fmtTime(p.timeDown)} this side` : '';
       if (st.grill && (st.grill.bank || 0) > 0.05 && !this.hard) {
         $('h-pan').textContent = `${fmt(st.grill.Thot, 0)} / ${fmt(st.grill.Tcool, 0)} °C`;
@@ -1073,7 +1088,9 @@
       el.scrollTop = el.scrollHeight;
     }
     buildLayer(key) {
-      const p = this.patty; if (!p || p.where !== 'rest') return false;
+      const p = this.patty; if (!p) return false;
+      if(key==='extra') return this.addSecondPatty();
+      if(p.where!=='rest') return false;
       let ok;
       if (key === 'undo') ok = A.pop(p);
       else if (key === 'unpack') { A.unpack(p); ok = true; }
@@ -1087,15 +1104,18 @@
     renderAssembly() {
       const p = this.patty, el = $('assembly-controls');
       if (!p) { el.innerHTML = ''; return; }
-      const stack = A.layers(p), closed = A.closed(p), ready = p.where === 'rest';
+      const stack = A.layers(p), closed = A.closed(p), ready = p.where === 'rest' && p.assembledTo==null;
       const button = (key,label,disabled=false,icon='') => `<button data-build="${key}" ${disabled?'disabled':''}>${icon ? `<img alt="" src="assets/icons/${icon}.svg">` : ''}${label}</button>`;
-      let html = '<div class="assembly-burgers">' + this.patties.map((q,i) => button('select:'+i,`Burger ${i+1}`,i===this.sel)).join('') + '</div>';
-      html += `<p class="assembly-hint">${!ready ? 'Rest this patty before building.' : closed ? 'Closed. Ready for the pass.' : 'Stack from the bottom up. Undo lifts the last layer.'}</p>`;
+      let html = '<div class="assembly-burgers">' + this.patties.map((q,i) => button('select:'+i,q.extraFor!=null?`Second patty → ${q.extraFor}`:`Burger ${i+1}`,i===this.sel)).join('') + '</div>';
+      html += `<p class="assembly-hint">${p.assembledTo!=null ? 'In burger '+p.assembledTo+'. Select that burger to undo or unpack.' : !ready ? 'Rest this patty before building.' : closed ? 'Closed. Ready for the pass.' : 'Stack from the bottom up. Undo lifts the last layer.'}</p>`;
       html += '<ol class="assembly-stack">' + stack.map(l => `<li>${A.label(l)}</li>`).join('') + '</ol>';
       if (!stack.length) html += '<p class="assembly-empty">Your plate is empty.</p>';
       html += '<div class="assembly-edit">'+button('undo','Undo layer',!ready||!stack.length)+button('unpack','Unpack',!ready||!stack.length)+'</div>';
       html += '<h3>From the pass</h3><div class="assembly-options">';
-      html += button('patty','Patty',!ready||closed||A.hasPatty(p),'burger');
+      html += button('patty','Patty',!ready||closed||stack.some(l=>l.patty&&!l.meat),'burger');
+      for(const q of this.patties.filter(q=>q!==p && q.where==='rest' && q.assembledTo==null && !A.layers(q).length && (this.mode==='practice'||q.extraFor===p.id)))
+        html+=button('patty:'+q.id,'Second patty · '+q.id,!ready||closed||!A.hasPatty(p)||stack.filter(l=>l.patty).length>=2,'burger');
+      html+=button('extra','Form second patty',p.assembledTo!=null||p.extraFor!=null||stack.filter(l=>l.patty).length>=2||this.patties.some(q=>q.extraFor===p.id)||this.patties.length>=(this.mode==='practice'?4:6),'burger');
       for (const it of this.items.filter(it => it.where === 'rest' && it.assembledTo == null)) {
         const bottom = it.kind === 'bun' && it.half === 'bottom', top = it.kind === 'bun' && it.half === 'top';
         const blocked = !ready || closed || (bottom ? stack.length>0 : top ? !A.hasPatty(p)||!stack.some(l=>l.item?.pair===it.pair&&l.item.half==='bottom') : !stack.length);
@@ -1171,22 +1191,23 @@
       // plate in front of them, the bill and what they left on it.
       const elapsed = this.ticketClock || 0, targetT = this.ticketTarget || 0;
       tk.service = { elapsed, target: targetT, penalty: P.latePenalty(elapsed, targetT) };
-      this.verdicts = tk.results.map((r) => P.verdict(r, tk));
-      const sentBack = this.verdicts.filter((v) => v.outcome === 'sent back');
+      this.verdicts = tk.results.map((r) => r.patty.assembledTo!=null ? null : P.verdict(r.plateVerdict||r, tk));
+      const plateVerdicts=this.verdicts.filter(Boolean);
+      const sentBack = plateVerdicts.filter((v) => v.outcome === 'sent back');
       // A plate that goes back is comped: it is off the bill, and nobody tips on it.
-      const bill = this.verdicts.reduce((a, v) => a + (v.outcome === 'sent back' ? 0 : v.bill), 0);
-      const tips = this.verdicts.reduce((a, v) => a + v.tipAmount, 0);
+      const bill = plateVerdicts.reduce((a, v) => a + (v.outcome === 'sent back' ? 0 : v.bill), 0);
+      const tips = plateVerdicts.reduce((a, v) => a + v.tipAmount, 0);
       const points = sentBack.length ? 0 : P.clamp(Math.round(tk.total - tk.service.penalty), 0, 100);
       // what the card remembers this ticket by: the plate that went back if one did, else the lowest
-      const worst = sentBack[0] || this.verdicts.reduce((a, v) => (v.score < a.score ? v : a), this.verdicts[0]);
+      const worst = sentBack[0] || plateVerdicts.reduce((a, v) => (v.score < a.score ? v : a), plateVerdicts[0]);
       this.recordTicket({
         n: (this.shift ? this.shift.n : 0) + 1, who: this.ticket.who, labels: this.ticket.items.map((id) => SHORT[id]).join(' + '),
-        points, tips, bill, covers: tk.results.length, elapsed, target: targetT, penalty: tk.service.penalty,
+        points, tips, bill, covers: plateVerdicts.length, elapsed, target: targetT, penalty: tk.service.penalty,
         sentBack: sentBack.length > 0, quote: worst ? worst.quote : '',
       });
       const sh = this.shift;
       $('r-bill').hidden = false;
-      $('r-bill').innerHTML = `<b>Bill</b> ${this.verdicts.map((v) => `${v.billLines[0].what} ${money(v.bill)}${v.outcome === 'sent back' ? ' <em>comped</em>' : ''}`).join(' · ')} — total <b>${money(bill)}</b>, tip <b>${money(tips)}</b>${bill > 0 ? ` (${((tips / bill) * 100).toFixed(0)} %)` : ''}`;
+      $('r-bill').innerHTML = `<b>Bill</b> ${plateVerdicts.map((v) => `${v.billLines[0].what} ${money(v.bill)}${v.outcome === 'sent back' ? ' <em>comped</em>' : ''}`).join(' · ')} — total <b>${money(bill)}</b>, tip <b>${money(tips)}</b>${bill > 0 ? ` (${((tips / bill) * 100).toFixed(0)} %)` : ''}`;
       $('r-shift').hidden = false;
       $('r-shift').innerHTML = `<b>Shift</b> ticket ${sh.n} of ${SHIFT_LEN} · this ticket <b>${points}</b>` +
         (sentBack.length ? ' <em>(sent back — the ticket scores nothing)</em>' : tk.service.penalty >= 0.5 ? ` (${tk.total} − ${tk.service.penalty.toFixed(0)} for going out ${P.fmtTime(elapsed)} against ${P.fmtTime(targetT)})` : ` in ${P.fmtTime(elapsed)} of ${P.fmtTime(targetT)}`) +
@@ -1198,7 +1219,7 @@
       $('r-score').textContent = tk.total;
       // the kitchen's one-line grade agrees with the customer: a plate that went back (under 45 on
       // its own score, or anything raw or burnt on the build) is "sent back" whatever the ticket total
-      const anyBack = this.verdicts && this.verdicts.some((v) => v.outcome === 'sent back');
+      const anyBack = this.verdicts && this.verdicts.some((v) => v && v.outcome === 'sent back');
       $('r-grade').textContent = anyBack ? (tk.total >= 55 ? 'Sent back — over the build, not the meat.' : 'Sent back.') : tk.total >= 90 ? 'Line-cook royalty' : tk.total >= 75 ? 'Solid. They will come back.' : tk.total >= 55 ? 'Edible. Nobody complained out loud.' : tk.total >= 45 ? 'They ate it. They will not be back.' : 'The customer left. So did the smoke alarm.';
       this.renderResultDetails();
     }
@@ -1263,7 +1284,7 @@
         ['Mass', `${(r.massStart * 1000).toFixed(0)} g → ${(r.massEnd * 1000).toFixed(0)} g (−${((1 - r.massEnd / r.massStart) * 100).toFixed(0)} %)`],
         ['Water', `${(r.waterRetained * 100).toFixed(0)} % retained · ${(r.waterEvap * 1000).toFixed(1)} g steamed off · ${(r.waterDrip * 1000).toFixed(1)} g ran out`],
         ['Fat rendered into the pan', `${(r.fatLost * 1000).toFixed(1)} g`],
-        ['On the bun', r.patty.bunFaces && r.patty.bunFaces.bottom ? `${r.cheeseSlices ? r.cheeseSlices + ' slice' + (r.cheeseSlices > 1 ? 's' : '') + ' of cheese · ' : ''}${(r.bunSoak * 1000).toFixed(1)} g of juice into the bottom bun` : 'No bottom bun served'],
+        ['On the bun', r.patty.assembledTo!=null ? `Part of burger ${r.patty.assembledTo}` : r.patty.bunFaces && r.patty.bunFaces.bottom ? `${r.cheeseSlices ? r.cheeseSlices + ' slice' + (r.cheeseSlices > 1 ? 's' : '') + ' of cheese · ' : ''}${(r.bunSoak * 1000).toFixed(1)} g of juice into the bottom bun` : 'No bottom bun served'],
         ['Crust (browning index / char)', `A: ${r.faces.down.id === 'A' ? r.faces.down.brown.toFixed(1) : r.faces.up.brown.toFixed(1)} / ${(r.faces.down.id === 'A' ? r.faces.down.char : r.faces.up.char).toFixed(2)} · B: ${r.faces.down.id === 'B' ? r.faces.down.brown.toFixed(1) : r.faces.up.brown.toFixed(1)} / ${(r.faces.down.id === 'B' ? r.faces.down.char : r.faces.up.char).toFixed(2)}`],
         ['Grey band', `${(r.overFrac * 100).toFixed(0)} % of the meat cooked past target`],
         // the smoke line only exists if it was cooked over a fire
@@ -1275,7 +1296,7 @@
           r.peeks ? `cut into it ${r.peeks === 1 ? 'once' : r.peeks === 2 ? 'twice' : r.peeks + ' times'} — ${(r.cutJuice * 1000).toFixed(1)} g of juice out of the cut, and a slit in the burger` : null,
           r.pressTests ? `${r.pressTests} press test${r.pressTests > 1 ? 's' : ''} — ${(r.pressJuice * 1000).toFixed(2)} g` : null,
         ].filter(Boolean).join('<br>') || 'None: never pressed, never cut.'],
-        ['Build', r.build.items.length
+        ['Build', r.patty.assembledTo!=null ? `Second patty in burger ${r.patty.assembledTo}` : r.build.items.length
           ? r.build.items.map((b) => `${b.label} — <b>${b.state}</b>`).join('<br>') + (r.build.penalty ? `<br><span class="pen">− ${r.build.penalty.toFixed(1)} on the ticket</span>` : '') + (r.build.bonus ? `<br><span class="bon">+ ${r.build.bonus.toFixed(1)} on the ticket</span>` : '')
           : 'Nothing on it but the patty'],
       ].filter(([k]) => this.mode !== 'practice' || !['Ordered', 'Grey band'].includes(k)).map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');

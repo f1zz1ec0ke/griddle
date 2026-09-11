@@ -13,10 +13,15 @@
   const closed = p => layers(p).at(-1)?.item?.half === 'top';
   const hasPatty = p => layers(p).some(l => l.patty);
   function add(s,p,key) {
-    if (!p || p.where !== 'rest' || closed(p)) return false;
+    if (!p || p.assembledTo != null || p.where !== 'rest' || closed(p)) return false;
     const stack = layers(p), item = typeof key === 'number' ? s.items.find(it => it.id === key) : null;
     let layer;
-    if (key === 'patty') { if (hasPatty(p)) return false; layer = {patty:true}; }
+    if (key === 'patty') { if (stack.some(l=>l.patty&&!l.meat)) return false; layer = {patty:true}; }
+    else if (typeof key==='string' && key.startsWith('patty:')) {
+      const meat=s.patties.find(q=>q.id===Number(key.slice(6)));
+      if(!meat || meat===p || meat.requiredBuild?.length || meat.where!=='rest' || meat.assembledTo!=null || layers(meat).length || !hasPatty(p) || stack.filter(l=>l.patty).length>=2 || (meat.extraFor!=null&&meat.extraFor!==p.id)) return false;
+      layer={patty:true,meat}; meat.assembledTo=p.id;
+    }
     else if (cold[key]) {
       if (!stack.length || stack.filter(l => l.cold === key).length >= (cold[key].sauce ? 1 : 4)) return false;
       layer = {cold:key,T:6,age:0};
@@ -35,11 +40,12 @@
   function pop(p) {
     if (!p || p.where === 'cut') return false;
     const layer = p.assembly?.pop();
+    if (layer?.meat) layer.meat.assembledTo=null;
     if (layer?.item) { layer.item.assembledTo = null; layer.item.burger = null; }
     return !!layer;
   }
   function unpack(p) { while (pop(p)) {} }
-  function label(layer) { return layer.patty ? 'Patty' : layer.item ? layer.item.label : cold[layer.cold].label; }
+  function label(layer) { return layer.patty ? (layer.meat ? 'Second patty' : 'Patty') : layer.item ? layer.item.label : cold[layer.cold].label; }
   // Conservative contact exchange between the actual stack surfaces. The existing
   // food solvers still handle conduction within each ingredient and exposed faces.
   function surface(p,l,upper) {
@@ -49,6 +55,7 @@
       return {T:l.T,C:mass*(cold[l.cold].sauce?3000:3900),add:q=>{l.T+=q/(mass*(cold[l.cold].sauce?3000:3900));}};
     }
     if(l.patty) {
+      p=l.meat || p;
       const cheese=upper?p.cheeses.at(-1):p.cheeseUnder[0];
       if(cheese) {const cap=cheese.mass*(upper?2500:1500+4180*(cheese.skirt?.water??.44));return {T:cheese.T,C:cap,add:q=>{cheese.T+=q/cap;}};}
       const start=upper?(p.Nz-1)*p.Nr:0; let cap=0,energy=0;
@@ -70,8 +77,8 @@
     const q=(a.T-b.T)/(1/a.C+1/b.C)*(-Math.expm1(-G*(1/a.C+1/b.C)*dt));
     a.add(-q); b.add(q); return q;
   }
-  function cover(p,bc,item) {
-    const stack=layers(p),i=stack.findIndex(l=>item?l.item===item:l.patty);
+  function cover(p,bc,item,meat) {
+    const stack=layers(p),i=stack.findIndex(l=>item?l.item===item:meat?l.meat===meat:l.patty&&!l.meat);
     if(i<0) return;
     let below=i>0,above=i<stack.length-1;
     if(item?.kind==='bun' && (item.faceIsCut===(item.half==='bottom'))) [below,above]=[above,below];

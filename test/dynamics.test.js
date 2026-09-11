@@ -81,3 +81,39 @@ test('bun cover insulates, undo restores exposed cooling, and film/stack saves r
   for(let i=0;i<20;i++){P.step(s,.05);P.step(copy,.05);}
   assert.deepEqual(copy.pan.film.mass,s.pan.film.mass);assert.deepEqual(copy.patties[0].T,p.T);assert.equal(copy.patties[0].assembly[1].T,p.assembly[1].T);
 });
+
+test('bacon stays inside its footprint with thickness above the metal throughout curling',()=>{
+  const F=require('../js/food-shapes');
+  for(let id=1;id<=4;id++)for(const shrink of [0,.15,.35])for(const curl of [-1,0,1])for(let i=0;i<=48;i++)for(let j=0;j<=18;j++) {
+    const p=F.baconPoint(i/48,j/18,shrink,curl,id);
+    assert.ok(Math.hypot(p.x,p.z)<=.0575*(1-shrink)+1e-9);assert.ok(p.y>=.001);
+  }
+});
+
+test('crowded pass keeps all food on a support surface and separates footprints',()=>{
+  const F=require('../js/food-shapes'),entries=Array.from({length:6},(_,i)=>({key:'p'+i,r:.16}));
+  for(const r of [.07,.0575,.07,.08])for(let i=0;i<4;i++)entries.push({key:entries.length,r});
+  const layout=F.passLayout(entries);assert.equal(layout.size,22);
+  const positions=[...layout.values()];
+  for(const p of positions) {
+    assert.ok(p.x-p.r>=-.64-1e-8&&p.x+p.r<=.855+1e-8);assert.ok(p.z-p.r>=-.48-1e-8&&p.z+p.r<=.48+1e-8);
+    assert.equal(p.y,.001+p.tier*.18);
+    for(const q of positions)if(q!==p&&q.tier===p.tier)assert.ok(Math.hypot(q.x-p.x,q.z-p.z)>=q.r+p.r-1e-8);
+  }
+});
+
+test('onions leave the boiling plateau after the contact layer dries on a real burner',()=>{
+  const s=state();P.setKnob(s,7);for(let i=0;i<6000;i++)P.step(s,.05);P.addFat(s,'canola',10);const [o]=P.addItem(s,'onions');
+  let wetPlateau=false,hotDry=false;
+  for(let i=0;i<7200;i++){P.step(s,.05);if(o.bot.w>.002&&Math.abs(o.bot.T-100)<.1)wetPlateau=true;if(o.bot.w<1e-5&&o.bot.T>130)hotDry=true;if(i%2400===2399)P.flipItem(s,o);}
+  assert.ok(wetPlateau);assert.ok(hotDry);assert.ok(o.carm>.1);
+});
+
+test('double patties exchange heat through their own surfaces and serve together',()=>{
+  const s=state(),p=patty(s,80);P.removePatty(s,p);const q=P.makePatty({id:2,massG:150,thicknessMm:20,fatFrac:.2,tempC:30,target:'medium'});P.placePatty(s,q);P.removePatty(s,q);
+  A.add(s,p,'patty');A.add(s,p,'patty:2');
+  const top=A.surface(p,p.assembly[0],true),bottom=A.surface(p,p.assembly[1],false),before=top.C*top.T+bottom.C*bottom.T;
+  A.exchange(top,bottom,.45,1);const afterTop=A.surface(p,p.assembly[0],true),afterBottom=A.surface(p,p.assembly[1],false);
+  assert.ok(afterTop.T<80&&afterBottom.T>30);assert.ok(Math.abs(afterTop.C*afterTop.T+afterBottom.C*afterBottom.T-before)<1e-6);
+  P.serve(s,p);assert.equal(p.where,'cut');assert.equal(q.where,'cut');assert.ok(Number.isFinite(q.serveT));
+});
