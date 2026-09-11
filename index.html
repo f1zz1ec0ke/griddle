@@ -6,7 +6,7 @@
 <meta content="width=device-width, initial-scale=1" name="viewport"/>
 <title>Griddle — a physically honest burger simulator</title>
 <link href="assets/icons/burger.svg" rel="icon" type="image/svg+xml"/>
-<link href="css/style.css?v=open-4" rel="stylesheet"/><link href="css/open-kitchen.css?v=4" rel="stylesheet"/></head>
+<link href="css/style.css?v=open-4" rel="stylesheet"/><link href="css/open-kitchen.css?v=daylight-1" rel="stylesheet"/></head>
 <body data-phase="order">
 <canvas id="view"></canvas>
 <!-- top HUD -->
@@ -29,7 +29,7 @@
 <button hidden="" id="btn-end-practice">Leave practice</button>
 <div class="menu-divider"></div><div class="eyebrow">View &amp; sound</div>
 <button id="btn-cutaway" title="Cut the patty in half to watch the inside (C)">Cutaway</button>
-<span class="views"><button data-view="default" title="key 1">Kitchen</button><button data-view="top" title="key 2">Overhead</button><button data-view="side" title="key 3">Side</button><button data-view="close" title="key 4">Close</button></span>
+<span class="views"><button data-view="room">Room</button><button data-view="default" title="key 1">Cook</button><button data-view="top" title="key 2">Overhead</button><button data-view="side" title="key 3">Side</button><button data-view="close" title="key 4">Close</button></span>
 <button id="btn-inspector">Inspector</button>
 <button id="btn-audio">Sound off</button>
 </div></details>
@@ -198,7 +198,8 @@
 </section>
 <script src="js/vendor/three.min.js"></script>
 <script src="js/physics.js"></script>
-<script src="js/render3d.js?v=open-4"></script>
+<script src="js/kitchen-room.js?v=3"></script>
+<script src="js/render3d.js?v=room-3"></script>
 <script src="js/audio.js"></script>
 <script src="js/session.js"></script>
 <script src="js/cues.js?v=diner-2"></script>

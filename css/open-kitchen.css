@@ -196,3 +196,9 @@ body:has(.prep-tray:not([hidden])) .world-hint { display: none; }
 .receipt-details > summary, .receipt-breakdown > summary, .customer-notes > summary { cursor: pointer; color: var(--accent); }
 .receipt-details > summary::after, .receipt-breakdown > summary::after, .customer-notes > summary::after { content: ' +'; }
 .receipt #btn-again { position: sticky; bottom: 0; }
+/* Daylight room: instruments stay readable against windows and pale stone. */
+.brand { color: #364b3a; text-shadow: 0 1px 3px #fff8; }
+.readouts { color: var(--ink); background: #fff8eceb; border: 1px solid #e0d6c0; border-radius: 18px; padding: 9px 15px; top: 18px; box-shadow: 0 3px 14px #514a3017; }
+.ro { text-shadow: none; }.ro label { color: #666451; }.ro span { color: #364b3a; }
+.world-hint { color: #525747; background: #fff8dfb8; border-radius: 12px; padding: 5px 9px; }
+@media (max-width: 1150px) { .readouts { top: 89px; } }
