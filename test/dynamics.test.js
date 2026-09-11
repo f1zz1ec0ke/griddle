@@ -121,6 +121,31 @@ test('double patties exchange heat through their own surfaces and serve together
 const M=require('../js/moisture');
 const energy=(n,cp)=>M.capacity(n,cp)*n.T;
 
+test('raw eggs fall through cold bars, persist in saves, and burn only over hot coals',()=>{
+  const s=P.createState({stove:'charcoal'}),[egg]=P.addItem(s,'egg'),mass=P.itemMass(egg);
+  P.step(s,.05);assert.equal(s.items.length,0);assert.equal(s.item,null);assert.equal(egg.where,'coals');
+  assert.ok(Math.abs(egg.lostDrip-mass)<1e-12);assert.ok(!P.removeItem(s,egg));
+  const debris=s.grill.droppedEggs[0];
+  for(let i=0;i<100;i++)P.step(s,.05);
+  assert.equal(debris.burned,0);assert.ok(Math.abs(P.itemMass(debris)-mass)<1e-9);
+  const copy=S.decode(S.encode(s));P.step(s,.05);P.step(copy,.05);assert.deepEqual(copy.grill.droppedEggs,s.grill.droppedEggs);
+  let smoke=0;
+  for(let i=0;i<2400;i++){s.grill.Tfire=700;P.step(s,.05);smoke=Math.max(smoke,s.diag.smoke);}
+  assert.ok(debris.burned>.005);assert.ok(smoke>0);assert.equal(s.grill.droppedEggs.length,0);
+  assert.ok(Math.abs(P.itemMass(debris)+debris.lostWater+debris.burned-mass)<1e-8);
+});
+test('a set egg stays on the grate and scraping raw egg preserves the mass ledger',()=>{
+  const grill=P.createState({stove:'charcoal'}),[set]=P.addItem(grill,'egg');set.setBot=.9;set.setTop=.8;
+  P.step(grill,.05);assert.ok(grill.items.includes(set));assert.equal(set.where,'pan');
+  for(const action of ['flipItem','removeItem']) {
+    const s=state(),[egg]=P.addItem(s,'egg'),mass=P.itemMass(egg);s.pan.release=1;
+    const residue=s.pan.fond+s.pan.water;
+    P[action](s,egg);
+    assert.ok(egg.lostDrip>0);assert.ok(Math.abs(P.itemMass(egg)+egg.lostDrip-mass)<1e-10);
+    assert.ok(Math.abs(s.pan.fond+s.pan.water-residue-egg.lostDrip)<1e-10);
+  }
+});
+
 test('stack weight compresses soft layers more than meat and responds to adding or removing food',()=>{
   const s=state(),p=patty(s);P.removePatty(s,p);
   const [bun]=P.addItem(s,'bun'),[onion]=P.addItem(s,'onions');

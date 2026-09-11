@@ -2415,9 +2415,9 @@
     const it = made[0], Tat = it.Tat.toFixed(0);
     if (kind === 'bun') logEvent(s, `Two bun halves in, cut side down (${(it.m0 * 2000).toFixed(0)} g). A bun face is dry starch on ${Tat} °C metal: it drinks the fat, goes golden in a minute and black in three.`, 'action');
     else if (kind === 'bacon') logEvent(s, `A rasher of streaky bacon (${(it.m0 * 1000).toFixed(0)} g, ${(ITEMS.bacon.fat * 100).toFixed(0)} % fat) on ${Tat} °C metal. The water has to go before the fat can render and the lean can crisp.`, 'action');
-    else if (kind === 'egg') logEvent(s, `An egg cracked into the pan at ${Tat} °C. White sets at 62–65 °C, yolk thickens at 65 and sets at 70 — and sunny side up it only cooks from below.`, 'action');
+    else if (kind === 'egg') logEvent(s, s.grill?'Cracked an egg onto the bare grate.':`An egg cracked into the pan at ${Tat} °C. White sets at 62–65 °C, yolk thickens at 65 and sets at 70.`, 'action');
     else if (kind === 'onions') logEvent(s, `${(it.m0 * 1000).toFixed(0)} g of sliced onion in. ${(it.m0 * ITEMS.onions.water * 1000).toFixed(0)} g of that is water; all of it has to boil off before one sugar caramelises, and boiling it off is what drags the pan down.`, 'action');
-    if (s.grill && (kind === 'egg' || kind === 'onions')) logEvent(s, `${kind === 'egg' ? 'An egg' : 'Sliced onion'} on bare bars: most of it is going to run straight through onto the coals. That wants a pan.`, 'warn');
+    if (s.grill && kind === 'onions') logEvent(s, 'Sliced onion on bare bars: most of it is going to run straight through onto the coals. That wants a pan.', 'warn');
     return made;
   }
   // s.patty stays where it is: the HUD, the probe and the cutaway all follow the selected patty,
@@ -2450,9 +2450,9 @@
       const rel = s.pan.release * (s.pan.oil > 0.002 ? 0.25 : 1);
       if (it.setBot < 0.6 && rel > 0.3) {
         torn = clamp(0.2 * rel * (1 - it.setBot), 0.02, 0.25);
-        const lost = (it.wBot.m + it.wBot.w) * torn;
+        const solids=it.wBot.m*torn,water=it.wBot.w*torn,lost=solids+water;
         it.wBot.m *= 1 - torn; it.wBot.w *= 1 - torn;
-        it.torn += torn; s.pan.fond += lost * 0.4; s.pan.meatBits += lost * 0.6;
+        it.torn += torn;it.lostDrip+=lost;s.pan.fond+=solids;s.pan.water+=water;
         logEvent(s, `The egg is welded to the pan. ${(torn * 100).toFixed(0)} % of the white tore off and stayed there. Egg wants fat under it, or a pan that lets go.`, 'warn');
       }
     }
@@ -2472,7 +2472,9 @@
   function removeItem(s, it) {
     it = it || s.item; if (!it || it.where !== 'pan') return false;
     if (it.kind === 'egg' && it.stuck && it.setBot < 0.5 && s.pan.release > 0.3 && s.pan.oil < 0.002) {
-      const torn = 0.15; it.wBot.m *= 1 - torn; it.wBot.w *= 1 - torn; it.torn += torn; s.pan.fond += 0.001;
+      const torn = 0.15,solids=it.wBot.m*torn,water=it.wBot.w*torn;
+      it.wBot.m *= 1 - torn; it.wBot.w *= 1 - torn; it.torn += torn;
+      it.lostDrip+=solids+water;s.pan.fond+=solids;s.pan.water+=water;
       logEvent(s, 'Scraped the egg up; a good part of the white stayed welded to the pan.', 'warn');
     }
     it.where = 'rest'; it.restT = 0; it.restPos = { x: it.pos.x, y: it.pos.y };
@@ -2705,10 +2707,9 @@
     const lace = it.lace;
     lace.on = bc.bottom.type === 'pan' && oilFilm > 0.2;
     if (lace.on) {
-      const Tp = bc.bottom.T, Cl = lace.m * sp.cpWhite + lace.w * C.cpW + 1e-9;
-      let Tn = lace.T + (sp.hcLace * (sp.laceA * A) * (Tp - lace.T) * dt) / Cl; // a film of egg in oil is all but welded to the metal: it sits at the pan's temperature
-      if (Tn > C.Tboil && lace.w > 1e-9) { const ex = Cl * (Tn - C.Tboil); const m = Math.min(lace.w, ex / C.Lvap); lace.w -= m; Tn = C.Tboil + (ex - m * C.Lvap) / Cl; it.lostWater += m; }
-      lace.T = Math.min(Tn, Tp);
+      const Tp = bc.bottom.T;
+      const boiled=heatNode(lace,sp.hcLace*sp.laceA*A*(Tp-lace.T),dt,sp.cpWhite,Tp);
+      it.lostWater+=boiled;it.steam+=boiled/dt;
       lace.dry = nodeDry(lace, lace.w0);
       itemBrowning(lace, lace.T, lace.dry, dt, 1, MEAT_CHAR);
     }
@@ -2806,6 +2807,38 @@
   }
 
   const ITEM_STEP = { bun: stepBun, bacon: stepBacon, egg: stepEgg, onions: stepOnions };
+  function dropEgg(s,it) {
+    const keys=['wBot','wTop','yolk','lace'],mass=itemMass(it);
+    const debris={...it,where:'coals',dropAge:0,burned:0,dropMass:mass};
+    for(const key of keys){debris[key]={...it[key]};it[key].m=it[key].w=0;}
+    it.lostDrip+=mass;it.where='coals';
+    (s.grill.droppedEggs||=[]).push(debris);
+    s.grill.foodOnCoals=(s.grill.foodOnCoals||0)+mass;
+    s.wasteG=(s.wasteG||0)+mass*1000;
+    s.items.splice(s.items.indexOf(it),1);if(s.item===it)s.item=null;
+    logEvent(s,'The raw egg slips through the grate onto the coals. Use a pan to fry it first.','warn');
+  }
+  function stepDroppedEggs(s,dt) {
+    let steam=0,smoke=0;
+    for(const it of s.grill?.droppedEggs||[]) {
+      it.dropAge+=dt;
+      if(it.dropAge<.45)continue;
+      const fire=bedAt(s,it.pos.x).Tfire;
+      for(const key of ['wBot','wTop','yolk','lace']) {
+        const n=it[key];if(n.m+n.w<1e-9)continue;
+        const cp=key==='yolk'?it.spec.cpYolk:it.spec.cpWhite;
+        const q=(fire-n.T)*Moisture.capacity(n,cp)*(-Math.expm1(-dt/1.5));
+        const boiled=Moisture.heat(n,q,cp);steam+=boiled/dt;it.lostWater+=boiled;
+        const burned=n.m*(-Math.expm1(-Math.max(0,n.T-150)*.002*dt));
+        n.m-=burned;it.burned+=burned;smoke+=burned/dt*200;
+      }
+      it.setBot=clamp(it.setBot+.6*dt/(1+Math.exp((63.5-it.wBot.T)/1.2)),0,1);
+      it.setTop=clamp(it.setTop+.6*dt/(1+Math.exp((63.5-it.wTop.T)/1.2)),0,1);
+      it.yolkSet=clamp(it.yolkSet+.35*dt/(1+Math.exp((68-it.yolk.T)/1.8)),0,1);
+    }
+    if(s.grill?.droppedEggs)s.grill.droppedEggs=s.grill.droppedEggs.filter(it=>itemMass(it)>1e-6);
+    return {steam,smoke};
+  }
   function ensureRegions(it) {
     if(it.regions)return;
     it.regions=Array.from({length:3},(_,i)=>{
@@ -3201,9 +3234,11 @@
     // ---- the toppings. Same boundary conditions as a patty, one lumped object each, and the same
     // bookkeeping afterwards: heat comes back out of the rings under them, rendered fat goes into
     // the pan (or onto the coals), and what boils off them is steam in the room.
-    let itemBoil = 0, itemSizzle = 0, itemSmoke = 0;
+    const fallen=stepDroppedEggs(s,dt);
+    let itemBoil = fallen.steam, itemSizzle = 0, itemSmoke = fallen.smoke;
     for (let ii = 0; ii < s.items.length; ii++) {
       const it = s.items[ii];
+      if(grill&&it.where==='pan'&&it.kind==='egg'&&it.setBot<.35&&it.setTop<.35) {dropEgg(s,it);ii--;continue;}
       if (it.where === 'pan') {
         const zOffI = grill && pan.zoned ? zoneAt(pan, it.pos.x) : 0;
         it.Tat = zOffI ? Math.max(Tamb, ringsT(pan, it.rings) + zOffI) : ringsT(pan, it.rings);

@@ -900,6 +900,8 @@
     }
     paintEgg(where) {
       const it = this.it, N = this.eggN, R = this.eggR;
+      this.group.rotation.x=it.flipped?Math.PI:0;
+      if(it.flipped)this.group.position.y+=this.layerH();
       const pos = this.whiteGeo.attributes.position.array;
       const spread = it.spread, set = it.setTop;
       for (let i = 0; i < N; i++) {
@@ -1647,8 +1649,12 @@
       const ray = new T.Raycaster(); ray.setFromCamera(ndc, this.camera);
       const targets = []; for (const v of this.views.values()) { targets.push(v.mesh); if (v.cutMesh.visible) targets.push(v.cutMesh); }
       for (const v of this.itemViews.values()) if (v.group.visible) v.group.traverse((o) => { if (o.isMesh) targets.push(o); });
-      if(this.mode==='stove'&&this.panMesh)targets.push(this.panMesh);
+      if(this.mode==='stove'&&this.panGroup?.visible&&this.panMesh)targets.push(this.panMesh);
       const hits = ray.intersectObjects(targets, false);
+      if(this.mode==='stove'&&this.stoveType==='charcoal') {
+        const at=ray.ray.intersectPlane(new T.Plane(new T.Vector3(0,1,0),-this.PAN_Y),new T.Vector3());
+        if(at&&Math.hypot(at.x,at.z)<=this.panR&&(!hits.length||ray.ray.origin.distanceTo(at)<hits[0].distance))return 'pan';
+      }
       if (!hits.length) return null;
       if(hits[0].object===this.panMesh)return 'pan';
       const d = hits[0].object.userData;
@@ -1897,6 +1903,20 @@
         v.update(state, dt, it.where, pos, this.mode);
       }
       this.updateAssemblies(state, list, cameraDt);
+      this.droppedEggViews ||= new Map();
+      const dropped=state.grill?.droppedEggs||[];
+      for(const [egg,v] of this.droppedEggViews)if(!dropped.includes(egg)){v.dispose();this.droppedEggViews.delete(egg);}
+      for(const egg of dropped) {
+        let v=this.droppedEggViews.get(egg);if(!v){v=new ItemView(this,egg);this.droppedEggViews.set(egg,v);}
+        const fall=clamp(egg.dropAge/.45,0,1),char=clamp(egg.burned/Math.max(.0001,egg.dropMass*.20),0,1);
+        this.eggDropRay ||= new T.Raycaster();
+        this.eggDropRay.set(new T.Vector3(egg.pos.x,this.PAN_Y,egg.pos.y),new T.Vector3(0,-1,0));
+        const landing=this.eggDropRay.intersectObjects([this.coals,this.ashDisc].filter(Boolean),false)[0]?.point.y??this.coalY;
+        v.update(state,dt,'coals',{x:egg.pos.x,y:lerp(this.PAN_Y,landing+.002,fall*fall),z:egg.pos.y},this.mode);
+        v.group.scale.set(1,.3+.7*(1-fall),1);
+        v.group.scale.multiplyScalar(Math.max(.08,Math.sqrt(P.itemMass(egg)/egg.dropMass)));
+        for(const mat of [v.whiteMat,v.yolkMat])mat.color.lerp(new T.Color(.012,.009,.007),char);
+      }
       this.forceTex = false;
       // the spatula: it slides in under the patty and back out over the second the scrape takes,
       // from whichever side the camera is on, because that is the side the cook is standing
