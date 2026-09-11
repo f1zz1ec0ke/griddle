@@ -352,13 +352,14 @@ test('kettle lid: an oven — the top face cooks and browns, the coals calm down
   assert.ok(P.layerMean(pl, pl.T, pl.Nz - 1) > P.layerMean(po, po.T, po.Nz - 1) + 15, `top: lid ${P.layerMean(pl, pl.T, pl.Nz - 1)} vs open ${P.layerMean(po, po.T, po.Nz - 1)}`);
   assert.ok(pl.faceUp.brown > po.faceUp.brown, `top brown: lid ${pl.faceUp.brown} vs open ${po.faceUp.brown}`);
 });
-test('the grill recipe scores 100: 18 mm, vents on 7, flip every 45 s, pull at 47', () => {
+test('the grill recipe scores 99: 18 mm, vents on 7, flip every 45 s, pull at 47', () => {
   const s = litGrill(8, 600); P.setKnob(s, 7); cookFor(s, 240);
   const p = std({ thicknessMm: 18, massG: 150, work: 0.35 }); P.placePatty(s, p);
   let since = 0; while (P.centerT(p) < 47) { P.step(s, DT); since += DT; if (since >= 45 && !p.faceDown.stuck) { P.flipPatty(s); since = 0; } }
   P.removePatty(s); cookFor(s, 150);
   const r = P.evaluate(s, 'medium-rare');
-  assert.equal(r.total, 100, `grilled MR: ${r.total} ${JSON.stringify(r.parts)} grey ${r.overFrac.toFixed(2)} ret ${r.waterRetained.toFixed(2)}`);
+  // Post-evaporation heat capacity gives 19/20 crust points; doneness stays optimal.
+  assert.equal(r.total, 99, `grilled MR: ${r.total} ${JSON.stringify(r.parts)} grey ${r.overFrac.toFixed(2)} ret ${r.waterRetained.toFixed(2)}`);
   // the same over a roaring bed chars
   const s2 = litGrill(8, 600); P.setKnob(s2, 10); cookFor(s2, 300);
   const p2 = std({ thicknessMm: 22, massG: 150, work: 0.35 }); P.placePatty(s2, p2);

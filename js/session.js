@@ -66,8 +66,15 @@
       if (!Array.from(p.T).every(Number.isFinite)) throw new Error('Invalid temperature grid.');
     }
     if (s.patties.some(p => !g.patties.includes(p)) || !g.ticket || !Array.isArray(g.ticket.items) || !g.shift || !Array.isArray(g.shift.tickets) || !Array.isArray(g.shift.plan)) throw new Error('Invalid ticket.');
+    for(const it of s.items)if(it.regions) {
+      if(!['bacon','onions'].includes(it.kind)||!Array.isArray(it.regions)||it.regions.length!==3)throw new Error('Invalid food regions.');
+      for(const r of it.regions){
+        if(!r||r.kind!==it.kind||r.regions)throw new Error('Invalid food region.');
+        for(const key of it.kind==='bacon'?['body']:['bot','top'])if(!r[key]||!Number.isFinite(r[key].T)||!['w','m'].every(k=>Number.isFinite(r[key][k])&&r[key][k]>=0))throw new Error('Invalid regional moisture.');
+      }
+    }
     const A = typeof module !== 'undefined' && module.exports ? require('./assembly') : root.BurgerAssembly;
-    const used = new Set();
+    const used = new Set(), usedMeat=new Set();
     for (const p of g.patties) {
       if (p.assembly == null) continue;
       if (!Array.isArray(p.assembly) || p.assembly.length > 40 || (p.assembly.length && !['rest','cut'].includes(p.where))) throw new Error('Invalid assembly.');
@@ -75,7 +82,13 @@
       const coldCounts = {};
       for (const [i,l] of p.assembly.entries()) {
         if (!l || closed || [!!l.patty, !!l.item, !!l.cold].filter(Boolean).length !== 1) throw new Error('Invalid assembly layer.');
-        if (l.patty) { if (meat) throw new Error('Duplicate patty.'); meat = true; }
+        if (l.patty) {
+          if(l.meat) {
+            const q=l.meat;
+            if(!meat || !g.patties.includes(q) || q===p || usedMeat.has(q) || q.assembledTo!==p.id || q.assembly?.length || !['rest','cut'].includes(q.where) || p.assembly.filter(l=>l.meat).length>1) throw new Error('Invalid second patty.');
+            usedMeat.add(q);
+          } else {if(meat)throw new Error('Duplicate patty.');meat=true;}
+        }
         if (l.item) {
           const it = l.item;
           if (!s.items.includes(it) || used.has(it) || it.assembledTo !== p.id || it.burger !== p.id || !['rest','cut'].includes(it.where)) throw new Error('Invalid assembled food.');
@@ -88,11 +101,13 @@
         if (l.cold) {
           if (!A.cold[l.cold] || i === 0 || (coldCounts[l.cold]=(coldCounts[l.cold]||0)+1) > (A.cold[l.cold].sauce?1:4)) throw new Error('Invalid cold topping.');
           if(l.T!=null && (!Number.isFinite(l.T)||l.T < -30||l.T > 300)) throw new Error('Invalid topping temperature.');
+          if(l.w!=null&&(!['w','m','w0','lostWater'].every(k=>Number.isFinite(l[k])&&l[k]>=0)||l.w>l.w0+1e-9||Math.abs(l.w+l.lostWater-l.w0)>1e-8))throw new Error('Invalid topping moisture.');
           if(l.age!=null && (!Number.isFinite(l.age)||l.age<0)) throw new Error('Invalid topping age.');
           if(l.wilt!=null && (!Number.isFinite(l.wilt)||l.wilt<0||l.wilt>1)) throw new Error('Invalid topping condition.');
         }
       }
     }
+    if(g.patties.some(p=>p.assembledTo!=null&&!usedMeat.has(p))) throw new Error('Detached second patty.');
     if (s.items.some(it => it.assembledTo != null && !used.has(it))) throw new Error('Detached assembly reference.');
     if (!g.ticket.items.every(targetOK) || (g.selItem && !s.items.includes(g.selItem)) || !Number.isInteger(g.shift.n) || g.shift.n < 0 || g.shift.n > 6) throw new Error('Invalid ticket progress.');
     if (![1, 2, 4, 8].includes(g.speed) || !Number.isFinite(g.ticketClock) || !Number.isFinite(g.probe.depth) || g.probe.depth < 0.1 || g.probe.depth > 0.9) throw new Error('Invalid controls.');

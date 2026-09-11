@@ -160,7 +160,8 @@ test('service saves resume through forming, resting, results and the end of a sh
   while (g.shift.n < 6) {
     e.get('btn-again').click(); e.get('btn-accept').click(); g.startCook();
     for (let i = 0; i < g.patties.length; i++) { g.select(i); g.place(); g.remove(); }
-    e.get('btn-cut').click();
+    for(const q of g.patties.filter(p=>p.extraFor!=null)){const i=g.patties.findIndex(p=>p.id===q.extraFor);g.select(i);g.buildLayer('patty');g.buildLayer('patty:'+q.id);}
+    e.get('btn-cut').click();assert.equal(g.phase,'result');
   }
   e.get('btn-again').click(); assert.equal(g.shownShiftEnd, true);
   assert.equal(g.saveSession(), true);
@@ -495,4 +496,44 @@ test('window control is independent of food selection and restores with room smo
   S.validate(saved,P);assert.deepEqual(saved.state.room,before);
   saved.state.room.upper=-1;assert.throws(()=>S.validate(saved,P),/room air/);
   e.get('btn-window').click();assert.equal(g.state.room.windowOpen,false);assert.equal(e.get('btn-window').textContent,'Open window');
+});
+
+test('pan clicks recenter without losing food selection or snapping back to the pass',()=>{
+  const {game:g}=kitchen();g.startPractice();g.startCook();g.place();g.remove();g.followSelectedFood();
+  const p=g.patty;g.vp.onPick('pan');g.followSelectedFood();assert.equal(g.cameraPreset,'pan');assert.equal(g.patty,p);
+  g.cameraPreset=null;g.followSelectedFood();assert.equal(g.cameraPreset,null);
+});
+
+test('double burger uses two cooked patties, survives save, unpacks and serves as one order',()=>{
+  const {game:g,elements:e,storage}=kitchen();e.get('btn-accept').click();g.startCook();g.place();g.remove();
+  const p=g.patty,clock=g.ticketClock,pan=g.state.pan;
+  assert.equal(g.addSecondPatty(),true);g.startCook();const q=g.patty;
+  assert.ok(Number.isInteger(q.id));assert.equal(q.extraFor,p.id);assert.equal(g.state.pan,pan);assert.equal(g.ticketClock,clock);
+  g.place();g.remove();g.select(0);
+  assert.equal(e.get('btn-cut').disabled,true,'a requested extra needs to join its burger');
+  assert.equal(g.buildLayer('patty'),true);assert.equal(g.buildLayer('patty:'+q.id),true);
+  assert.equal(q.assembledTo,p.id);assert.equal(g.buildLayer('patty:'+q.id),false);
+  assert.equal(P.putInOven(g.state,q),false);P.placePatty(g.state,q);assert.equal(q.where,'rest');
+  assert.equal(g.saveSession(),true);const saved=S.decode(storage.get('griddle.session.v1.service'));S.validate(saved,P);
+  assert.equal(saved.patties[0].assembly[1].meat,saved.patties[1]);
+  assert.equal(g.buildLayer('undo'),true);assert.equal(q.assembledTo,null);assert.equal(g.buildLayer('patty:'+q.id),true);
+  e.get('btn-cut').click();assert.equal(g.phase,'result');assert.equal(g.shift.covers,1);assert.equal(g.ticketResult.results.length,2);
+  assert.equal(g.verdicts.filter(Boolean).length,1);
+});
+
+test('discarding either patty releases the double without orphaned references',()=>{
+  for(const selected of [0,1]) {
+    const {game:g}=kitchen();g.startPractice();g.startCook();g.place();g.remove();g.addSecondPatty();g.startCook();g.place();g.remove();
+    const p=g.patties[0],q=g.patties[1];g.select(0);g.buildLayer('patty');g.buildLayer('patty:'+q.id);g.select(selected);g.discard();
+    assert.equal(q.assembledTo,null);assert.equal(p.assembly.length,0);assert.equal(g.patties.length,1);S.validate(g,P);
+  }
+});
+
+test('double orders form extra patties without adding customers and preserve ownership when copying',()=>{
+  const {game:g,elements:e}=kitchen();g.newOrder({who:'Test',line:'Two doubles',items:['medium','medium'],builds:[['double','bun'],['double','bun']]});
+  e.get('btn-accept').click();assert.equal(g.forms.length,4);g.forms[0].massG=100;e.get('btn-copy').click();
+  assert.deepEqual(g.forms.map(f=>f.extraFor),[undefined,undefined,1,2]);g.startCook();
+  for(let i=0;i<4;i++){g.select(i);g.place();g.remove();}
+  for(let i=0;i<2;i++) {g.select(i);const p=g.patty,q=g.patties[i+2];assert.ok(P.buildOf(g.state,p).missing.includes('double'));g.buildLayer('patty');assert.ok(g.buildLayer('patty:'+q.id));assert.ok(!P.buildOf(g.state,p).missing.includes('double'));}
+  S.validate(g,P);e.get('btn-cut').click();assert.equal(g.phase,'result');assert.equal(g.shift.covers,2);
 });
