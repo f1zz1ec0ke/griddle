@@ -58,6 +58,7 @@
     const s = g.state;
     if (!s || !s.stove || !P.STOVES[s.stove.id] || !s.pan || !Array.isArray(s.patties) || !Array.isArray(s.items) || !Array.isArray(g.patties) || !Array.isArray(g.forms)) throw new Error('Invalid kitchen.');
     if (!Number.isFinite(s.t) || !Number.isFinite(s.pan.T) || !(s.pan.Tr instanceof Float64Array)) throw new Error('Invalid pan.');
+    for(const k of ['waterT','waterTracked','waterEvaporated'])if(s.pan[k]!=null&&(!Number.isFinite(s.pan[k])||(k!=='waterT'&&s.pan[k]<0)))throw new Error('Invalid pan water.');
     if (!g.equip || !Object.hasOwn(P.STOVES, g.equip.stove) || !Object.hasOwn(P.PANS, g.equip.pan) || !g.probe || !Number.isInteger(g.sel) || g.sel < 0 || g.sel >= Math.max(1, g.forms.length)) throw new Error('Invalid equipment or selection.');
     const targetOK = id => P.DONENESS.some(d => d.id === id);
     if (g.forms.some(f => !f || !targetOK(f.target) || !Number.isFinite(f.massG) || !Number.isFinite(f.thicknessMm))) throw new Error('Invalid saved forms.');
