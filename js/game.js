@@ -68,8 +68,8 @@
       $('btn-pause').textContent = this.paused ? 'Resume' : 'Pause';
       $('btn-pause').setAttribute('aria-pressed', String(this.paused));
       const help = !$('help').hidden;
-      $('panel').inert = this.paused || help;
-      for (const id of ['hud', 'view', 'inspector', 'order', 'results', 'shiftend']) $(id).inert = help;
+      $('workbench').inert = this.paused || help;
+      for (const id of ['flight-deck', 'view', 'inspector', 'order', 'results', 'shiftend']) $(id).inert = help;
       this.last = performance.now(); this.acc = 0;
     }
     setPaused(on) { this.paused = on; this.syncPause(); }
@@ -324,14 +324,12 @@
       $('shiftend').hidden = false;
     }
     setPhase(ph) {
-      this.setStation('cook');
+      this.setDrawer(null);
       this.phase = ph;
       this.cameraPreset = ph === 'rest' || ph === 'result' ? 'serve' : ph === 'cook' ? 'default' : null;
-      $('station-state').textContent = { order: 'Ready', form: 'Prep', cook: 'On the heat', rest: 'At the pass', result: 'Service' }[ph];
-      $('panel').scrollTop = 0;
       document.body.dataset.phase = ph;
       for (const el of document.querySelectorAll('[data-phase]')) el.hidden = el.dataset.phase.split(' ').indexOf(ph) < 0;
-      $('panel').hidden = !(ph === 'form' || ph === 'cook' || ph === 'rest'); // an empty panel is a box in the corner of the results
+      $('workbench').hidden = !(ph === 'form' || ph === 'cook' || ph === 'rest');
       if (ph === 'form') { this.vp.setMode('board'); this.loadForm(); this.rebuildPreview(); }
       if (ph === 'cook' || ph === 'rest' || ph === 'result') { this.vp.setMode('stove'); }
       if (ph === 'result') { this.showResults(); }
@@ -505,7 +503,10 @@
     // ------------------------------------------------------------ binding
     bind() {
       const s = this;
-      for (const view of ['cook', 'toppings', 'tools']) $('station-' + view).onclick = () => s.setStation(view);
+      for (const name of ['heat', 'toppings', 'tools']) {
+        $('open-' + name).onclick = () => s.setDrawer(s.drawer === name ? null : name);
+        $('close-' + name).onclick = () => s.setDrawer(null, true);
+      }
       $('btn-pause').onclick = () => s.setPaused(!s.paused);
       $('btn-save').onclick = () => s.saveSession();
       $('btn-load').onclick = () => s.loadSession();
@@ -659,6 +660,7 @@
         if (e.key === 'Escape') { $('kitchen-menu').open = false; $('kitchen-menu').querySelector('summary').focus(); }
       });
       document.addEventListener('pointerdown', e => {
+        if (s.drawer && !$('drawer-' + s.drawer).contains(e.target) && !$('action-dock').contains(e.target)) s.setDrawer(null);
         if (!$('kitchen-menu').contains(e.target)) $('kitchen-menu').open = false;
       });
       $('btn-help-close').onclick = () => s.closeHelp();
@@ -676,6 +678,7 @@
           }
           e.stopImmediatePropagation(); return;
         }
+        if (e.key === 'Escape' && s.drawer) { e.preventDefault(); e.stopImmediatePropagation(); s.setDrawer(null, true); return; }
         if (e.target && (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName) || e.target.isContentEditable)) return;
         if ((e.key === '[' || e.key === ']') && s.phase !== 'order' && (s.forms.length || s.items.length)) {
           e.preventDefault();
@@ -780,13 +783,13 @@
       const inPan = on && where === 'pan';
       const itemOn = on && !!it && it.where === 'pan';
       $('btn-place').disabled = !on || where !== 'board';
-      $('btn-place').textContent = this.patties.length > 1 ? `Lay patty ${this.sel + 1} in (space)` : 'Lay the patty in (space)';
+      $('btn-place').textContent = this.patties.length > 1 ? `Place patty ${this.sel + 1}` : 'Place patty';
       for (const id of ['btn-press', 'btn-smash', 'btn-cheese', 'btn-baste']) $(id).disabled = !inPan || !!it;
       // the flip and remove buttons act on whichever chip is selected — a patty or a topping
       $('btn-flip').disabled = it ? !itemOn : !inPan;
-      $('btn-flip').textContent = it ? (it.kind === 'onions' ? 'Stir (F)' : `Turn the ${it.spec.short} (F)`) : 'Flip (F)';
+      $('btn-flip').textContent = it ? (it.kind === 'onions' ? 'Stir' : 'Turn') : 'Flip';
       $('btn-remove').disabled = it ? !itemOn : !inPan;
-      $('btn-remove').textContent = it ? `Take the ${it.spec.short} off` : 'Off the heat → rest';
+      $('btn-remove').textContent = it ? 'Lift off' : 'Rest';
       // a pan lid is for what is in the pan; a kettle lid is part of the fire (it is half the
       // airflow and it is what holds the smoke in), so it is always available on the kettle
       $('btn-lid').disabled = !on || (!this.state.grill && this.inPan().length === 0 && !this.items.some((q) => q.where === 'pan'));
@@ -990,10 +993,15 @@
       el.innerHTML = ev.slice(-14).map((e) => `<div class="ev ${e.kind}"><span>${P.fmtTime(e.t)}</span>${this.maskT(e.text)}</div>`).join('');
       el.scrollTop = el.scrollHeight;
     }
-    setStation(view) {
-      $('panel').dataset.station = view;
-      for (const name of ['cook', 'toppings', 'tools']) $('station-' + name).setAttribute('aria-pressed', String(name === view));
-      $('panel').scrollTop = 0;
+    setDrawer(view, restoreFocus = false) {
+      const previous = this.drawer;
+      this.drawer = view;
+      for (const name of ['heat', 'toppings', 'tools']) {
+        $('drawer-' + name).hidden = name !== view;
+        $('open-' + name).setAttribute('aria-expanded', String(name === view));
+      }
+      if (view) { $('drawer-' + view).scrollTop = 0; $('close-' + view).focus({preventScroll:true}); }
+      else if (restoreFocus && previous) $('open-' + previous).focus({preventScroll:true});
     }
     updateCues(now) {
       const active = this.phase === 'cook' || this.phase === 'rest';
@@ -1090,7 +1098,7 @@
           `<span class="outcome ${cls}">${v.outcome}</span> ` +
           // the ticket's bill is printed below; per plate it is only worth repeating when there are several
           `<span class="muted">${v.outcome === 'sent back' ? 'comped — no tip' : tk.results.length > 1 ? `their share: tip ${money(v.tipAmount)} on ${money(v.bill)} (${(v.tip * 100).toFixed(0)} %)` : ''}${v.late && v.late.penalty >= 0.5 ? ` · waited ${P.fmtTime(v.late.elapsed)}` : ''}</span>` +
-          `<ul>${said.join('')}</ul>`;
+          `<details class="customer-notes"><summary>Kitchen feedback</summary><ul>${said.join('')}</ul></details>`;
       }
       const prefix = tk.results.length > 1 ? `Patty ${this.sel + 1}: ` : '';
       // The band the ticket is scored against is tighter than the band the eye calls a doneness, so

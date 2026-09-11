@@ -57,14 +57,18 @@ test('UI cues expose sensory labels, never temperatures, even in hard mode', () 
   game.updateCues(6100);
   assert.equal(elements.get('cooking-cues').innerHTML, '');
 });
-test('station navigation resets on phase changes and retains pressed state', () => {
-  const {game, elements} = require('./game-harness').kitchen();
-  game.setStation('tools');
-  assert.equal(elements.get('panel').dataset.station, 'tools');
-  assert.equal(elements.get('station-tools')['aria-pressed'], 'true');
-  game.setPhase('form');
-  assert.equal(elements.get('panel').dataset.station, 'cook');
-  assert.equal(elements.get('station-tools')['aria-pressed'], 'false');
+test('drawers open exclusively, restore focus and close on phase changes', () => {
+  const {game, elements, document} = require('./game-harness').kitchen();
+  game.setDrawer('tools');
+  assert.equal(elements.get('drawer-tools').hidden, false);
+  assert.equal(elements.get('open-tools')['aria-expanded'], 'true');
+  game.setDrawer('toppings');
+  assert.equal(elements.get('drawer-tools').hidden, true);
+  assert.equal(elements.get('drawer-toppings').hidden, false);
+  game.setDrawer(null, true);
+  assert.equal(document.activeElement, elements.get('open-toppings'));
+  game.setDrawer('tools'); game.setPhase('form');
+  assert.equal(elements.get('drawer-tools').hidden, true);
 });
 test('restoring paused food does not replay old cues, but new milestones still appear', () => {
   const cues = new Cues(), p = food(1);

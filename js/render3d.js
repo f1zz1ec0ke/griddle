@@ -921,17 +921,18 @@
     resize() {
       const w = this.canvas.clientWidth || 800, h = this.canvas.clientHeight || 600;
       this.renderer.setSize(w, h, false); this.camera.aspect = w / h;
-      // Preserve the horizontal framing when the desktop station leaves a narrow stage.
+      // Preserve horizontal framing on smaller desktop windows.
       this.camera.fov = 2 * Math.atan(Math.tan(42 * Math.PI / 360) * Math.max(1, 1.25 / this.camera.aspect)) * 180 / Math.PI;
-      // Shift the projection, not the orbit target: picking, dragging and every camera
-      // preset still refer to the food, but it appears centered in the uncovered area.
-      const canvasRect = this.canvas.getBoundingClientRect();
-      const station = document.getElementById('panel');
-      const results = document.getElementById('results');
-      const overlay = station && !station.hidden ? station
-        : results && !results.hidden ? results.querySelector('.card') : null;
-      const covered = overlay ? w - clamp(overlay.getBoundingClientRect().left - canvasRect.left, 0, w) : 0;
-      this.camera.setViewOffset(w, h, covered / 2, 0, w, h);
+      // No horizontal sidebar offset. Shallow prep/results trays only lift the framing
+      // vertically, keeping the food visible above them without moving the orbit target.
+      this.camera.clearViewOffset();
+      const phase = document.body.dataset.phase;
+      const tray = phase === 'form' ? document.getElementById('prep-tray')
+        : phase === 'result' ? document.querySelector('#results .receipt') : null;
+      if (tray) {
+        const covered = clamp(h - tray.getBoundingClientRect().top, 0, h * .5);
+        this.camera.setViewOffset(w, h, 0, covered / 2, w, h);
+      }
       const px = (h / 2) / Math.tan((this.camera.fov * Math.PI) / 360) * this.renderer.getPixelRatio();
       this.steam.setScale(px); this.smoke.setScale(px);
     }

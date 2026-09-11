@@ -22,11 +22,6 @@ label { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 3
 label b { color: var(--ink); }
 label.check { display: flex; gap: 8px; align-items: center; color: var(--ink); font-size: 13px; }
 label.check input { width: auto; }
-
-/* HUD */
-/* the HUD stops where the side panel starts, and wraps rather than running under it */
-#hud { position: fixed; top: 0; left: 0; right: 364px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding: 8px 14px; background: linear-gradient(rgba(10,8,6,0.85), rgba(10,8,6,0)); pointer-events: none; z-index: 5; }
-#hud > * { pointer-events: auto; }
 .brand { font-weight: 800; letter-spacing: 0.12em; color: var(--accent); }
 .brand small { display: block; letter-spacing: 0; font-weight: 400; color: var(--muted); font-size: 11px; }
 .ticket { font-size: 13px; color: var(--muted); white-space: nowrap; }
@@ -57,10 +52,6 @@ body.hard #senses button { border-color: var(--accent); }
 .speed button, .views button { border-radius: 0; }
 .speed button:first-child, .views button:first-child { border-radius: 6px 0 0 6px; }
 .speed button:last-child, .views button:last-child { border-radius: 0 6px 6px 0; }
-
-/* side panel */
-#panel { position: fixed; top: calc(min(var(--hud-h, 56px), 180px) + 8px); right: 12px; width: 340px; max-height: calc(100% - min(var(--hud-h, 56px), 180px) - 20px); overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; z-index: 4; backdrop-filter: blur(6px); }
-#panel h2 { margin: 0 0 10px; font-size: 15px; letter-spacing: 0.04em; color: var(--accent); }
 .row { margin: 8px 0; }
 .row.two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .row.knob input { height: 28px; }
@@ -115,9 +106,6 @@ table.stats .bon { color: var(--good); }
 
 /* modals */
 .modal { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(8,6,4,0.55); z-index: 10; }
-/* the results card sits to the right, under the HUD rather than behind it */
-.modal.right { justify-content: flex-end; align-items: flex-start; padding: calc(min(var(--hud-h, 56px), 180px) + 8px) 20px 0; background: transparent; pointer-events: none; }
-.modal.right .card { pointer-events: auto; max-height: calc(100vh - min(var(--hud-h, 56px), 180px) - 24px); }
 .card { width: min(560px, 92vw); max-height: 92vh; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 24px; box-shadow: 0 20px 60px rgba(0,0,0,0.6); }
 .card.wide { width: min(600px, 95vw); }
 .eyebrow { text-transform: uppercase; letter-spacing: 0.2em; font-size: 11px; color: var(--muted); }
@@ -189,7 +177,6 @@ p.shiftrun { color: var(--muted); border-top: 1px dotted var(--line); padding-to
 .build-list .missing { color: var(--warn); }
 .build-list .ready { color: var(--good); }
 #practice-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
-body.paused #panel::before { content: 'Paused — resume to cook'; display: block; color: var(--accent); margin-bottom: 8px; }
 
 
 #btn-place { --icon: url("../assets/icons/pan.svg"); }

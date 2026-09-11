@@ -29,7 +29,7 @@ Open [localhost:8000](http://localhost:8000). GG
 | C | Toggle cutaway |
 | 1–4 / R | Camera presets / reset |
 
-Use the panel for cooking, **Kitchen** for saves and settings, and **Help** for the full controls. You can pause, reheat food, and replace ruined toppings.
+Use the bottom dock for cooking, **Heat**, **Ingredients** and **Utensils** for extras, and **Menu** for saves and settings. **Help** has the full controls. You can pause, reheat food, and replace ruined toppings.
 
 Service and practice save separately in your browser. Resume picks up paused; nothing cooks while you're away.
 

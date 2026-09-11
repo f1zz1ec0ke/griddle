@@ -115,7 +115,7 @@ module.exports = {
     k.ok(form.hidden, `and the next single-burger form phase shows no chip row (“${form.text}”)`);
     await k.shot('next-ticket-form');
 
-    // ---- a busy ticket on a small window: the HUD wraps, but the panel keeps its height
+    // ---- a busy ticket on a small desktop: the action dock fits the full-width world
     await k.click('#btn-to-stove');
     await k.choose('#e-stove', 'charcoal');
     await k.range('#knob', 10);
@@ -126,14 +126,13 @@ module.exports = {
       await k.page.setViewportSize({ width: w, height: h });
       await k.page.waitForTimeout(300);
       const box = await k.read(() => {
-        const hud = document.getElementById('hud'), panel = document.getElementById('panel');
-        const hr = hud.getBoundingClientRect(), pr = panel.getBoundingClientRect();
-        return { hud: Math.round(hr.height), hudRight: Math.round(hr.right), panelTop: Math.round(pr.top), panelLeft: Math.round(pr.left), panelH: panel.clientHeight, scrollH: panel.scrollHeight };
+        const canvas = document.getElementById('view').getBoundingClientRect();
+        const dock = document.getElementById('action-dock').getBoundingClientRect();
+        return { canvasLeft: canvas.left, canvasRight: canvas.right, dockLeft: dock.left, dockRight: dock.right, dockBottom: dock.bottom, sidebar: !!document.getElementById('panel') };
       });
-      k.log(`${w}×${h}: HUD ${box.hud} px, panel ${box.panelH} px of ${box.scrollH} px of controls`);
-      k.ok(box.panelTop <= 190, `the panel does not follow the HUD past its cap (top ${box.panelTop} px)`);
-      k.ok(box.panelH > h * 0.55, `the cook keeps ${box.panelH} px of panel on a ${h} px window`);
-      k.ok(box.hudRight <= box.panelLeft, 'and the HUD still stops short of the panel rather than running under it');
+      k.ok(!box.sidebar, 'there is no legacy sidebar');
+      k.ok(box.canvasLeft === 0 && box.canvasRight === w, 'the world fills the window');
+      k.ok(box.dockLeft >= 0 && box.dockRight <= w && box.dockBottom <= h, 'the action dock fits inside the desktop viewport');
       await k.shot(`hud-${w}x${h}`);
     }
     await k.page.setViewportSize({ width: 1400, height: 860 });

@@ -1,273 +1,207 @@
-<!doctype html>
+<!DOCTYPE html>
+
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
 <title>Griddle — a physically honest burger simulator</title>
-<link rel="icon" type="image/svg+xml" href="assets/icons/burger.svg">
-<link rel="stylesheet" href="css/style.css?v=diner-1">
-<link rel="stylesheet" href="css/diner.css?v=3">
-</head>
+<link href="assets/icons/burger.svg" rel="icon" type="image/svg+xml"/>
+<link href="css/style.css?v=open-4" rel="stylesheet"/><link href="css/open-kitchen.css?v=4" rel="stylesheet"/></head>
 <body data-phase="order">
 <canvas id="view"></canvas>
-
 <!-- top HUD -->
-<header id="hud">
-  <div class="brand"><img src="assets/icons/burger.svg" alt=""><div>griddle<span class="brand-dot">.</span><small>a little heat. a lot at stake.</small></div></div>
-  <div class="ticket" id="ticket" data-phase="form cook rest result" tabindex="0"><span id="ticket-label">Ticket: </span><b id="ticket-target">—</b> <span class="tclock" id="ticket-clock" hidden></span></div>
-  <div class="chips" id="chips" hidden></div>
-  <div class="readouts" data-phase="cook rest" tabindex="0" role="region" aria-label="Cooking instruments — scroll for more">
-    <div class="ro" id="ro-pan"><label id="h-pan-label">IR gun · pan centre</label><span id="h-pan">—</span></div>
-    <div class="ro" id="ro-probe"><label>probe</label><span id="h-probe">—</span></div>
-    <div class="ro"><label>clock</label><span id="h-time">0:00</span></div>
-    <div class="ro small" id="ro-side"><span id="h-side"></span></div>
-    <div class="ro note" id="h-sense" hidden><label>cook's notes</label><span id="h-sense-v">—</span></div>
-    <div class="ro" id="ro-fire" hidden><label id="h-fire-label">the fire</label><span id="h-fire">—</span></div>
-    <div class="ro warn" id="h-smoke" hidden>Smoking</div>
-    <div class="ro" id="h-lid" hidden>Lid on</div>
-  </div>
-  <div class="tools">
-    <details id="kitchen-menu" class="toolbar-menu"><summary>Kitchen <span>⌄</span></summary><div class="menu-content"><div class="eyebrow">Session</div>
-    <button id="btn-save">Save</button>
-    <button id="btn-load" hidden>Resume saved</button>
-    <span id="save-status" role="status" aria-live="polite"></span>
-    <button id="btn-end-practice" hidden>Leave practice</button>
-    <div class="menu-divider"></div><div class="eyebrow">View & sound</div>
-    <button id="btn-cutaway" title="Cut the patty in half to watch the inside (C)">Cutaway</button>
-    <span class="views"><button data-view="default" title="key 1">Kitchen</button><button data-view="top" title="key 2">Overhead</button><button data-view="side" title="key 3">Side</button><button data-view="close" title="key 4">Close</button></span>
-    <button id="btn-inspector">Inspector</button>
-    <button id="btn-audio">Sound off</button>
-    </div></details>
-    <span class="speed" data-phase="cook rest"><button data-speed="1" class="on">1×</button><button data-speed="2">2×</button><button data-speed="4">4×</button><button data-speed="8">8×</button></span>
-    <button id="btn-pause" data-phase="form cook rest">Pause</button>
-    <button id="btn-help" aria-label="Help">Help</button>
-  </div>
-</header>
-
-<div id="cooking-cues" role="status" aria-live="polite" aria-atomic="true"></div>
+<div id="flight-deck">
+<div class="brand"><img alt="" src="assets/icons/burger.svg"/><div>griddle<span class="brand-dot">.</span><small>a little heat. a lot at stake.</small></div></div>
+<details class="ticket" data-phase="form cook rest result" id="ticket"><summary class="order-summary"><img alt="" src="assets/icons/burger.svg"/><span class="ticket-copy"><span id="ticket-label">Ticket: </span><b id="ticket-target">—</b><span class="tclock" hidden="" id="ticket-clock"></span></span></summary> <div class="build-list" data-phase="form cook rest" id="build-checklist"></div></details>
+<div class="chips" hidden="" id="chips"></div>
+<div aria-label="Cooking instruments — scroll for more" class="readouts" data-phase="cook rest" role="region" tabindex="0">
+<div class="ro" id="ro-pan"><label id="h-pan-label">IR gun · pan centre</label><span id="h-pan">—</span></div>
+<div class="ro" id="ro-probe"><label>probe</label><span id="h-probe">—</span></div>
+<div class="ro"><label>clock</label><span id="h-time">0:00</span></div>
+<div class="ro warn" hidden="" id="h-smoke">Smoking</div>
+<div class="ro" hidden="" id="h-lid">Lid on</div>
+</div>
+<div class="tools">
+<details class="toolbar-menu" id="kitchen-menu"><summary>Menu</summary><div class="menu-content"><div class="eyebrow">Session</div>
+<button id="btn-save">Save</button>
+<button hidden="" id="btn-load">Resume saved</button>
+<span aria-live="polite" id="save-status" role="status"></span>
+<button hidden="" id="btn-end-practice">Leave practice</button>
+<div class="menu-divider"></div><div class="eyebrow">View &amp; sound</div>
+<button id="btn-cutaway" title="Cut the patty in half to watch the inside (C)">Cutaway</button>
+<span class="views"><button data-view="default" title="key 1">Kitchen</button><button data-view="top" title="key 2">Overhead</button><button data-view="side" title="key 3">Side</button><button data-view="close" title="key 4">Close</button></span>
+<button id="btn-inspector">Inspector</button>
+<button id="btn-audio">Sound off</button>
+</div></details>
+<span class="speed" data-phase="cook rest"><button class="on" data-speed="1">1×</button><button data-speed="2">2×</button><button data-speed="4">4×</button><button data-speed="8">8×</button></span>
+<button data-phase="form cook rest" id="btn-pause">Pause</button>
+<button aria-label="Help" id="btn-help">Help</button>
+</div>
+</div>
+<div aria-atomic="true" aria-live="polite" id="cooking-cues" role="status"></div>
 <div class="world-hint" data-phase="form cook rest">Drag to look around <span>·</span> Scroll to get closer</div>
-
 <!-- order ticket -->
-<section id="order" class="modal" data-phase="order">
-  <div class="card">
-    <img class="order-burger" src="assets/icons/burger.svg" alt=""><div class="eyebrow">Fresh off the ticket rail</div>
-    <h1 id="order-target">MEDIUM</h1>
-    <p class="who"><b id="order-who">Table 7</b> <span id="order-line"></span></p>
-    <p class="muted" id="order-range"></p>
-    <div id="order-builds" class="build-list"></div>
-    <div class="shiftbar" id="order-shift"></div>
-    <p class="order-intro">Your kitchen. Your call.<br><span>Make something worth the wait.</span></p>
-    <label class="check"><input type="checkbox" id="hard"> Hard mode · trust your senses</label>
-    <button class="primary" id="btn-accept">Yes chef</button>
-    <button id="btn-practice">Free practice</button>
-    <button id="btn-service-load" hidden>Resume saved service</button>
-    <button id="btn-practice-load" hidden>Resume saved practice</button>
-    <p class="muted">Just here to cook? Practice has no orders or scores.</p>
-  </div>
+<section class="modal" data-phase="order" id="order">
+<div class="card">
+<img alt="" class="order-burger" src="assets/icons/burger.svg"/><div class="eyebrow">Fresh off the ticket rail</div>
+<h1 id="order-target">MEDIUM</h1>
+<p class="who"><b id="order-who">Table 7</b> <span id="order-line"></span></p>
+<p class="muted" id="order-range"></p>
+<div class="build-list" id="order-builds"></div>
+<div class="shiftbar" id="order-shift"></div>
+<p class="order-intro">Your kitchen. Your call.<br/><span>Make something worth the wait.</span></p>
+<label class="check"><input id="hard" type="checkbox"/> Hard mode · trust your senses</label>
+<button class="primary" id="btn-accept">Yes chef</button>
+<button id="btn-practice">Free practice</button>
+<button hidden="" id="btn-service-load">Resume saved service</button>
+<button hidden="" id="btn-practice-load">Resume saved practice</button>
+<p class="muted">Just here to cook? Practice has no orders or scores.</p>
+</div>
 </section>
-
-<!-- side panel: forming -->
-<aside id="panel" aria-label="Cooking controls">
-  <div class="panel-heading"><span class="eyebrow">The kitchen</span><span class="station-state" id="station-state">Prep</span></div>
-  <nav class="station-nav" data-phase="cook rest" aria-label="Station views"><button id="station-cook" aria-pressed="true">Cook</button><button id="station-toppings" aria-pressed="false">Toppings</button><button id="station-tools" aria-pressed="false">Tools</button></nav>
-  <div id="build-checklist" class="build-list" data-phase="form cook rest"></div>
-  <div data-phase="form" class="section">
-    <h2 id="f-title">1 · Form the patty</h2>
-    <div class="row"><label for="f-blend">Beef blend</label><select id="f-blend">
-      <option value="70/30">70/30 — chuck + fat trim</option><option value="80/20" selected>80/20 — classic chuck</option><option value="85/15">85/15 — lean chuck</option><option value="90/10">90/10 — sirloin</option><option value="93/7">93/7 — extra lean</option></select></div>
-    <div class="row"><label for="f-mass">Meat <b id="f-mass-v" data-fmt="% g">150 g</b></label><input type="range" id="f-mass" min="80" max="340" step="5" value="150"></div>
-    <div class="row"><label for="f-thick">Thickness <b id="f-thick-v" data-fmt="% mm">20 mm</b></label><input type="range" id="f-thick" min="5" max="40" step="1" value="20"></div>
-    <div class="row"><label for="f-work">Handling <b id="f-work-v" data-fmt="%">35</b><small> barely packed → kneaded</small></label><input type="range" id="f-work" min="0" max="100" step="5" value="35"></div>
-    <div class="row"><label for="f-temp">Starting temperature</label><select id="f-temp"><option value="fridge" selected>Straight from the fridge (4 °C)</option><option value="room">Sat out 30 min (18 °C)</option><option value="frozen">Frozen solid (−18 °C)</option></select></div>
-    <div class="row"><label for="f-salt">Salt</label><select id="f-salt"><option value="surface" selected>On the surface, right before cooking</option><option value="mixed">Mixed into the meat an hour ago</option><option value="none">No salt</option></select></div>
-    <div class="row"><label class="check"><input type="checkbox" id="f-dimple" checked> Thumb dimple in the centre</label></div>
-    <details class="control-group"><summary>Patty details</summary><dl class="derived">
-      <dt>Diameter</dt><dd id="f-diam"></dd>
-      <dt>Density</dt><dd id="f-density"></dd>
-      <dt>Composition</dt><dd id="f-water"></dd>
-      <dt>Simulation grid</dt><dd id="f-nodes"></dd>
-      <dt>Cook time</dt><dd id="f-time"></dd>
-    </dl></details>
-    <p class="warn" id="f-warn"></p>
-    <div class="row two"><button id="btn-copy" hidden title="Give every patty on this ticket the same shape as this one">Same for all patties</button><button class="primary" id="btn-to-stove">To the stove →</button></div>
-  </div>
-
-  <div data-phase="cook" class="section cook-section">
-    <h2 class="cook-only">Make it sizzle.</h2>
-    <div class="row knob cook-only"><label for="knob"><span id="knob-label">Burner</span> <b id="knob-v">0</b>/10</label><input type="range" id="knob" min="0" max="10" step="0.5" value="0"></div>
-    <div class="row knob tools-only" id="topvent-row" hidden><label for="topvent">Lid vent <b id="topvent-v">100</b> %<small>only does anything with the lid on: it and the bottom vent are in series, and it is how the smoke gets out</small></label><input type="range" id="topvent" min="0" max="100" step="5" value="100"></div>
-    <div class="row knob tools-only" id="bank-row" hidden><label for="bank">Bank coals <b id="bank-v">0</b> %<small>rake the bed to one side: a searing zone and a gentle one</small></label><input type="range" id="bank" min="0" max="100" step="5" value="0"></div>
-    <div class="row fire tools-only" id="fire-row" hidden>
-      <label>The fire <small>a 60 g chunk smokes for a quarter of an hour; coals take minutes to catch; ash chokes the bed</small></label>
-      <div class="row two">
-        <div><label for="e-wood">Wood</label><select id="e-wood"><option value="hickory" selected>Hickory — sweet, bacony</option><option value="apple">Apple — mild, fruity</option><option value="mesquite">Mesquite — strong, oily</option></select></div>
-        <div><label for="e-coalg">Charcoal <b id="e-coalg-v">500 g</b></label><input type="range" id="e-coalg" min="100" max="1500" step="100" value="500"></div>
-      </div>
-      <div class="row four">
-        <button id="btn-wood" title="Put a chunk of wood on the coals. It dries and heats for about three minutes, then smoulders for a quarter of an hour.">Add wood</button>
-        <button id="btn-coals" title="More lump charcoal, straight out of the bag. It cools the bed until it catches, then the fire comes back up hotter.">Add coals</button>
-        <button id="btn-stir" title="Rake the bed through with the tongs: ash off the lumps and into the bowl, and the fire draws harder for a minute.">Stir</button>
-        <button id="btn-emptyash" title="Tip the ash out of the bowl. Only when the kettle is cold.">Empty ash</button>
-      </div>
-    </div>
-    <div class="actions cook-only">
-      <button class="primary" id="btn-place">Lay the patty in (space)</button>
-      <button id="btn-flip">Flip (F)</button>
-      <button id="btn-press">Press (P)</button>
-      <button id="btn-smash">Smash</button>
-      <button id="btn-lid">Lid on</button>
-      <button id="btn-cheese">Cheese</button>
-      <button id="btn-baste">Butter baste</button>
-      <button class="danger" id="btn-remove">Off the heat → rest</button>
-    </div>
-    <details open class="control-group tools-only"><summary>Stove &amp; cooking fat</summary>
-    <div class="row two">
-      <div><label for="e-stove">Stove</label><select id="e-stove"><option value="gas" selected>Gas 3.5 kW</option><option value="electric">Electric coil</option><option value="induction">Induction</option><option value="charcoal">Charcoal kettle</option></select></div>
-      <div id="e-pan-wrap"><label for="e-pan">Pan</label><select id="e-pan"><option value="castiron" selected>Cast iron 12"</option><option value="carbonsteel">Carbon steel 12"</option><option value="stainless">Stainless 12"</option><option value="nonstick">Nonstick 10"</option></select></div>
-    </div>
-    <div class="row two">
-      <div><label for="e-fat">Fat</label><select id="e-fat"><option value="canola" selected>Canola oil</option><option value="avocado">Avocado oil</option><option value="butter">Butter</option><option value="ghee">Ghee</option><option value="tallow">Beef tallow</option><option value="none">Nothing</option></select></div>
-      <div><label for="e-fatg">Amount <b id="e-fatg-v">8 g</b></label><input type="range" id="e-fatg" min="2" max="300" step="2" value="8"></div>
-    </div>
-    <button id="btn-fat">Add fat to pan</button>
-    </details>
-    <details open class="control-group tools-only"><summary>Spatula &amp; cleaning</summary>
-    <div class="row move">
-      <label>Spatula <small>drag a patty across the pan with the mouse, or use these</small></label>
-      <div class="row three">
-        <button id="btn-scrape" title="Work the blade under it (S). A thin edge breaks a half-set crust far more gently than lifting the whole face.">Scrape under (S)</button>
-        <button id="btn-move-in" title="Slide it to the middle of the pan.">Move to centre</button>
-        <button id="btn-move-out" title="Slide it out to the edge of the pan.">Move to edge</button>
-      </div>
-    </div>
-    <div class="row two">
-      <button id="btn-wash" title="Empty and scrub the pan under the tap. Cools it, leaves it wet.">Wash pan</button>
-      <button id="btn-wipe" title="Wipe spatter and spills off the stovetop.">Wipe stove</button>
-    </div>
-    </details>
-    <div class="row probe cook-only">
-      <button id="btn-probe">Insert probe</button>
-      <label>depth <b id="probe-depth-v">50 %</b><input type="range" id="probe-depth" min="10" max="90" step="5" value="50"></label>
-    </div>
-  </div>
-
-  <div data-phase="rest" class="section cook-only">
-    <h2>A moment to rest.</h2>
-    <p>The centre keeps warming after cooking. Give it a moment; don’t let it go cold.</p>
-    <div class="big"><span id="rest-t">0:00</span><small>resting</small></div>
-    <div class="big"><span id="rest-c">—</span><small>centre (probe)</small></div>
-    <div class="row probe"><button id="btn-probe-rest" hidden></button></div>
-    <button class="primary" id="btn-cut">Cut &amp; serve</button>
-    <p class="muted">Everyone on the ticket eats together.</p>
-  </div>
-
-  <div data-phase="cook rest" class="section tools-only" id="senses">
-    <div class="row extras">
-      <label>Trust your senses <small>Hands-on checks. They come at a cost.</small></label>
-      <div class="row three">
-        <button id="btn-presstest" title="Press it with a finger (T). Firmness is the denaturation through the thickness, felt instead of measured. Costs about a tenth of the juice a spatula press does.">Press test (T)</button>
-        <button id="btn-peek" title="Cut into it and look (K). The truth, at the price of a burger with a slit in it that weeps for the rest of the cook.">Peek (K)</button>
-        <button id="btn-hand" title="Hold a hand a few centimetres over the metal and count (H). Over coals two seconds is searing and eight is medium; over a pan twenty seconds is a 200 °C pan and nine is a 300 °C one.">Hand over it (H)</button>
-      </div>
-    </div>
-  </div>
-
-  <div data-phase="cook rest" class="section toppings-only" id="extras">
-    <div class="row extras">
-      <label>The finishing touches <small>Cook them, then build your burger.</small></label>
-      <div class="row four">
-        <button id="btn-bun" title="Two bun halves, cut side down. Toast them in the fat: a toasted heel soaks up far less juice.">Buns</button>
-        <button id="btn-bacon" title="A 25 g rasher of streaky bacon. Render the fat out, then crisp the lean.">Bacon</button>
-        <button id="btn-egg" title="One large egg. White sets at 62–65 °C, yolk at 70; a lid steams the top and sets the yolk in about eighty seconds.">Egg</button>
-        <button id="btn-onion" title="80 g of sliced onion. Sweat the water off, then caramelise — stir them, or only the layer on the metal ever browns.">Onions</button>
-      </div>
-      <div class="row assign" id="assign-row" hidden><label>Build onto</label><span id="assign-btns"></span></div>
-    </div>
-  </div>
-
-  <div id="practice-tools" data-phase="cook rest" hidden>
-    <button id="btn-add-patty">Form another patty</button>
-    <button id="btn-clear-practice">Clear food</button>
-  </div>
-  <div class="row two" data-phase="cook rest">
-    <button id="btn-reheat">Back on the heat</button>
-    <button id="btn-discard" class="danger">Discard topping</button>
-  </div>
-
-  <details class="control-group tools-only" data-phase="cook rest"><summary>Cook’s notebook</summary><div id="log"></div></details>
-</aside>
-
+<!-- Open kitchen: prep tray, temporary tool trays and action dock -->
+<main aria-label="Kitchen actions" id="workbench">
+<div class="prep-tray" data-phase="form" id="prep-tray">
+<h2 class="prep-title" id="f-title">1 · Form the patty</h2><div class="prep-fields"><div class="row"><label for="f-blend">Beef blend</label><select id="f-blend">
+<option value="70/30">70/30 — chuck + fat trim</option><option selected="" value="80/20">80/20 — classic chuck</option><option value="85/15">85/15 — lean chuck</option><option value="90/10">90/10 — sirloin</option><option value="93/7">93/7 — extra lean</option></select></div><div class="row"><label for="f-mass">Meat <b data-fmt="% g" id="f-mass-v">150 g</b></label><input id="f-mass" max="340" min="80" step="5" type="range" value="150"/></div><div class="row"><label for="f-thick">Thickness <b data-fmt="% mm" id="f-thick-v">20 mm</b></label><input id="f-thick" max="40" min="5" step="1" type="range" value="20"/></div><div class="row"><label for="f-work">Handling <b data-fmt="%" id="f-work-v">35</b><small> barely packed → kneaded</small></label><input id="f-work" max="100" min="0" step="5" type="range" value="35"/></div><div class="row"><label for="f-temp">Starting temperature</label><select id="f-temp"><option selected="" value="fridge">Straight from the fridge (4 °C)</option><option value="room">Sat out 30 min (18 °C)</option><option value="frozen">Frozen solid (−18 °C)</option></select></div><div class="row"><label for="f-salt">Salt</label><select id="f-salt"><option selected="" value="surface">On the surface, right before cooking</option><option value="mixed">Mixed into the meat an hour ago</option><option value="none">No salt</option></select></div><div class="row"><label class="check"><input checked="" id="f-dimple" type="checkbox"/> Thumb dimple in the centre</label></div></div>
+<details class="prep-details"><summary>Patty details</summary><dl class="derived">
+<dt>Diameter</dt><dd id="f-diam"></dd>
+<dt>Density</dt><dd id="f-density"></dd>
+<dt>Composition</dt><dd id="f-water"></dd>
+<dt>Simulation grid</dt><dd id="f-nodes"></dd>
+<dt>Cook time</dt><dd id="f-time"></dd>
+</dl></details>
+<p class="prep-warning" id="f-warn"></p>
+<div class="prep-go"><button hidden="" id="btn-copy" title="Give every patty on this ticket the same shape as this one">Same for all patties</button><button class="primary" id="btn-to-stove">To the stove →</button></div>
+</div>
+<div class="rest-badge" data-phase="rest" id="rest-badge"><img alt="" src="assets/icons/plate.svg"/>
+<div class="big"><span id="rest-t">0:00</span><small>resting</small></div>
+<div class="big"><span id="rest-c">—</span><small>centre (probe)</small></div>
+<div class="row probe"><button hidden="" id="btn-probe-rest"></button></div>
+</div>
+<section aria-labelledby="title-heat" class="drawer" hidden="" id="drawer-heat" role="region"><div class="drawer-heading"><h2 id="title-heat">Fire it up</h2><button aria-label="Close heat" id="close-heat">×</button></div><div class="row knob" hidden="" id="topvent-row"><label for="topvent">Lid vent <b id="topvent-v">100</b> %<small>only does anything with the lid on: it and the bottom vent are in series, and it is how the smoke gets out</small></label><input id="topvent" max="100" min="0" step="5" type="range" value="100"/></div><div class="row knob" hidden="" id="bank-row"><label for="bank">Bank coals <b id="bank-v">0</b> %<small>rake the bed to one side: a searing zone and a gentle one</small></label><input id="bank" max="100" min="0" step="5" type="range" value="0"/></div><div class="row fire" hidden="" id="fire-row">
+<label>The fire <small>a 60 g chunk smokes for a quarter of an hour; coals take minutes to catch; ash chokes the bed</small></label>
+<div class="row two">
+<div><label for="e-wood">Wood</label><select id="e-wood"><option selected="" value="hickory">Hickory — sweet, bacony</option><option value="apple">Apple — mild, fruity</option><option value="mesquite">Mesquite — strong, oily</option></select></div>
+<div><label for="e-coalg">Charcoal <b id="e-coalg-v">500 g</b></label><input id="e-coalg" max="1500" min="100" step="100" type="range" value="500"/></div>
+</div>
+<div class="row four">
+<button id="btn-wood" title="Put a chunk of wood on the coals. It dries and heats for about three minutes, then smoulders for a quarter of an hour.">Add wood</button>
+<button id="btn-coals" title="More lump charcoal, straight out of the bag. It cools the bed until it catches, then the fire comes back up hotter.">Add coals</button>
+<button id="btn-stir" title="Rake the bed through with the tongs: ash off the lumps and into the bowl, and the fire draws harder for a minute.">Stir</button>
+<button id="btn-emptyash" title="Tip the ash out of the bowl. Only when the kettle is cold.">Empty ash</button>
+</div>
+</div><details class="tray-group" open=""><summary>Stove &amp; cooking fat</summary>
+<div class="row two">
+<div><label for="e-stove">Stove</label><select id="e-stove"><option selected="" value="gas">Gas 3.5 kW</option><option value="electric">Electric coil</option><option value="induction">Induction</option><option value="charcoal">Charcoal kettle</option></select></div>
+<div id="e-pan-wrap"><label for="e-pan">Pan</label><select id="e-pan"><option selected="" value="castiron">Cast iron 12"</option><option value="carbonsteel">Carbon steel 12"</option><option value="stainless">Stainless 12"</option><option value="nonstick">Nonstick 10"</option></select></div>
+</div>
+<div class="row two">
+<div><label for="e-fat">Fat</label><select id="e-fat"><option selected="" value="canola">Canola oil</option><option value="avocado">Avocado oil</option><option value="butter">Butter</option><option value="ghee">Ghee</option><option value="tallow">Beef tallow</option><option value="none">Nothing</option></select></div>
+<div><label for="e-fatg">Amount <b id="e-fatg-v">8 g</b></label><input id="e-fatg" max="300" min="2" step="2" type="range" value="8"/></div>
+</div>
+<button id="btn-fat">Add fat to pan</button>
+</details><div class="ro" hidden="" id="ro-fire"><label id="h-fire-label">the fire</label><span id="h-fire">—</span></div></section><section aria-labelledby="title-toppings" class="drawer" hidden="" id="drawer-toppings" role="region"><div class="drawer-heading"><h2 id="title-toppings">Something on top?</h2><button aria-label="Close toppings" id="close-toppings">×</button></div><div class="ingredient-picker" data-phase="cook rest" id="extras">
+<div class="row extras">
+<div class="row four">
+<button id="btn-bun" title="Two bun halves, cut side down. Toast them in the fat: a toasted heel soaks up far less juice.">Buns</button>
+<button id="btn-bacon" title="A 25 g rasher of streaky bacon. Render the fat out, then crisp the lean.">Bacon</button>
+<button id="btn-egg" title="One large egg. White sets at 62–65 °C, yolk at 70; a lid steams the top and sets the yolk in about eighty seconds.">Egg</button>
+<button id="btn-onion" title="80 g of sliced onion. Sweat the water off, then caramelise — stir them, or only the layer on the metal ever browns.">Onions</button>
+</div>
+<div class="row assign" hidden="" id="assign-row"><label>Build onto</label><span id="assign-btns"></span></div>
+</div>
+</div><div data-phase="cook rest" hidden="" id="practice-tools">
+<button id="btn-add-patty">Form another patty</button>
+<button id="btn-clear-practice">Clear food</button>
+</div></section><section aria-labelledby="title-tools" class="drawer" hidden="" id="drawer-tools" role="region"><div class="drawer-heading"><h2 id="title-tools">A cook’s toolkit</h2><button aria-label="Close tools" id="close-tools">×</button></div><details class="tray-group" open=""><summary>Spatula &amp; cleaning</summary>
+<div class="row move">
+<label>Spatula <small>drag a patty across the pan with the mouse, or use these</small></label>
+<div class="row three">
+<button id="btn-scrape" title="Work the blade under it (S). A thin edge breaks a half-set crust far more gently than lifting the whole face.">Scrape under (S)</button>
+<button id="btn-move-in" title="Slide it to the middle of the pan.">Move to centre</button>
+<button id="btn-move-out" title="Slide it out to the edge of the pan.">Move to edge</button>
+</div>
+</div>
+<div class="row two">
+<button id="btn-wash" title="Empty and scrub the pan under the tap. Cools it, leaves it wet.">Wash pan</button>
+<button id="btn-wipe" title="Wipe spatter and spills off the stovetop.">Wipe stove</button>
+</div>
+</details><div class="row probe">
+<button id="btn-probe">Insert probe</button>
+<label>depth <b id="probe-depth-v">50 %</b><input id="probe-depth" max="90" min="10" step="5" type="range" value="50"/></label>
+</div><div class="sense-tools" data-phase="cook rest" id="senses">
+<div class="row extras">
+<label>Trust your senses <small>Hands-on checks. They come at a cost.</small></label>
+<div class="row three">
+<button id="btn-presstest" title="Press it with a finger (T). Firmness is the denaturation through the thickness, felt instead of measured. Costs about a tenth of the juice a spatula press does.">Press test (T)</button>
+<button id="btn-peek" title="Cut into it and look (K). The truth, at the price of a burger with a slit in it that weeps for the rest of the cook.">Peek (K)</button>
+<button id="btn-hand" title="Hold a hand a few centimetres over the metal and count (H). Over coals two seconds is searing and eight is medium; over a pan twenty seconds is a 200 °C pan and nine is a 300 °C one.">Hand over it (H)</button>
+</div>
+</div>
+</div><div class="recovery-actions" data-phase="cook rest">
+<button id="btn-reheat">Back on the heat</button>
+<button class="danger" id="btn-discard">Discard topping</button>
+</div><details class="tray-group" data-phase="cook rest"><summary>Cook’s notebook</summary><div id="log"></div></details><div class="ro note" hidden="" id="h-sense"><label>cook's notes</label><span id="h-sense-v">—</span></div></section><div class="heat-dial" data-phase="cook"><label for="knob"><span id="knob-label">Burner</span> <b id="knob-v">0</b>/10</label><input id="knob" max="10" min="0" step="0.5" type="range" value="0"/></div><nav aria-label="Cooking actions" data-phase="cook rest" id="action-dock"><button class="primary" data-phase="cook" id="btn-place">Lay the patty in (space)</button><button data-phase="cook" id="btn-flip">Flip (F)</button><button data-phase="cook" id="btn-press">Press</button><button data-phase="cook" id="btn-smash">Smash</button><button data-phase="cook" id="btn-lid">Lid on</button><button data-phase="cook" id="btn-cheese">Cheese</button><button data-phase="cook" id="btn-baste">Baste</button><button class="danger" data-phase="cook" id="btn-remove">Off the heat → rest</button><button aria-controls="drawer-heat" aria-expanded="false" class="dock-launch" id="open-heat">Heat</button><button aria-controls="drawer-toppings" aria-expanded="false" class="dock-launch" id="open-toppings">Ingredients</button><button aria-controls="drawer-tools" aria-expanded="false" class="dock-launch" id="open-tools">Utensils</button><button class="primary" data-phase="rest" id="btn-cut">Cut &amp; serve</button></nav><div class="ro small" data-phase="cook rest" id="ro-side"><span id="h-side"></span></div></main>
 <!-- inspector -->
-<section id="inspector" hidden>
-  <h3>Inspector <small>live model state</small></h3>
-  <canvas id="chart" width="420" height="160"></canvas>
-  <table><tbody id="insp-table"></tbody></table>
+<section hidden="" id="inspector">
+<h3>Inspector <small>live model state</small></h3>
+<canvas height="160" id="chart" width="420"></canvas>
+<table><tbody id="insp-table"></tbody></table>
 </section>
-
 <!-- results -->
-<section id="results" class="modal right" data-phase="result">
-  <div class="card wide">
-    <div class="eyebrow">Service</div>
-    <div class="scoreline"><div class="score"><span id="r-score">0</span><small>/100</small></div><div><h1 id="r-verdict"></h1><p class="muted" id="r-grade"></p></div></div>
-    <div class="chips" id="r-chips" hidden></div>
-    <p class="ticket-sum" id="r-ticket" hidden></p>
-    <div class="customer" id="r-customer" hidden></div>
-    <p class="bill" id="r-bill" hidden></p>
-    <p class="shiftrun" id="r-shift" hidden></p>
-    <div id="r-parts"></div>
-    <table class="stats"><tbody id="r-stats"></tbody></table>
-    <ul id="r-notes"></ul>
-    <div class="charts"><canvas id="r-chart" width="420" height="150"></canvas><canvas id="r-profile" width="420" height="150"></canvas></div>
-    <p class="muted">Orbit the cut patty in the viewport: left-drag to look, wheel or right-drag to zoom, right-click a spot to zoom onto it.</p>
-    <button class="primary" id="btn-again">Next ticket</button>
-  </div>
-</section>
+<section class="receipt-overlay" data-phase="result" id="results">
+<div class="receipt">
+<div class="eyebrow">Service</div>
+<div class="scoreline"><div class="score"><span id="r-score">0</span><small>/100</small></div><div><h1 id="r-verdict"></h1><p class="muted" id="r-grade"></p></div></div>
+<div class="chips" hidden="" id="r-chips"></div>
 
+<div class="customer" hidden="" id="r-customer"></div>
+
+
+<details class="receipt-breakdown"><summary>Ticket &amp; bill</summary><p class="ticket-sum" hidden="" id="r-ticket"></p><p class="bill" hidden="" id="r-bill"></p><p class="shiftrun" hidden="" id="r-shift"></p></details><details class="receipt-details"><summary>See how it cooked</summary><div id="r-parts"></div><table class="stats"><tbody id="r-stats"></tbody></table><ul id="r-notes"></ul><div class="charts"><canvas height="150" id="r-chart" width="420"></canvas><canvas height="150" id="r-profile" width="420"></canvas></div></details><button class="primary" id="btn-again">Next ticket</button></div>
+</section>
 <!-- end of shift -->
-<section id="shiftend" class="modal" hidden>
-  <div class="card wide">
-    <div class="eyebrow">Service over</div>
-    <h1 id="se-score">0</h1>
-    <p class="who" id="se-line"></p>
-    <table class="stats"><tbody id="se-stats"></tbody></table>
-    <div id="se-tickets"></div>
-    <p class="muted" id="se-best"></p>
-    <button class="primary" id="btn-new-shift">New shift</button>
-  </div>
+<section class="modal" hidden="" id="shiftend">
+<div class="card wide">
+<div class="eyebrow">Service over</div>
+<h1 id="se-score">0</h1>
+<p class="who" id="se-line"></p>
+<table class="stats"><tbody id="se-stats"></tbody></table>
+<div id="se-tickets"></div>
+<p class="muted" id="se-best"></p>
+<button class="primary" id="btn-new-shift">New shift</button>
+</div>
 </section>
-
 <!-- help -->
-<section id="help" class="modal" role="dialog" aria-modal="true" aria-labelledby="help-title" hidden>
-  <div class="card">
-    <button id="btn-help-close">Close</button>
-    <h2 id="help-title">A little help?</h2><p>Pick a topic. The kitchen waits while you read.</p>
-    <details class="control-group"><summary>Free practice</summary><p>is the same simulation with no tickets or scoring. Add up to four patties, discard food or clear the bench and experiment. <b>Pause</b> freezes cooking; this Help window does too. <b>Save</b> stores your kitchen in this browser, with separate service and practice slots. Active sessions autosave every 15 seconds. Saved sessions restore paused, without offline cooking; check the save status before closing.</p></details>
-    <details class="control-group"><summary>Requested builds</summary><p>appear on the order and cooking panel. Each burger needs its listed ingredients; a missing ingredient sends it back. A check mark means assigned, not cooked. <b>Back on the heat</b> reheats resting food without erasing its history. <b>Discard</b> removes a topping so you can cook a replacement; bun halves are discarded and assigned together.</p></details>
-    <details class="control-group"><summary>Viewport</summary><p>left-drag orbits (unless you start on a patty, which drags it across the pan instead), wheel or right-drag zooms, right-click zooms onto whatever you clicked (right-click again to back out), middle/shift-drag pans. Keys 1–4 are view presets, R resets, arrows orbit. <b>Cutaway</b> (C) slices the patty so you can watch the grey band creep inward.</p></details>
-    <details class="control-group"><summary>Physics</summary><p>the patty is a grid of ~0.6 mm layers by ~4 mm rings, so the rim and the middle are different places. Each cell has its own temperature, water, fat and denatured-protein state. Heat comes in through a contact conductance from the pan (twelve rings of metal with a burner hot spot), water boils off at 100 °C and pins the surface there until it dries, juice squeezed out by contracting proteins migrates to the faces, fat melts and drains, and once the surface is dry and hot the Maillard reaction browns it — then pyrolysis blackens it. Colour, shine, steam, smoke, spatter and sizzle are all driven by those numbers. The whole thing steps every 0.05 s of simulated time; the <b>1×–8×</b> buttons multiply how fast that clock runs, not how coarsely it is solved, so a burger cooked at 8× is the same burger.</p></details>
-    <details class="control-group"><summary>Tickets</summary><p>can carry up to three burgers with different orders. Form each one, then use the chips under the ticket, <b>[ and ]</b>, or a click on a patty to choose which one the buttons act on. They all go out together, so a burger that rests too long while the others cook goes out lukewarm. A cold patty pulls the pan down under it.</p></details>
-    <details class="control-group"><summary>Extras</summary><p>the buttons under <i>Extras</i> put toppings in the pan beside the patties: two <b>bun</b> halves cut side down, a rasher of <b>bacon</b>, an <b>egg</b>, a heap of sliced <b>onions</b>. They are cooked, not conjured: each one takes a spot on the metal, drags the rings under it down, boils its own water off, and browns (or burns) on its own kinetics. Select one from the chips or by clicking it, and <b>Flip</b> turns it over — or stirs the onions, which is the only way to caramelise all of them instead of scorching the layer on the pan. <b>Off the heat</b> takes it to the pass. A bun face goes golden in about a minute over 200 °C metal and black in three; bacon needs eight minutes at 180 °C to render 50–65 % of its fat and crisp, and comes off at a little under half its raw weight; a lid or a flip is what sets an egg yolk — about eighty seconds under the lid, or thirty after a flip, and the jammy window is only a few seconds wide — and a fried egg loses 10–15 % of its mass, not a third; onions want a quarter of an hour on medium — with the water out of them but no colour on them they are <i>sweated</i>, which is soft and mild, not raw. If the pan is too crowded a topping goes down half on top of something else, and only the part touching the metal cooks. At service each topping is built onto a burger — the chips and the <i>Build onto</i> row show which, including the default (<code>→ (2)</code>) before you serve, and a bun's two halves always go to the same burger — and anything raw or burnt costs the ticket up to ten points; the patty's own score never moves.</p></details>
-    <details class="control-group"><summary>Charcoal</summary><p>pick the kettle as the stove (with nothing on the heat yet: it swaps the pan for a cold grate). The knob is the bottom vent: open it, wait for the bed to glow and the grate to pass 250 °C. The bars brand marks, radiant heat browns the edges, fat that drips on the coals flares up and soots the meat, and the lid turns the kettle into an oven. Over bars there is no pan: pressing only squeezes juice and fat onto the fire — nothing to smash against — cheese that hangs past the meat sags through the grate in flaming gobs unless you put it on late and drop the lid, and the wash button becomes a wire brush that takes the residue off without cooling the bars. <b>Bank coals</b> rakes the bed to one side: the same charcoal, twice as deep over half the grate and bare ash under the other half, so the bars run 180–230 °C cooler over there and a patty sees about a sixth of the radiant heat. The split is half there after a couple of minutes and takes eight to ten to settle, so bank it early — you can sear over the pile while it finds the rest of it. Sear over the coals, then drag it across to finish — that is how you get a crust on a thick patty without charring it.</p></details>
-    <details class="control-group"><summary>The fire is a thing you keep</summary><p>the kettle carries on between tickets exactly as the pan does: the coals go on burning down, ash goes on building, and the grate keeps its heat. <b>Add coals</b> tips in more lump straight from the bag; it is cold, so it takes heat <i>out</i> of the bed for the first few minutes and only then lifts it — add coals before you need them, not when the fire is already dying. Ash is not decoration: it falls through the bed, buries the bottom vent and strangles the draught, so an unswept bed runs cooler and burns slower at the same vent setting. <b>Stir</b> rakes it through — the ash drops into the bowl, the fire glows up for a minute or two — and <b>Empty ash</b> tips the bowl out, which you can only do once the kettle is cold.</p></details>
-    <details class="control-group"><summary>Wood and smoke</summary><p><b>Add wood</b> puts a 60 g chunk of hickory, apple or mesquite on the coals. Nothing happens for the first three minutes while the bed boils the water out of it and takes it to about 300 °C, and then it smoulders for fifteen to seventeen: the smoke rate peaks once the whole chunk is alight and fades as it is eaten away. Smoke lands on the meat at a couple of millimetres a second, faster while the surface is still cool and wet, so it goes in early — a moderate deposit is a real flavour and is worth up to three of the twenty crust marks. Mesquite is half again as strong as hickory; apple is hard to overdo. <b>With air the smoke is thin and blue</b>: the volatiles burn as they leave the wood. Smothered — lid on and both vents shut — they never ignite, come off cold and white, and condense on the meat as creosote, which is bitter and costs you up to six. The <b>lid vent</b> is the other half of the airflow when the lid is on (the two vents are orifices in series, so the smaller one rules) and it is also how the smoke leaves: shut it and the smoke stops moving over the food and starts sitting on it.</p></details>
-    <details class="control-group"><summary>Moving things</summary><p>left-drag a patty (or a topping) to slide it across the pan or the grate; the ring shows where it will land, green if it fits and red if something is in the way. Dragging from anywhere else still orbits the camera. <b>Move to centre</b> and <b>Move to edge</b> do the same from the keyboard. Position is not decoration: the metal under it, the burner's hot spot and — on a banked kettle — which side of the fire it is on all follow it, and so does the heat it pulls out of the pan. Meat welds itself to hot metal until its crust sets, so moving it too early tears the face off exactly as an early flip does; <b>Scrape</b> (S) works the blade under it first, which costs a second of searing and about 40 % of the tearing.</p></details>
-    <details class="control-group"><summary>The cook's senses</summary><p>under <i>Senses</i>, and the only instruments you have in <b>hard mode</b>, where the probe, the IR gun and the Inspector are gone, the log's temperatures read <code>·· °C</code>, and the results card names the doneness the burger came out as without giving you the number or the temperature traces. <b>Press test</b> (T) puts a finger on the middle of the patty: what you feel is the compression modulus, computed from the myosin, collagen and actin that have denatured through the thickness and how dry each layer is. The layers are springs in series, so the softest one — the centre — dominates, which is exactly why the test works. Raw is slack, rare is soft, medium-rare springs back, medium is firm with give, well done is hard. It costs about a tenth of the juice a spatula press does, and a second and a bit with your hand over a hot pan. <b>Peek</b> (K) cuts into it: you see the colour at the centre and how deep the grey band has come in, the viewport shows you the actual cut for a few seconds, and then you have a burger with a slit in it that weeps out of the cut for the rest of the cook and costs you a quarter of the structure mark per cut (three cuts is as bad as it gets). It can never score 100 again. <b>Hand over it</b> (H) holds a palm about 8 cm over the metal and counts: radiant plus convective flux at the hand, through the Stoll burn curve. Over coals it is the chart everybody learns: two seconds is searing, four is very hot, six is hot, eight or more is only medium. A pan is not a fire, so the same count means a far hotter surface and the words are on a pan scale: about twenty seconds is a 200 °C pan — the recipe temperature — thirteen is 250, nine is a 300 °C pan past any oil's smoke point. Over a banked kettle with nothing on it the hand goes over each side in turn.</p></details>
-    <details class="control-group"><summary>Listen to it.</summary><p>The sizzle is a reading, not decoration. A wet face against the metal is a loud, rough, low crackle — water flashing at the contact — and nothing browns while you can hear it. When it drops to a quiet, much higher hiss with sparse pops, that face has boiled dry and Maillard has started: that is your cue to expect a crust, and the log writes it down for you (“the sizzle has dropped to a hiss”). A patty lifted on the blade goes quiet — but a pan is never silent just because there is no meat in it: rashers rendering, an egg in the fat and onions boiling all speak in the same two voices. A kettle roars as the vents open and whooshes when fat flares on the coals, and a lid low-passes the lot.</p></details>
-    <details class="control-group"><summary>The shift</summary><p>is six tickets. Each one is quoted a time from the moment you say “yes chef” — about 1.6× the recipe for what was ordered, so one medium-rare is 13:10 and a three-top is 20:00 to 24:00 depending on what is on it — and the HUD shows the clock against it. The clock runs in kitchen time, so the speed buttons do not buy you service time. Going over costs up to 10 ticket points at twice the quote and the table mentions it. A ticket with a plate sent back scores nothing, and service moves on.</p></details>
-    <details class="control-group"><summary>The customer</summary><p>gets the last word. Above the bars they say what they actually think — dry, no crust, burnt, cold in the middle, under, over — and the plate is sent back (under 45, or anything raw or burnt on it), accepted, or delighted (90+). They tip on the bill: nothing on a plate that goes back, ~10 % on a mediocre one, 20 % on a good one, 25 % on a perfect one, and less if it was late or lukewarm. At the end of the six you get the night's card, and your best shift is remembered in this browser.</p></details>
-    <details class="control-group"><summary>Doneness</summary><p>is the <i>peak</i> centre temperature, including carry-over while resting. Rare 49–52, medium-rare 54–57, medium 60–63, medium-well 65–68, well done 71+ °C.</p></details>
-    <details class="control-group"><summary>Keys</summary><p><b>space</b> lay in / flip, <b>F</b> flip, <b>P</b> press, <b>S</b> scrape, <b>C</b> cutaway, <b>T</b> press test, <b>K</b> peek, <b>H</b> hand over the pan, <b>[ and ]</b> select the next patty or topping, <b>1</b>–<b>4</b> view presets, <b>R</b> reset the camera.</p></details>
-    <details class="control-group"><summary>Tips from real life</summary><p>preheat properly; don't press a thick patty; a thumb dimple stops it doming; flipping often cooks faster and more evenly; the juice pooling on top is a flip cue; meat releases from the pan on its own once the crust sets; rest before cutting.</p></details>
-
-  </div>
+<section aria-labelledby="help-title" aria-modal="true" class="modal" hidden="" id="help" role="dialog">
+<div class="card">
+<button id="btn-help-close">Close</button>
+<h2 id="help-title">A little help?</h2><p>Pick a topic. The kitchen waits while you read.</p>
+<details class="control-group"><summary>Free practice</summary><p>is the same simulation with no tickets or scoring. Add up to four patties, discard food or clear the bench and experiment. <b>Pause</b> freezes cooking; this Help window does too. <b>Save</b> stores your kitchen in this browser, with separate service and practice slots. Active sessions autosave every 15 seconds. Saved sessions restore paused, without offline cooking; check the save status before closing.</p></details>
+<details class="control-group"><summary>Requested builds</summary><p>appear on the order slip. Click the ticket to expand it. Each burger needs its listed ingredients; a missing ingredient sends it back. A check mark means assigned, not cooked. <b>Back on the heat</b> reheats resting food without erasing its history. <b>Discard</b> removes a topping so you can cook a replacement; bun halves are discarded and assigned together.</p></details>
+<details class="control-group"><summary>Viewport</summary><p>left-drag orbits (unless you start on a patty, which drags it across the pan instead), wheel or right-drag zooms, right-click zooms onto whatever you clicked (right-click again to back out), middle/shift-drag pans. Keys 1–4 are view presets, R resets, arrows orbit. <b>Cutaway</b> (C) slices the patty so you can watch the grey band creep inward.</p></details>
+<details class="control-group"><summary>Physics</summary><p>the patty is a grid of ~0.6 mm layers by ~4 mm rings, so the rim and the middle are different places. Each cell has its own temperature, water, fat and denatured-protein state. Heat comes in through a contact conductance from the pan (twelve rings of metal with a burner hot spot), water boils off at 100 °C and pins the surface there until it dries, juice squeezed out by contracting proteins migrates to the faces, fat melts and drains, and once the surface is dry and hot the Maillard reaction browns it — then pyrolysis blackens it. Colour, shine, steam, smoke, spatter and sizzle are all driven by those numbers. The whole thing steps every 0.05 s of simulated time; the <b>1×–8×</b> buttons multiply how fast that clock runs, not how coarsely it is solved, so a burger cooked at 8× is the same burger.</p></details>
+<details class="control-group"><summary>Tickets</summary><p>can carry up to three burgers with different orders. Form each one, then use the chips under the ticket, <b>[ and ]</b>, or a click on a patty to choose which one the buttons act on. They all go out together, so a burger that rests too long while the others cook goes out lukewarm. A cold patty pulls the pan down under it.</p></details>
+<details class="control-group"><summary>Extras</summary><p>the buttons under <i>Extras</i> put toppings in the pan beside the patties: two <b>bun</b> halves cut side down, a rasher of <b>bacon</b>, an <b>egg</b>, a heap of sliced <b>onions</b>. They are cooked, not conjured: each one takes a spot on the metal, drags the rings under it down, boils its own water off, and browns (or burns) on its own kinetics. Select one from the chips or by clicking it, and <b>Flip</b> turns it over — or stirs the onions, which is the only way to caramelise all of them instead of scorching the layer on the pan. <b>Off the heat</b> takes it to the pass. A bun face goes golden in about a minute over 200 °C metal and black in three; bacon needs eight minutes at 180 °C to render 50–65 % of its fat and crisp, and comes off at a little under half its raw weight; a lid or a flip is what sets an egg yolk — about eighty seconds under the lid, or thirty after a flip, and the jammy window is only a few seconds wide — and a fried egg loses 10–15 % of its mass, not a third; onions want a quarter of an hour on medium — with the water out of them but no colour on them they are <i>sweated</i>, which is soft and mild, not raw. If the pan is too crowded a topping goes down half on top of something else, and only the part touching the metal cooks. At service each topping is built onto a burger — the chips and the <i>Build onto</i> row show which, including the default (<code>→ (2)</code>) before you serve, and a bun's two halves always go to the same burger — and anything raw or burnt costs the ticket up to ten points; the patty's own score never moves.</p></details>
+<details class="control-group"><summary>Charcoal</summary><p>pick the kettle as the stove (with nothing on the heat yet: it swaps the pan for a cold grate). The knob is the bottom vent: open it, wait for the bed to glow and the grate to pass 250 °C. The bars brand marks, radiant heat browns the edges, fat that drips on the coals flares up and soots the meat, and the lid turns the kettle into an oven. Over bars there is no pan: pressing only squeezes juice and fat onto the fire — nothing to smash against — cheese that hangs past the meat sags through the grate in flaming gobs unless you put it on late and drop the lid, and the wash button becomes a wire brush that takes the residue off without cooling the bars. <b>Bank coals</b> rakes the bed to one side: the same charcoal, twice as deep over half the grate and bare ash under the other half, so the bars run 180–230 °C cooler over there and a patty sees about a sixth of the radiant heat. The split is half there after a couple of minutes and takes eight to ten to settle, so bank it early — you can sear over the pile while it finds the rest of it. Sear over the coals, then drag it across to finish — that is how you get a crust on a thick patty without charring it.</p></details>
+<details class="control-group"><summary>The fire is a thing you keep</summary><p>the kettle carries on between tickets exactly as the pan does: the coals go on burning down, ash goes on building, and the grate keeps its heat. <b>Add coals</b> tips in more lump straight from the bag; it is cold, so it takes heat <i>out</i> of the bed for the first few minutes and only then lifts it — add coals before you need them, not when the fire is already dying. Ash is not decoration: it falls through the bed, buries the bottom vent and strangles the draught, so an unswept bed runs cooler and burns slower at the same vent setting. <b>Stir</b> rakes it through — the ash drops into the bowl, the fire glows up for a minute or two — and <b>Empty ash</b> tips the bowl out, which you can only do once the kettle is cold.</p></details>
+<details class="control-group"><summary>Wood and smoke</summary><p><b>Add wood</b> puts a 60 g chunk of hickory, apple or mesquite on the coals. Nothing happens for the first three minutes while the bed boils the water out of it and takes it to about 300 °C, and then it smoulders for fifteen to seventeen: the smoke rate peaks once the whole chunk is alight and fades as it is eaten away. Smoke lands on the meat at a couple of millimetres a second, faster while the surface is still cool and wet, so it goes in early — a moderate deposit is a real flavour and is worth up to three of the twenty crust marks. Mesquite is half again as strong as hickory; apple is hard to overdo. <b>With air the smoke is thin and blue</b>: the volatiles burn as they leave the wood. Smothered — lid on and both vents shut — they never ignite, come off cold and white, and condense on the meat as creosote, which is bitter and costs you up to six. The <b>lid vent</b> is the other half of the airflow when the lid is on (the two vents are orifices in series, so the smaller one rules) and it is also how the smoke leaves: shut it and the smoke stops moving over the food and starts sitting on it.</p></details>
+<details class="control-group"><summary>Moving things</summary><p>left-drag a patty (or a topping) to slide it across the pan or the grate; the ring shows where it will land, green if it fits and red if something is in the way. Dragging from anywhere else still orbits the camera. <b>Move to centre</b> and <b>Move to edge</b> do the same from the keyboard. Position is not decoration: the metal under it, the burner's hot spot and — on a banked kettle — which side of the fire it is on all follow it, and so does the heat it pulls out of the pan. Meat welds itself to hot metal until its crust sets, so moving it too early tears the face off exactly as an early flip does; <b>Scrape</b> (S) works the blade under it first, which costs a second of searing and about 40 % of the tearing.</p></details>
+<details class="control-group"><summary>The cook's senses</summary><p>under <i>Senses</i>, and the only instruments you have in <b>hard mode</b>, where the probe, the IR gun and the Inspector are gone, the log's temperatures read <code>·· °C</code>, and the results card names the doneness the burger came out as without giving you the number or the temperature traces. <b>Press test</b> (T) puts a finger on the middle of the patty: what you feel is the compression modulus, computed from the myosin, collagen and actin that have denatured through the thickness and how dry each layer is. The layers are springs in series, so the softest one — the centre — dominates, which is exactly why the test works. Raw is slack, rare is soft, medium-rare springs back, medium is firm with give, well done is hard. It costs about a tenth of the juice a spatula press does, and a second and a bit with your hand over a hot pan. <b>Peek</b> (K) cuts into it: you see the colour at the centre and how deep the grey band has come in, the viewport shows you the actual cut for a few seconds, and then you have a burger with a slit in it that weeps out of the cut for the rest of the cook and costs you a quarter of the structure mark per cut (three cuts is as bad as it gets). It can never score 100 again. <b>Hand over it</b> (H) holds a palm about 8 cm over the metal and counts: radiant plus convective flux at the hand, through the Stoll burn curve. Over coals it is the chart everybody learns: two seconds is searing, four is very hot, six is hot, eight or more is only medium. A pan is not a fire, so the same count means a far hotter surface and the words are on a pan scale: about twenty seconds is a 200 °C pan — the recipe temperature — thirteen is 250, nine is a 300 °C pan past any oil's smoke point. Over a banked kettle with nothing on it the hand goes over each side in turn.</p></details>
+<details class="control-group"><summary>Listen to it.</summary><p>The sizzle is a reading, not decoration. A wet face against the metal is a loud, rough, low crackle — water flashing at the contact — and nothing browns while you can hear it. When it drops to a quiet, much higher hiss with sparse pops, that face has boiled dry and Maillard has started: that is your cue to expect a crust, and the log writes it down for you (“the sizzle has dropped to a hiss”). A patty lifted on the blade goes quiet — but a pan is never silent just because there is no meat in it: rashers rendering, an egg in the fat and onions boiling all speak in the same two voices. A kettle roars as the vents open and whooshes when fat flares on the coals, and a lid low-passes the lot.</p></details>
+<details class="control-group"><summary>The shift</summary><p>is six tickets. Each one is quoted a time from the moment you say “yes chef” — about 1.6× the recipe for what was ordered, so one medium-rare is 13:10 and a three-top is 20:00 to 24:00 depending on what is on it — and the HUD shows the clock against it. The clock runs in kitchen time, so the speed buttons do not buy you service time. Going over costs up to 10 ticket points at twice the quote and the table mentions it. A ticket with a plate sent back scores nothing, and service moves on.</p></details>
+<details class="control-group"><summary>The customer</summary><p>gets the last word. Above the bars they say what they actually think — dry, no crust, burnt, cold in the middle, under, over — and the plate is sent back (under 45, or anything raw or burnt on it), accepted, or delighted (90+). They tip on the bill: nothing on a plate that goes back, ~10 % on a mediocre one, 20 % on a good one, 25 % on a perfect one, and less if it was late or lukewarm. At the end of the six you get the night's card, and your best shift is remembered in this browser.</p></details>
+<details class="control-group"><summary>Doneness</summary><p>is the <i>peak</i> centre temperature, including carry-over while resting. Rare 49–52, medium-rare 54–57, medium 60–63, medium-well 65–68, well done 71+ °C.</p></details>
+<details class="control-group"><summary>Keys</summary><p><b>space</b> lay in / flip, <b>F</b> flip, <b>P</b> press, <b>S</b> scrape, <b>C</b> cutaway, <b>T</b> press test, <b>K</b> peek, <b>H</b> hand over the pan, <b>[ and ]</b> select the next patty or topping, <b>1</b>–<b>4</b> view presets, <b>R</b> reset the camera.</p></details>
+<details class="control-group"><summary>Tips from real life</summary><p>preheat properly; don't press a thick patty; a thumb dimple stops it doming; flipping often cooks faster and more evenly; the juice pooling on top is a flip cue; meat releases from the pan on its own once the crust sets; rest before cutting.</p></details>
+</div>
 </section>
-
 <script src="js/vendor/three.min.js"></script>
 <script src="js/physics.js"></script>
-<script src="js/render3d.js?v=desktop-8"></script>
+<script src="js/render3d.js?v=open-4"></script>
 <script src="js/audio.js"></script>
 <script src="js/session.js"></script>
 <script src="js/cues.js?v=diner-2"></script>
-<script src="js/game.js?v=diner-2"></script>
+<script src="js/game.js?v=open-4"></script>
 </body>
 </html>
