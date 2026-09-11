@@ -132,7 +132,24 @@
     }
     return steam/dt;
   }
-  const api = {cold,layers,closed,hasPatty,add,pop,unpack,label,coldNode,surface,exchange,cover,stepHeat};
+  // Visual compliance, not a change to the thermal mesh or the food's mass.
+  // Pressure from everything above collapses loose folds before dense food.
+  function stackLayout(p,P,heights) {
+    let load=0;
+    const stack=layers(p),out=new Array(stack.length);
+    for(let i=stack.length-1;i>=0;i--) {
+      const l=stack[i],food=l.meat||p,kind=l.patty?'patty':l.item?.kind||l.cold;
+      const mass=l.patty?P.pattyMass(food)+[...food.cheeses,...food.cheeseUnder].reduce((v,c)=>v+c.mass,0):l.item?P.itemMass(l.item):coldNode(l).m+l.w;
+      const radius=(l.item?.D||food.D)/2,pressure=load*9.81/Math.max(.002,Math.PI*radius*radius);
+      const [limit,stiffness]=({bun:[.28,260],patty:[.08,650],onions:[.68,85],bacon:[.65,110],egg:[.25,230],lettuce:[.72,45],tomato:[.12,350],pickles:[.10,400]})[kind]||[.60,65];
+      const compression=limit*(-Math.expm1(-pressure/stiffness));
+      const loose=['onions','bacon','lettuce'].includes(kind);
+      out[i]={height:heights[i],scale:1-compression,overlap:loose?compression*.22:0,load,pressure};
+      load+=mass;
+    }
+    return out;
+  }
+  const api = {cold,layers,closed,hasPatty,add,pop,unpack,label,coldNode,surface,exchange,cover,stepHeat,stackLayout};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.BurgerAssembly = api;
 })(typeof window !== 'undefined' ? window : globalThis);

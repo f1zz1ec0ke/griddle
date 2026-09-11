@@ -918,6 +918,7 @@
         // keeps a slow frame from snowballing into a slower one.
         let n = 0;
         while (this.acc >= DT && n < 200) { P.step(st, DT); this.acc -= DT; n++; }
+        if(this.selItem&&!st.items.includes(this.selItem)) {this.selItem=null;P.selectItem(st,null);this.refreshButtons();}
         if (n >= 200) this.acc = 0;
         this.audio.update(st.diag, st.stove.knob / 10, real);
         if (active) {

@@ -569,6 +569,7 @@
     texCommit() { const cur = this._sigA; this._sigB = this._sigB || new Float64Array(cur.length); this._sigB.set(cur); }
     /** Per-frame: position, geometry, textures, cheese, buns. */
     update(state, dt, where, position, mode) {
+      this.group.scale.set(1,1,1);
       const p = this.p, g = this.group;
       if (p.flips !== this.lastFlips) {
         this.lastFlips = p.flips;
@@ -846,6 +847,7 @@
     /** Per-frame: where it is, and what it looks like now. */
     update(state, dt, where, pos, opts) {
       const it = this.it, g = this.group;
+      g.scale.set(1,1,1);
       g.position.set(pos.x, pos.y, pos.z);
       g.visible = !(it.kind === 'bun' && where === 'cut'); // a served bun is drawn as part of the burger
       if (!g.visible) return;
@@ -898,6 +900,8 @@
     }
     paintEgg(where) {
       const it = this.it, N = this.eggN, R = this.eggR;
+      this.group.rotation.x=it.flipped?Math.PI:0;
+      if(it.flipped)this.group.position.y+=this.layerH();
       const pos = this.whiteGeo.attributes.position.array;
       const spread = it.spread, set = it.setTop;
       for (let i = 0; i < N; i++) {
@@ -1505,7 +1509,7 @@
       return d;
     }
     /** Keep one ItemView per topping in `list`. */
-    updateAssemblies(state, list) {
+    updateAssemblies(state, list, dt) {
       const A = root.BurgerAssembly;
       this.assemblyViews ||= new Map();
       for (const [p,g] of this.assemblyViews) if (!list.includes(p) || !p.assembly?.length) { this.scene.remove(g); disposeTree(g); this.assemblyViews.delete(p); }
@@ -1562,29 +1566,45 @@
         const clipping=this.cutaway&&(p===this.selected||p.assembly.some(l=>l.meat===this.selected));
         const phi=clipping?(this.views.get(this.selected)?.cutPhi||0):(pv.cutPhi||0);
         if(pv.cutaway!==clipping || (clipping&&pv.cutPhi!==phi))pv.setCutaway(clipping,phi);
+        const heights=p.assembly.map(l=>{
+          if(l.patty){const meat=l.meat||p;return meat.h*(1+.28*meat.dome)+meat.cheeses.length*.0015;}
+          if(l.item)return this.itemViews.get(l.item)?.layerH()||0;
+          const spec=A.cold[l.cold],spread=.72+.28*(1-Math.exp(-(l.age||0)/22));
+          return spec.height*(spec.sauce?1/(spread*spread):l.cold==='lettuce'?1-.45*(l.wilt||0):1);
+        });
+        const layout=A.stackLayout(p,P,heights);
+        pv.stackSettling ||= new WeakMap();
         let h=0;
         p.assembly.forEach((l,i) => {
+          const support=layout[i],old=pv.stackSettling.get(l)??1;
+          const scale=lerp(old,support.scale,1-Math.exp(-Math.max(0,dt)*12));
+          pv.stackSettling.set(l,scale);
           const cap=group.userData.caps.get(i);
-          if(cap) { cap.visible=clipping; cap.position.y=h; cap.rotation.y=-phi; }
+          if(cap) { cap.visible=clipping; cap.position.y=h; cap.rotation.y=-phi;cap.scale.set(1,scale,1); }
           if(l.patty) {
             const meat=l.meat||p,mv=this.views.get(meat);
             mv.group.position.set(base.x,base.y+h,base.z);
+            mv.group.scale.y=scale;
             if(mv.cutaway!==clipping || (clipping&&mv.cutPhi!==phi))mv.setCutaway(clipping,phi);
-            h+=meat.h*(1+.28*meat.dome)+meat.cheeses.length*.0015;
           }
           else if(l.item) {
             const v=this.itemViews.get(l.item); if(!v)return;
             v.update(state,0,'rest',{x:base.x,y:base.y+h,z:base.z},this.mode);
             if(l.item.kind==='bun' && l.item.half==='top') { v.group.rotation.x=0; v.group.position.y=base.y+h; }
+            v.group.position.y=base.y+h+(v.group.position.y-base.y-h)*scale;
+            v.group.scale.y=scale;
             if(clipping) { const phi=pv.cutPhi||0; v.setClipAt(-Math.sin(phi),Math.cos(phi),base.x,base.z); } else v.setClip(null);
-            h+=v.layerH();
           } else {
             const v=group.userData.layers.get(i),spec=A.cold[l.cold]; v.position.y=h;
+            v.scale.set(1,1,1);
             if(spec.sauce) { const spread=.72+.28*(1-Math.exp(-(l.age||0)/22));v.scale.set(spread,1/(spread*spread),spread); }
             if(l.cold==='lettuce') {v.scale.y=1-.45*(l.wilt||0);v.children.forEach(m=>m.material.color.setRGB(1-.18*(l.wilt||0),1-.12*(l.wilt||0),1));}
+            v.scale.y*=scale;
             if(cap)cap.scale.set(v.scale.x,v.scale.y,1);
-            h+=spec.height*(spec.sauce?v.scale.y:l.cold==='lettuce'?v.scale.y:1);
           }
+          // Sparse toppings interleave; they do not support a solid plane at their tips.
+          const overlap=support.overlap*(1-scale)/Math.max(1e-9,1-support.scale);
+          h+=support.height*scale*(1-overlap);
         });
         if(!A.hasPatty(p)) {const at=this.passLayout.get('loose:'+p.id);if(at)pv.group.position.set(at.x,at.y,at.z);}
         group.userData.height=h;
@@ -1629,8 +1649,12 @@
       const ray = new T.Raycaster(); ray.setFromCamera(ndc, this.camera);
       const targets = []; for (const v of this.views.values()) { targets.push(v.mesh); if (v.cutMesh.visible) targets.push(v.cutMesh); }
       for (const v of this.itemViews.values()) if (v.group.visible) v.group.traverse((o) => { if (o.isMesh) targets.push(o); });
-      if(this.mode==='stove'&&this.panMesh)targets.push(this.panMesh);
+      if(this.mode==='stove'&&this.panGroup?.visible&&this.panMesh)targets.push(this.panMesh);
       const hits = ray.intersectObjects(targets, false);
+      if(this.mode==='stove'&&this.stoveType==='charcoal') {
+        const at=ray.ray.intersectPlane(new T.Plane(new T.Vector3(0,1,0),-this.PAN_Y),new T.Vector3());
+        if(at&&Math.hypot(at.x,at.z)<=this.panR&&(!hits.length||ray.ray.origin.distanceTo(at)<hits[0].distance))return 'pan';
+      }
       if (!hits.length) return null;
       if(hits[0].object===this.panMesh)return 'pan';
       const d = hits[0].object.userData;
@@ -1878,7 +1902,21 @@
         }
         v.update(state, dt, it.where, pos, this.mode);
       }
-      this.updateAssemblies(state, list);
+      this.updateAssemblies(state, list, cameraDt);
+      this.droppedEggViews ||= new Map();
+      const dropped=state.grill?.droppedEggs||[];
+      for(const [egg,v] of this.droppedEggViews)if(!dropped.includes(egg)){v.dispose();this.droppedEggViews.delete(egg);}
+      for(const egg of dropped) {
+        let v=this.droppedEggViews.get(egg);if(!v){v=new ItemView(this,egg);this.droppedEggViews.set(egg,v);}
+        const fall=clamp(egg.dropAge/.45,0,1),char=clamp(egg.burned/Math.max(.0001,egg.dropMass*.20),0,1);
+        this.eggDropRay ||= new T.Raycaster();
+        this.eggDropRay.set(new T.Vector3(egg.pos.x,this.PAN_Y,egg.pos.y),new T.Vector3(0,-1,0));
+        const landing=this.eggDropRay.intersectObjects([this.coals,this.ashDisc].filter(Boolean),false)[0]?.point.y??this.coalY;
+        v.update(state,dt,'coals',{x:egg.pos.x,y:lerp(this.PAN_Y,landing+.002,fall*fall),z:egg.pos.y},this.mode);
+        v.group.scale.set(1,.3+.7*(1-fall),1);
+        v.group.scale.multiplyScalar(Math.max(.08,Math.sqrt(P.itemMass(egg)/egg.dropMass)));
+        for(const mat of [v.whiteMat,v.yolkMat])mat.color.lerp(new T.Color(.012,.009,.007),char);
+      }
       this.forceTex = false;
       // the spatula: it slides in under the patty and back out over the second the scrape takes,
       // from whichever side the camera is on, because that is the side the cook is standing

@@ -42,7 +42,9 @@ test('local oil contact distinguishes a poured pool from a dry part of the pan',
 test('dry hot oil has no boiling bubbles; water causes them, avocado keeps its smoke point',()=>{
   const s=state();P.addFat(s,'avocado',10);s.pan.Tr.fill(260);s.pan.T=s.pan.Tcenter=260;
   P.step(s,.05);assert.equal(s.pan.smokeOil,0);assert.equal(s.diag.oilBubble,0);
-  s.pan.water=.001;P.step(s,.05);assert.ok(s.diag.oilBubble>0);
+  s.pan.water=.001;P.step(s,.05);assert.equal(s.diag.oilBubble,0,'incoming water must warm before boiling');
+  let bubbled=false;for(let i=0;i<400;i++){P.step(s,.05);if(s.diag.oilBubble>0)bubbled=true;}
+  assert.ok(bubbled,'heated water eventually bubbles through the oil');
   s.pan.Tr.fill(285);s.pan.T=s.pan.Tcenter=285;P.step(s,.05);assert.ok(s.pan.smokeOil>0);
 });
 test('oven gives up exactly its boundary heat load and a loaded oven heats more slowly',()=>{
@@ -120,6 +122,48 @@ test('double patties exchange heat through their own surfaces and serve together
 
 const M=require('../js/moisture');
 const energy=(n,cp)=>M.capacity(n,cp)*n.T;
+
+test('raw eggs fall through cold bars, persist in saves, and burn only over hot coals',()=>{
+  const s=P.createState({stove:'charcoal'}),[egg]=P.addItem(s,'egg'),mass=P.itemMass(egg);
+  P.step(s,.05);assert.equal(s.items.length,0);assert.equal(s.item,null);assert.equal(egg.where,'coals');
+  assert.ok(Math.abs(egg.lostDrip-mass)<1e-12);assert.ok(!P.removeItem(s,egg));
+  const debris=s.grill.droppedEggs[0];
+  for(let i=0;i<100;i++)P.step(s,.05);
+  assert.equal(debris.burned,0);assert.ok(Math.abs(P.itemMass(debris)-mass)<1e-9);
+  const copy=S.decode(S.encode(s));P.step(s,.05);P.step(copy,.05);assert.deepEqual(copy.grill.droppedEggs,s.grill.droppedEggs);
+  let smoke=0;
+  for(let i=0;i<2400;i++){s.grill.Tfire=700;P.step(s,.05);smoke=Math.max(smoke,s.diag.smoke);}
+  assert.ok(debris.burned>.005);assert.ok(smoke>0);assert.equal(s.grill.droppedEggs.length,0);
+  assert.ok(Math.abs(P.itemMass(debris)+debris.lostWater+debris.burned-mass)<1e-8);
+});
+test('a set egg stays on the grate and scraping raw egg preserves the mass ledger',()=>{
+  const grill=P.createState({stove:'charcoal'}),[set]=P.addItem(grill,'egg');set.setBot=.9;set.setTop=.8;
+  P.step(grill,.05);assert.ok(grill.items.includes(set));assert.equal(set.where,'pan');
+  for(const action of ['flipItem','removeItem']) {
+    const s=state(),[egg]=P.addItem(s,'egg'),mass=P.itemMass(egg);s.pan.release=1;
+    const residue=s.pan.fond+s.pan.water;
+    P[action](s,egg);
+    assert.ok(egg.lostDrip>0);assert.ok(Math.abs(P.itemMass(egg)+egg.lostDrip-mass)<1e-10);
+    assert.ok(Math.abs(s.pan.fond+s.pan.water-residue-egg.lostDrip)<1e-10);
+  }
+});
+
+test('stack weight compresses soft layers more than meat and responds to adding or removing food',()=>{
+  const s=state(),p=patty(s);P.removePatty(s,p);
+  const [bun]=P.addItem(s,'bun'),[onion]=P.addItem(s,'onions');
+  P.removeItem(s,bun);P.removeItem(s,onion);
+  A.add(s,p,bun.id);A.add(s,p,onion.id);A.add(s,p,'patty');
+  const heights=[.022,.01,.02],single=A.stackLayout(p,P,heights);
+  assert.ok(single[1].scale<single[0].scale);assert.equal(single[2].scale,1);
+  const q=P.makePatty({id:2,massG:250,thicknessMm:25,fatFrac:.2,tempC:70,target:'medium'});P.placePatty(s,q);P.removePatty(s,q);A.add(s,p,'patty:2');
+  const double=A.stackLayout(p,P,[...heights,.025]);
+  assert.ok(double[0].scale<single[0].scale);assert.ok(double[1].scale<single[1].scale);
+  assert.ok(double[2].scale>double[1].scale);assert.ok(double.every(l=>l.scale>0&&l.scale<=1));
+  assert.ok(double.reduce((h,l)=>h+l.height*l.scale*(1-l.overlap),0)<.077);
+  const copy=S.decode(S.encode(p));assert.deepEqual(A.stackLayout(copy,P,[...heights,.025]),double);
+  A.pop(p);assert.deepEqual(A.stackLayout(p,P,heights),single);
+  assert.equal(P.pattyMass(q),P.pattyMass(copy.assembly[3].meat),'compression preserves mass');
+});
 test('water transfer carries sensible heat without creating energy or mass',()=>{
   for(const [hot,cool] of [[100,20],[20,100]]) {
     const a={m:.01,w:.04,T:hot},b={m:.005,w:.001,T:cool};const before=energy(a,1500)+energy(b,2000);
@@ -166,4 +210,40 @@ test('assembly contact boils wet ingredients immediately and accounts for lost e
   assert.ok(boiled>0);assert.ok(layer.T<=100);assert.equal(layer.lostWater,boiled);
   assert.ok(Math.abs(energy(layer,1500)+boiled*(4180*100+M.latent)-before-200)<1e-6);
   const copy=S.decode(S.encode(s));A.stepHeat(s,p,.05);A.stepHeat(copy,copy.patty,.05);assert.deepEqual(copy.patty.assembly,p.assembly);
+});
+
+const W=require('../js/pan-water');
+function wetPan(T=200,oil=0){const p=state().pan;p.T=T;p.Tr.fill(T);p.oil=oil;W.add(p,.005,20);return p;}
+test('pan water warms, evaporates below boiling and conserves energy including escaping vapour',()=>{
+  for(const temp of [80,200,300]) {
+    const pan=wetPan(temp,.01),env={Tamb:20,RH:.5};let evaporated=0;
+    for(let i=0;i<600;i++){
+      const before=pan.water*4180*pan.waterT,water=pan.water;
+      const r=W.step(pan,env,false,.05);evaporated+=r.evap;
+      assert.ok(Math.abs(pan.water*4180*pan.waterT+r.vapourEnergy-before-r.heat)<1e-7);
+      assert.ok(Math.abs(pan.water+r.evap-water)<1e-12);
+      pan.T-=r.heat/(pan.C+pan.oil*2000);
+      assert.ok(pan.waterT<=100.000001&&Number.isFinite(pan.T));
+    }
+    assert.ok(evaporated>0);assert.equal(pan.fond,0);
+  }
+});
+test('pan water mixes incoming heat, handles oil and changes smoothly through 210 C',()=>{
+  const pan=wetPan();W.add(pan,.005,80);assert.equal(pan.waterT,50);
+  const before=pan.water*4180*pan.waterT,r=W.step(pan,{Tamb:20,RH:.5},false,.05);
+  assert.ok(pan.waterT>50);assert.ok(r.evap<.0001,'cold water cannot disappear immediately');
+  assert.ok(Math.abs(pan.water*4180*pan.waterT+r.vapourEnergy-before-r.heat)<1e-8);
+  const heat=(T,oil)=>W.step(wetPan(T,oil),{Tamb:20,RH:.5},false,.05).heat;
+  assert.ok(Math.abs(heat(210.01,0)-heat(209.99,0))/heat(210,0)<.001);
+  assert.ok(heat(150,.01)<heat(150,0));assert.ok(heat(280,.01)>heat(280,0));
+  const copy=S.decode(S.encode(pan));assert.deepEqual(W.step(copy,{Tamb:20,RH:.5},false,.05),W.step(pan,{Tamb:20,RH:.5},false,.05));
+  assert.deepEqual(copy,pan);
+  const legacy=state().pan;legacy.water=.003;W.ensure(legacy,20);assert.equal(legacy.waterT,20);assert.equal(legacy.waterTracked,.003);
+});
+test('pan boiling is stable across time steps and stops drawing heat when dry',()=>{
+  function run(dt){const p=wetPan(200,.01);for(let t=0;t<60-dt/2;t+=dt){const r=W.step(p,{Tamb:20,RH:.5},false,dt);p.T-=r.heat/(p.C+p.oil*2000);}return p;}
+  const a=run(.05),b=run(.01);assert.ok(Math.abs(a.water-b.water)<.00002);assert.ok(Math.abs(a.T-b.T)<.1);
+  const tiny=wetPan(300);tiny.water=tiny.waterTracked=1e-8;tiny.waterT=100;
+  const r=W.step(tiny,{Tamb:20,RH:.5},false,10);assert.ok(r.heat<=1e-8*2260000+1e-10);
+  assert.ok(tiny.water>=0);assert.equal(W.step({...tiny,water:0},{Tamb:20,RH:.5},false,.05).heat,0);
 });
