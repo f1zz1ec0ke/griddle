@@ -2,6 +2,8 @@
 
 A burger-cooking simulator where heat, timing and bad decisions matter.
 
+Play it here [f1zz1c0ke.github.io/griddle](https://f1zz1ec0ke.github.io/griddle/)
+
 Work a six-ticket shift, get the doneness and toppings right, and send everything out hot. Or jump into **Free practice** and experiment without orders or scores. **Hard mode** takes away the thermometers.
 
 Desktop browser, mouse and keyboard. No mobile support.
