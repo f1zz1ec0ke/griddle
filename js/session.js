@@ -62,12 +62,13 @@
     const targetOK = id => P.DONENESS.some(d => d.id === id);
     if (g.forms.some(f => !f || !targetOK(f.target) || !Number.isFinite(f.massG) || !Number.isFinite(f.thicknessMm))) throw new Error('Invalid saved forms.');
     for (const p of g.patties) {
-      if (!(p.T instanceof Float64Array) || p.T.length !== p.Nz * p.Nr || !p.faceDown || !p.faceUp || !Array.isArray(p.cheeses) || !['board', 'pan', 'rest', 'cut'].includes(p.where) || !P.DONENESS.some(d => d.id === p.target)) throw new Error('Invalid patty.');
+      if (!(p.T instanceof Float64Array) || p.T.length !== p.Nz * p.Nr || !p.faceDown || !p.faceUp || !Array.isArray(p.cheeses) || !['board', 'pan', 'oven', 'rest', 'cut'].includes(p.where) || !P.DONENESS.some(d => d.id === p.target)) throw new Error('Invalid patty.');
       if (!Array.from(p.T).every(Number.isFinite)) throw new Error('Invalid temperature grid.');
     }
     if (s.patties.some(p => !g.patties.includes(p)) || !g.ticket || !Array.isArray(g.ticket.items) || !g.shift || !Array.isArray(g.shift.tickets) || !Array.isArray(g.shift.plan)) throw new Error('Invalid ticket.');
     if (!g.ticket.items.every(targetOK) || (g.selItem && !s.items.includes(g.selItem)) || !Number.isInteger(g.shift.n) || g.shift.n < 0 || g.shift.n > 6) throw new Error('Invalid ticket progress.');
     if (![1, 2, 4, 8].includes(g.speed) || !Number.isFinite(g.ticketClock) || !Number.isFinite(g.probe.depth) || g.probe.depth < 0.1 || g.probe.depth > 0.9) throw new Error('Invalid controls.');
+    if (s.oven && (!Number.isFinite(s.oven.T) || s.oven.T < -30 || s.oven.T > 300 || !Number.isFinite(s.oven.target) || (s.oven.target !== 0 && (s.oven.target < 80 || s.oven.target > 250)))) throw new Error('Invalid oven.');
     // Stove profiles are code, not save data. Restore them only from the installed model.
     s.stove.profile = P.STOVES[s.stove.id].profile;
     return g;

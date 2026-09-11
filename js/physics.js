@@ -591,7 +591,7 @@
 
   function placePatty(s, patty, pos) {
     if (patty.where === 'pan' || patty.where === 'cut') return;
-    const reheating = patty.where === 'rest';
+    const reheating = patty.where === 'rest' || patty.where === 'oven';
     if (reheating) { patty.restT = 0; patty.serveT = null; }
     if (!s.patties.includes(patty)) s.patties.push(patty);
     patty.where = 'pan'; patty.pos = pos || patty.pos || { x: 0, y: 0 };
@@ -834,6 +834,31 @@
     p.peakCenter = Math.max(p.peakCenter, centerT(p));
     if (!s.patties.some((q) => q.where === 'pan')) s.rest.t = 0;
     logEvent(s, `Patty ${p.id} off the heat after ${fmtTime(p.cookTime)}. Centre ${centerT(p).toFixed(1)} °C. Resting — carry-over cooking begins.`, 'action');
+  }
+
+  // The oven uses the same meat grid, with convection and radiation on a rack.
+  function setOven(s, target) {
+    if (!Number.isFinite(target)) return false;
+    s.oven ||= { T: s.env.Tamb, target: 0 };
+    s.oven.target = target === 0 ? 0 : clamp(target, 80, 250);
+    return true;
+  }
+  function putInOven(s, p = s.patty) {
+    if (!p || !['pan', 'rest'].includes(p.where)) return false;
+    if (p.where === 'pan') removePatty(s, p);
+    s.oven ||= { T: s.env.Tamb, target: 0 };
+    p.where = 'oven'; p.restT = 0; p.ovenTime ||= 0;
+    if (s.patty === p) s.where = 'oven';
+    logEvent(s, `Patty ${p.id} on the oven rack.`, 'action');
+    return true;
+  }
+  function takeFromOven(s, p = s.patty) {
+    if (!p || p.where !== 'oven') return false;
+    p.where = 'rest'; p.restT = 0; p.dripAtRest = p.lostWaterDrip;
+    p.faceDown.crispAtRest = p.faceDown.crisp; p.faceUp.crispAtRest = p.faceUp.crisp;
+    if (s.patty === p) s.where = 'rest';
+    logEvent(s, `Patty ${p.id} out of the oven. Resting.`, 'action');
+    return true;
   }
 
   function addCheese(s, patty) {
@@ -1285,7 +1310,7 @@
       }
       qPan = qBot;
     } else {
-      for (let j = 0; j < Nr; j++) { const q = bb.h * Aj[j] * (bb.T - T[j]); qBotR[j] = q; qPanR[j] = q; Q[j] += q; qBot += q; TpanR[j] = bb.T; }
+      for (let j = 0; j < Nr; j++) { const q = Aj[j] * (bb.h * (bb.T - T[j]) + (bb.rad ? 0.9 * C.sigma * bb.radView * (p4(bb.radT + 273.15) - p4(T[j] + 273.15)) : 0)); qBotR[j] = q; qPanR[j] = q; Q[j] += q; qBot += q; TpanR[j] = bb.T; }
       qPan = qBot;
     }
 
@@ -2764,6 +2789,8 @@
     // layer's, weighted by how much of the heap it is
     it.carm = Math.min(3, it.carm + rate * sp.botFrac * dt);
     it.char = Math.min(C.Cmax, it.char + rChar * sp.botFrac * dt);
+    // Softening precedes drying and browning; retain the thermal history after cooling.
+    it.soft = 1 - (1 - (it.soft || 0)) * Math.exp(-dt * smooth(55, 95, t.T) / 80);
     it.Ts = b.T;
     it.faceDown.brown = it.carmBot; it.faceDown.char = it.charBot; it.faceDown.charRate = rChar;
     // on a grate they fall through the bars until they have wilted
@@ -2827,7 +2854,8 @@
       // out they are soft, translucent and mild — sweated, which is what half the onions on burgers
       // are — even though nothing has browned yet. Calling that "raw" was wrong, and the note
       // contradicted its own number.
-      if (it.lostWater > 0.6 * it.w0) return { state: 'sweated', note: `Onions sweated soft and translucent — ${(it.lostWater * 1000).toFixed(0)} g of their ${(it.w0 * 1000).toFixed(0)} g of water is out and the sharpness went with it, but they never took any colour (caramel ${c.toFixed(2)}).`, score: 0 };
+      if ((it.soft || 0) > 0.65 || it.lostWater > 0.6 * it.w0) return { state: 'sweated', note: `Onions sweated soft and translucent — ${(it.lostWater * 1000).toFixed(0)} g of their ${(it.w0 * 1000).toFixed(0)} g of water is out and the sharpness went with it, but they never took any colour (caramel ${c.toFixed(2)}).`, score: 0 };
+      if ((it.soft || 0) > 0.08 || it.top.T > 50) return { state: 'sweating', note: 'The onions are softening and releasing water. Keep cooking and stir to bring fresh slices onto the pan.', score: -1 };
       return { state: 'raw', note: `The onions are still sharp — only ${(it.lostWater * 1000).toFixed(0)} g of their ${(it.w0 * 1000).toFixed(0)} g of water is out. Raw onion on a burger is a choice; this one was an accident.`, score: -2 };
     }
     return { state: '', note: '', score: 0 };
@@ -2895,6 +2923,10 @@
     itemsOn.length = 0;
     for (let i = 0; i < s.items.length; i++) if (s.items[i].where === 'pan') itemsOn.push(s.items[i]);
     s.t += dt;
+    if (s.oven) {
+      const target = s.oven.target || Tamb;
+      s.oven.T += (target - s.oven.T) * (1 - Math.exp(-dt / (s.oven.target ? 120 : 300)));
+    }
     // ---- burner
     const pTarget = (st.knob / 10) * st.pMax * st.eff;
     if (st.tau > 0) st.pDelivered += ((pTarget - st.pDelivered) * dt) / st.tau; else st.pDelivered = pTarget;
@@ -3103,6 +3135,19 @@
           for (const ch of p.cheeseUnder) if (ch.skirt) cheeseSmoke += ch.skirt.charRate * 40 * (0.3 + ch.skirt.char) * ch.skirt.mass / 0.01;
         }
         smokeChar += (p.faceDown.charRate || 0) * 40 * (0.3 + p.faceDown.char) + cheeseSmoke;
+      } else if (p.where === 'oven') {
+        const temp = s.oven ? s.oven.T : Tamb;
+        const psc = p.sc || (p.sc = pattyScratch(p.Nz, p.Nr));
+        const bc = psc.bcOven || (psc.bcOven = {
+          bottom: { type: 'air', h: 18, T: 0, rad: true, radView: 1, radT: 0 },
+          top: { h: 18, T: 0, RH: 0, oil: false, rad: true, radView: 1, radT: 0 },
+          side: { h: 18, T: 0, oilDepth: 0, oilT: 0, rad: true, radView: 1, radT: 0 }
+        });
+        for (const face of [bc.bottom, bc.top, bc.side]) { face.T = temp; face.radT = temp; }
+        // Fixed absolute moisture content, diluted as the oven warms.
+        bc.top.RH = s.env.RH * rhoVapSat(Tamb) / rhoVapSat(temp);
+        stepPattyGuarded(s, p, dt, bc);
+        p.cookTime += dt; p.ovenTime = (p.ovenTime || 0) + dt;
       } else if (p.where === 'rest') {
         anyResting = true;
         const psc = p.sc || (p.sc = pattyScratch(p.Nz, p.Nr));
@@ -3345,7 +3390,7 @@
     return s;
   }
   function serve(s, patty) {
-    const list = patty ? [patty] : s.patties.filter((p) => p.where !== 'pan');
+    const list = (patty ? [patty] : s.patties).filter(p => p.where === 'rest' || p.where === 'cut');
     // the build step: anything off the heat that the cook has not already put on a burger goes to
     // whichever burger it came off the pan next to
     for (const it of s.items) if (it.where !== 'pan' && it.burger == null) { const b = plannedBurger(s, it); if (b) it.burger = b.id; }
@@ -3829,7 +3874,7 @@
   return {
     C, BLENDS, PANS, FATS, STOVES, GRATE, COAL, BANK, WOOD, SMOKE, DONENESS, ITEMS, TOUCH, PEEK, HAND,
     makePatty, createState, step, stepPatty, pattySpots, panTat, panTatXY, selectPatty, nextTicket,
-    setKnob, setBank, setTopVent, addWood, addCoals, stirCoals, emptyAsh, ventFlow, smokeRead, smokeName, addFat, placePatty, movePatty, moveItem, scrape, slideTo, coalAt, bedAt, zoneAt, flipPatty, pressPatty, removePatty, addCheese, toggleLid, basteButter, washPan, wipeStove, panDirt, serve,
+    setOven, putInOven, takeFromOven, setKnob, setBank, setTopVent, addWood, addCoals, stirCoals, emptyAsh, ventFlow, smokeRead, smokeName, addFat, placePatty, movePatty, moveItem, scrape, slideTo, coalAt, bedAt, zoneAt, flipPatty, pressPatty, removePatty, addCheese, toggleLid, basteButter, washPan, wipeStove, panDirt, serve,
     makeItem, addItem, selectItem, flipItem, removeItem, reheatItem, discardItem, stepItem, assignTopping, nearestBurger, plannedBurger, toppingsOf, itemState, itemMass, itemT, itemDryness, freeSpot, footprintRings, ringCoverage,
     firmness, firmnessWord, cellStiffness, pressTest, peek, sliceRead, handTest, handTestAt, handWord, HAND_WORDS,
     evaluate, evaluateTicket, buildOf, donenessOf, centerT, cellT, layerMean, gridMean, pattyMass, layerMass, waterHolding, fmtTime, clamp, lerp, rhoVapSat, logEvent, pattyFinite,
