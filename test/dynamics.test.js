@@ -120,6 +120,23 @@ test('double patties exchange heat through their own surfaces and serve together
 
 const M=require('../js/moisture');
 const energy=(n,cp)=>M.capacity(n,cp)*n.T;
+
+test('stack weight compresses soft layers more than meat and responds to adding or removing food',()=>{
+  const s=state(),p=patty(s);P.removePatty(s,p);
+  const [bun]=P.addItem(s,'bun'),[onion]=P.addItem(s,'onions');
+  P.removeItem(s,bun);P.removeItem(s,onion);
+  A.add(s,p,bun.id);A.add(s,p,onion.id);A.add(s,p,'patty');
+  const heights=[.022,.01,.02],single=A.stackLayout(p,P,heights);
+  assert.ok(single[1].scale<single[0].scale);assert.equal(single[2].scale,1);
+  const q=P.makePatty({id:2,massG:250,thicknessMm:25,fatFrac:.2,tempC:70,target:'medium'});P.placePatty(s,q);P.removePatty(s,q);A.add(s,p,'patty:2');
+  const double=A.stackLayout(p,P,[...heights,.025]);
+  assert.ok(double[0].scale<single[0].scale);assert.ok(double[1].scale<single[1].scale);
+  assert.ok(double[2].scale>double[1].scale);assert.ok(double.every(l=>l.scale>0&&l.scale<=1));
+  assert.ok(double.reduce((h,l)=>h+l.height*l.scale*(1-l.overlap),0)<.077);
+  const copy=S.decode(S.encode(p));assert.deepEqual(A.stackLayout(copy,P,[...heights,.025]),double);
+  A.pop(p);assert.deepEqual(A.stackLayout(p,P,heights),single);
+  assert.equal(P.pattyMass(q),P.pattyMass(copy.assembly[3].meat),'compression preserves mass');
+});
 test('water transfer carries sensible heat without creating energy or mass',()=>{
   for(const [hot,cool] of [[100,20],[20,100]]) {
     const a={m:.01,w:.04,T:hot},b={m:.005,w:.001,T:cool};const before=energy(a,1500)+energy(b,2000);
