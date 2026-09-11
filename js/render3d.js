@@ -862,6 +862,8 @@
       const f = it.cutFace;
       setLin(this.faceMat, itemFaceColour(f, ICOL.crumb, 0.5));
       this.faceMat.roughness = clamp(0.85 - 0.25 * f.crisp, 0.4, 1) - 0.2 * clamp(it.fatSoaked / 0.003, 0, 1);
+      const soaked=clamp((it.absorbedWater||0)/.008,0,1);
+      this.faceMat.color.multiplyScalar(1-.18*soaked);this.faceMat.roughness=Math.max(.25,this.faceMat.roughness-.3*soaked);
       // the crown scorches too if it is put face up on the metal, but it never browns: no sugars left
       const other = it.cutFace === it.faceDown ? it.faceUp : it.faceDown;
       setLin(this.crustMat, mix3(ICOL.crust, ICOL.char, clamp(other.char / 0.5, 0, 1)));

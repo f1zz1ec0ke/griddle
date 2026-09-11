@@ -2,6 +2,7 @@
 (function(root) {
   'use strict';
   const M=typeof module!=='undefined'&&module.exports?require('./moisture'):root.BurgerMoisture;
+  const Cheese=typeof module!=='undefined'&&module.exports?require('./cheese'):root.BurgerCheese;
   const cold = {
     lettuce: {label:'Lettuce', color:0x629546, height:.006},
     tomato: {label:'Tomato', color:0xc74732, height:.006},
@@ -68,12 +69,7 @@
       p=l.meat || p;
       const cheese=upper?p.cheeses.at(-1):p.cheeseUnder[0];
       if(cheese) {
-        if(cheese.assemblyWater==null)cheese.assemblyWater=cheese.mass*(cheese.skirt?.water??.38);
-        else if(cheese.assemblyMass>0)cheese.assemblyWater*=cheese.mass/cheese.assemblyMass;
-        cheese.assemblyWater=Math.min(cheese.mass,cheese.assemblyWater);cheese.assemblyMass=cheese.mass;
-        const n={T:cheese.T,w:cheese.assemblyWater,m:cheese.mass-cheese.assemblyWater};
-        const out=nodeSurface(n,1500,n.w,m=>{cheese.mass-=m;cheese.assemblyEvap=(cheese.assemblyEvap||0)+m;});
-        return {...out,add:q=>{const m=out.add(q);cheese.T=n.T;cheese.assemblyWater=n.w;cheese.assemblyMass=cheese.mass;return m;}};
+        return Cheese.surface(cheese);
       }
       const start=upper?(p.Nz-1)*p.Nr:0;let cap=0,energy=0;
       const capacity=k=>p.w[k]*4180+(p.fs[k]+p.fl[k]+p.fr[k])*2000+p.p[k]*1600+(p.T[k]>-1.5&&p.T[k]<=0?p.w[k]*334000/1.5:0);
@@ -113,6 +109,50 @@
     if(below) {bc.bottom.h=0;bc.bottom.rad=false;}
     if(above) {bc.top.h=0;bc.top.rad=false;bc.top.RH=1;bc.top.insulated=true;} // no air or evaporation at an internal interface
   }
+  function juice(p,l) {
+    const food=l.item||(l.patty?(l.meat||p):l);
+    return food.stackJuice||(food.stackJuice={m:0,w:0,T:l.cold?l.T:20});
+  }
+  function collectJuice(p,meat,m,T) {
+    const l=layers(p).find(l=>l.patty&&(l.meat||p)===meat);if(!l||!(m>0))return;
+    const n=juice(p,l);n.T=(n.w*n.T+m*T)/(n.w+m);n.w+=m;
+  }
+  function stepMoisture(p,dt) {
+    if(!(dt>0))return;
+    const stack=layers(p);
+    for(const l of stack){
+      const wet=juice(p,l);
+      if(l.cold){
+        coldNode(l);
+        const fraction=cold[l.cold].sauce?.6:l.cold==='tomato'?.15:l.cold==='pickles'?.08:.02+.13*(l.wilt||0);
+        const rate=cold[l.cold].sauce?.000012:.000008;
+        const out=M.transfer(l,wet,Math.min(rate*dt,Math.max(0,l.w0*fraction-(l.drainedWater||0))),1500,0);
+        l.drainedWater=(l.drainedWater||0)+out;
+      }
+      if(l.patty){
+        const meat=l.meat||p,f=-Math.expm1(-.08*dt);
+        for(const [key,row] of [['poolB',0],['poolT',(meat.Nz-1)*meat.Nr]])for(let j=0;j<meat.Nr;j++){
+          const out=meat[key][j]*f,T=meat.T[row+j];meat[key][j]-=out;
+          if(out>0){wet.T=(wet.T*wet.w+T*out)/(wet.w+out);wet.w+=out;meat.lostWaterDrip+=out;}
+        }
+        meat.poolBottom=meat.poolB.reduce((v,x)=>v+x,0);meat.poolTop=meat.poolT.reduce((v,x)=>v+x,0);
+      }
+    }
+    // A drop crosses at most one interface per step.
+    for(let i=0;i<stack.length;i++){
+      const l=stack[i],wet=juice(p,l);
+      if(l.item?.kind==='bun'){
+        const it=l.item,n=it.faceIsCut?it.face:it.up;
+        const toast=Math.min(1,it.cutFace.brown/2),capacity=Math.max(0,.012-(it.absorbedWater||0));
+        const take=M.transfer(wet,n,Math.min(capacity,wet.w*(-Math.expm1(-(.18*(1-.7*toast))*dt))),0,it.spec.cpDry);
+        it.absorbedWater=(it.absorbedWater||0)+take;
+      }
+      if(i>0){
+        const permeability=l.cold==='mayo'?.008:l.cold==='lettuce'?.018:l.cold&&cold[l.cold].sauce?.04:.22;
+        M.transfer(wet,juice(p,stack[i-1]),wet.w*(-Math.expm1(-permeability*dt)),0,0);
+      }
+    }
+  }
   function stepHeat(s,p,dt) {
     if(!(dt>0)||p.where!=='rest' || !layers(p).length)return 0;
     let steam=0;
@@ -130,6 +170,12 @@
       }
       if(i){const a=surface(p,stack[i-1],true),b=surface(p,l,false);a.onSteam=m=>{steam+=m;};exchange(a,b,area*(l.cold&&cold[l.cold].sauce?100:45),dt);}
     }
+    stepMoisture(p,dt);
+    for(const l of stack){
+      const wet=juice(p,l);if(wet.w<1e-10)continue;
+      const a=surface(p,l,true),b=nodeSurface(wet,0,wet.w,m=>{wet.lostWater=(wet.lostWater||0)+m;});
+      a.onSteam=m=>{steam+=m;};exchange(a,b,area*30,dt);
+    }
     return steam/dt;
   }
   // Visual compliance, not a change to the thermal mesh or the food's mass.
@@ -139,7 +185,7 @@
     const stack=layers(p),out=new Array(stack.length);
     for(let i=stack.length-1;i>=0;i--) {
       const l=stack[i],food=l.meat||p,kind=l.patty?'patty':l.item?.kind||l.cold;
-      const mass=l.patty?P.pattyMass(food)+[...food.cheeses,...food.cheeseUnder].reduce((v,c)=>v+c.mass,0):l.item?P.itemMass(l.item):coldNode(l).m+l.w;
+      const mass=(l.patty?P.pattyMass(food)+[...food.cheeses,...food.cheeseUnder].reduce((v,c)=>v+c.mass,0):l.item?P.itemMass(l.item):coldNode(l).m+l.w)+((l.item||(l.patty?food:l)).stackJuice?.w||0);
       const radius=(l.item?.D||food.D)/2,pressure=load*9.81/Math.max(.002,Math.PI*radius*radius);
       const [limit,stiffness]=({bun:[.28,260],patty:[.08,650],onions:[.68,85],bacon:[.65,110],egg:[.25,230],lettuce:[.72,45],tomato:[.12,350],pickles:[.10,400]})[kind]||[.60,65];
       const compression=limit*(-Math.expm1(-pressure/stiffness));
@@ -149,7 +195,7 @@
     }
     return out;
   }
-  const api = {cold,layers,closed,hasPatty,add,pop,unpack,label,coldNode,surface,exchange,cover,stepHeat,stackLayout};
+  const api = {cold,layers,closed,hasPatty,add,pop,unpack,label,coldNode,surface,exchange,cover,stepHeat,stackLayout,collectJuice,stepMoisture};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.BurgerAssembly = api;
 })(typeof window !== 'undefined' ? window : globalThis);
