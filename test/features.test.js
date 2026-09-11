@@ -193,3 +193,90 @@ test('a complete requested build has no missing ingredients after reheating and 
   assert.equal(r.build.items.filter(it => it.kind === 'bacon').length, 1);
   assert.equal(s.items.includes(burnt), false);
 });
+
+
+test('onions show sweating before browning and retain softening after cooling', () => {
+  const s = P.createState({stove: 'gas', pan: 'castiron'});
+  P.setKnob(s, 6);
+  for (let i = 0; i < 6000; i++) P.step(s, .05);
+  const it = P.addItem(s, 'onions')[0];
+  for (let i = 0; i < 2400; i++) P.step(s, .05);
+  assert.equal(P.itemState(it).state, 'sweating');
+  assert.ok(it.soft > 0.01 && it.carm < .35);
+  for (let i = 0; i < 4800; i++) P.step(s, .05);
+  assert.ok(it.carm > .35, 'the same onions should go on to brown');
+  P.removeItem(s, it); const soft = it.soft;
+  for (let i = 0; i < 200; i++) P.step(s, .05);
+  assert.ok(it.soft >= soft, 'cooling must not make onions raw again');
+});
+
+test('oven preheats independently and finishes the existing meat grid', () => {
+  const {s, p} = cook(); P.setKnob(s, 0); P.setOven(s, 180);
+  for (let i = 0; i < 6000; i++) P.step(s, .05);
+  assert.ok(s.oven.T > 160 && s.pan.T < 30);
+  p.faceDown.brown = 2; p.faceDown.brownR.fill(2); const face = p.faceDown, grid = p.T;
+  assert.equal(P.putInOven(s, p), true);
+  const start = P.centerT(p), time = p.cookTime;
+  for (let i = 0; i < 6000; i++) P.step(s, .05);
+  assert.ok(P.centerT(p) > start + 15);
+  assert.equal(p.T, grid); assert.equal(p.faceDown, face); assert.ok(face.brown >= 2);
+  assert.ok(p.cookTime > time); assert.equal(p.restT, 0);
+  assert.equal(s.guard.restores, 0); assert.ok(Array.from(p.T).every(Number.isFinite));
+  P.serve(s, p); assert.equal(p.where, 'oven', 'cannot serve a burger still in the oven');
+  P.takeFromOven(s, p); assert.equal(p.where, 'rest');
+  P.putInOven(s, p); P.placePatty(s, p); assert.equal(p.where, 'pan');
+  assert.equal(s.patties.length, 1); assert.equal(p.T, grid);
+  P.setOven(s, 0); const hot = s.oven.T; P.step(s, 1); assert.ok(s.oven.T < hot);
+});
+
+test('oven burger keeps a service cooking, survives paused save and returns to the pan', () => {
+  const {game:g, elements:e, storage} = kitchen();
+  g.startCook(); g.place(); P.setOven(g.state, 180);
+  e.get('btn-oven').click();
+  assert.equal(g.patty.where, 'oven'); assert.equal(g.phase, 'cook');
+  assert.equal(g.maybeRest(), false); assert.equal(e.get('btn-cut').disabled, true);
+  assert.equal(g.cameraPreset, 'oven');
+  g.fastForward(5); assert.equal(g.saveSession(), true);
+  const {game:r, elements:re} = kitchen(storage);
+  assert.equal(r.loadSession('service'), true); assert.equal(r.paused, true);
+  assert.equal(r.patty.where, 'oven'); assert.equal(r.state.oven.target, 180);
+  const temp = r.state.oven.T; r.fastForward(5); assert.equal(r.state.oven.T, temp);
+  r.setPaused(false); g.fastForward(.5); r.fastForward(.5);
+  assert.deepEqual(Array.from(r.patty.T), Array.from(g.patty.T), 'oven simulation resumes identically');
+  assert.equal(r.state.oven.T, g.state.oven.T);
+  re.get('btn-remove').click();
+  assert.equal(r.patty.where, 'rest'); assert.equal(r.phase, 'rest');
+  re.get('btn-oven').click(); assert.equal(r.patty.where, 'oven');
+  re.get('btn-reheat').click(); assert.equal(r.patty.where, 'pan');
+  assert.equal(r.phase, 'cook');
+});
+
+test('two burgers can finish in the oven while toppings cook on the pan', () => {
+  const {s,p} = cook();
+  const q = P.makePatty({id:2, target:'medium', massG:150, thicknessMm:20, fatFrac:.2, tempC:4});
+  P.placePatty(s,q); P.putInOven(s,p); P.putInOven(s,q);
+  P.setOven(s,180); const it = P.addItem(s,'onions')[0];
+  P.step(s,.05);
+  assert.equal(it.where,'pan'); assert.equal(p.where,'oven'); assert.equal(q.where,'oven');
+  P.takeFromOven(s,p); assert.equal(q.where,'oven');
+});
+
+
+test('flip animation arcs around the centre, freezes on pause and lands without drift', () => {
+  const fs = require('node:fs'), vm = require('node:vm'), THREE = require('../js/vendor/three.min.js');
+  const root = {THREE, BurgerPhysics:P};
+  vm.runInNewContext(fs.readFileSync(require.resolve('../js/render3d.js'),'utf8'), {window:root});
+  const {p} = cook();
+  const view = {p, group:new THREE.Group(), vp:{panFloorY:.01}, lastFlips:0, flipElapsed:null, texClock:0,
+    rebuildGeometry(){}, texDirty(){return false;}, texCommit(){}, paintTextures(){}, updateCheese(){}};
+  const update = dt => root.BurgerRender.PattyView.prototype.update.call(view, {}, dt, 'pan', {x:.03,z:.04}, 'stove');
+  p.flips=1; update(0);
+  assert.equal(view.group.rotation.z,-Math.PI);
+  update(.325); assert.ok(view.group.position.y > .09);
+  const pos=view.group.position.clone(), angle=view.group.rotation.z;
+  update(0); assert.deepEqual(view.group.position,pos); assert.equal(view.group.rotation.z,angle);
+  update(.325); update(0);
+  assert.equal(view.group.rotation.z,0); assert.equal(view.flipElapsed,null);
+  assert.deepEqual(view.group.position.toArray(),[.03,.01,.04]);
+  assert.equal(p.flips,1,'rendering must not change the simulated flip count');
+});

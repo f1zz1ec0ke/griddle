@@ -262,7 +262,7 @@
    */
   class PattyView {
     constructor(vp, p) {
-      this.vp = vp; this.p = p;
+      this.vp = vp; this.p = p; this.lastFlips = p.flips; this.flipElapsed = null;
       this.group = new T.Group(); vp.scene.add(this.group);
       this.atlas = document.createElement('canvas'); this.atlas.width = 1024; this.atlas.height = 1024;
       this.atlasTex = new T.CanvasTexture(this.atlas); this.atlasTex.anisotropy = 8;
@@ -528,6 +528,11 @@
     /** Per-frame: position, geometry, textures, cheese, buns. */
     update(state, dt, where, position, mode) {
       const p = this.p, g = this.group;
+      if (p.flips !== this.lastFlips) {
+        this.lastFlips = p.flips;
+        if (where === 'pan') { this.flipElapsed = 0; this.forceTex = true; }
+      }
+      if (where !== 'pan') this.flipElapsed = null;
       this.texClock += dt;
       if (where === 'pan') g.position.set(position.x, this.vp.panFloorY + 0.0012 * p.cheeseUnder.length + (position.lift || 0), position.z);
       else if (where === 'board') g.position.set(position.x, 0, position.z);
@@ -543,6 +548,18 @@
       if (this.forceTex) { this.texClock = 0; this.forceTex = false; this.texDirty(); this.texCommit(); this.paintTextures(); }
       else if (this.texClock > 0.1 && this.texDirty() && this.vp.claimTexBudget()) { this.texClock = 0; this.texCommit(); this.paintTextures(); }
       this.updateCheese();
+      // Physics swaps the faces immediately. Rotate the new pose back to the old face,
+      // then arc it into its final pose around the patty's centre, not its bottom edge.
+      g.rotation.z = 0;
+      if (this.flipElapsed != null) {
+        this.flipElapsed += dt;
+        const u = clamp(this.flipElapsed / .65, 0, 1), ease = u*u*(3-2*u);
+        const angle = -Math.PI * (1-ease), mid = p.h / 2;
+        g.rotation.z = angle;
+        g.position.x += Math.sin(angle) * mid;
+        g.position.y += mid * (1-Math.cos(angle)) + .09 * Math.sin(Math.PI*u);
+        if (u === 1) this.flipElapsed = null;
+      }
     }
     updateCheese() {
       const p = this.p, g = this.group;
@@ -869,8 +886,9 @@
     paintOnions(where) {
       const it = this.it, inst = this.onionInst, dm = this.onionDummy;
       const wet = clamp((it.bot.w + it.top.w) / it.w0, 0, 1);
-      const shrink = 0.55 + 0.45 * wet;           // they cook down to about half
-      const colTop = mix3(mix3(ICOL.onionRaw, ICOL.onionGold, clamp(it.carm / 0.9, 0, 1)), ICOL.onionBrown, clamp((it.carm - 0.9) / 1.3, 0, 1));
+      const soft = it.soft || 0;
+      const shrink = (0.55 + 0.45 * wet) * (1 - 0.18 * soft);           // they cook down to about half
+      const colTop = mix3(mix3(mix3(ICOL.onionRaw, [216, 203, 166], soft * .65), ICOL.onionGold, clamp(it.carm / 0.9, 0, 1)), ICOL.onionBrown, clamp((it.carm - 0.9) / 1.3, 0, 1));
       const topC = mix3(colTop, ICOL.char, clamp(it.char / 0.35, 0, 1));
       const colBot = mix3(mix3(ICOL.onionRaw, ICOL.onionGold, clamp(it.carmBot / 0.9, 0, 1)), ICOL.onionDark, clamp((it.carmBot - 0.9) / 2, 0, 1));
       const botC = mix3(colBot, ICOL.char, clamp(it.charBot / 0.6, 0, 1));
@@ -880,7 +898,7 @@
         const rr = o.rr * (0.72 + 0.28 * wet);
         // as they cook down the heap slumps: the slivers flatten out and lie closer together
         dm.position.set(Math.cos(o.a) * rr, 0.0006 + o.lvl * 0.009 * shrink, Math.sin(o.a) * rr);
-        dm.rotation.set(o.tilt * (0.3 + 0.7 * wet), o.rot, o.tilt * 0.4 * wet);
+        dm.rotation.set(o.tilt * (0.3 + 0.7 * wet) * (1 - .65 * soft), o.rot, o.tilt * 0.4 * wet);
         const len = o.len * shrink;
         dm.scale.set(len, len * (0.35 + 0.35 * wet), len);
         dm.updateMatrix(); inst.setMatrixAt(i, dm.matrix);
@@ -1369,6 +1387,7 @@
       for (const it of list) if (!this.itemViews.has(it)) this.itemViews.set(it, new ItemView(this, it));
     }
     viewOf(p) { return p ? this.views.get(p) : null; }
+    isFlipping(p) { const v = this.viewOf(p); return !!v && (v.flipElapsed != null || p.flips !== v.lastFlips); }
     get pattyGroup() { const v = this.viewOf(this.selected); return v ? v.group : null; }
     get patty() { return this.selected; }
     /** Slice the selected patty along the plane facing the camera; nothing moves, only the cut. */
@@ -1569,7 +1588,7 @@
       if (sel !== this.selected) { this.selected = sel; if (this.cutaway) this.setCutaway(true); }
       const stoveOn = this.mode === 'stove';
       const plateBase = stoveOn ? { x: 0.42, y: 0.009, z: 0.12 } : { x: 0, y: 0, z: 0 };
-      const offPan = list.filter((q) => q.where !== 'pan' && q.where !== 'board');
+      const offPan = list.filter((q) => q.where === 'rest' || q.where === 'cut');
       if (this.plate) { this.plate.scale.set(1 + 0.55 * Math.max(0, offPan.length - 1), 1, 1); }
       // ---- the toppings: on the pan where they were put down, waiting on the pass once they are
       // off the heat, and stacked on the burger they were built onto once it is served
@@ -1604,6 +1623,7 @@
           if (q.scrapeT > 0) scraping = { p: q, at, u };
           pos = { x: at.x, y: 0, z: at.y, lift };
         }
+        else if (where === 'oven') { const i = list.filter(q => q.where === 'oven').indexOf(q); pos = { x: .10 + (i % 2 ? .10 : -.10), y: -.48, z: -.34 + Math.floor(i / 2) * .20 }; }
         else if (where === 'board') pos = { x: 0, y: 0, z: 0 };
         else { const i = offPan.indexOf(q); pos = { x: plateBase.x + (i - (offPan.length - 1) / 2) * 0.115, y: plateBase.y, z: plateBase.z }; }
         if (this.forceTex) v.forceTex = true;
@@ -1821,6 +1841,7 @@
       this.zoomStack = null;
       const pg = this.vp.pattyGroup && this.vp.patty ? this.vp.pattyGroup.position.clone().setY(this.vp.pattyGroup.position.y + (this.vp.patty.h || 0.02) / 2) : null;
       const t = pg || (this.vp.mode === 'stove' ? new T.Vector3(0, this.vp.PAN_Y + 0.01, 0) : new T.Vector3(0, 0.01, 0));
+      if (name === 'oven') this.goal = { target: new T.Vector3(.10, -.43, -.29), azimuth: -Math.PI/2, polar: 1.38, dist: .95 };
       if (name === 'room') this.goal = { target: new T.Vector3(0, -.13, .12), azimuth: -1.05, polar: 1.07, dist: 2.5 };
       if (name === 'top') this.goal = { target: t, azimuth: this.goal.azimuth, polar: 0.12, dist: 0.5 };
       if (name === 'side') this.goal = { target: t.clone().setY(t.y + 0.01), azimuth: -Math.PI / 2, polar: 1.45, dist: 0.32 };
@@ -1879,7 +1900,13 @@
       this.azimuth = lerp(this.azimuth, this.goal.azimuth, k); this.polar = lerp(this.polar, this.goal.polar, k); this.dist = lerp(this.dist, this.goal.dist, k);
       this.target.lerp(this.goal.target, k);
       const sp = Math.sin(this.polar);
-      this.cam.position.set(this.target.x + this.dist * sp * Math.cos(this.azimuth), this.target.y + this.dist * Math.cos(this.polar), this.target.z + this.dist * sp * Math.sin(this.azimuth));
+      const dx = sp * Math.cos(this.azimuth), dy = Math.cos(this.polar), dz = sp * Math.sin(this.azimuth);
+      // The room is enclosed: keep wide orbits inside its walls and window glass.
+      let distance = this.dist;
+      for (const [origin, direction, lo, hi] of [[this.target.x, dx, -2.60, 2.60], [this.target.z, dz, -2.60, 1.76]]) {
+        if (Math.abs(direction) > 1e-6) distance = Math.min(distance, Math.max(.06, ((direction > 0 ? hi : lo) - origin) / direction));
+      }
+      this.cam.position.set(this.target.x + distance * dx, this.target.y + distance * dy, this.target.z + distance * dz);
       this.cam.lookAt(this.target);
     }
   }

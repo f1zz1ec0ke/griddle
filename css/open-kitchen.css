@@ -202,3 +202,9 @@ body:has(.prep-tray:not([hidden])) .world-hint { display: none; }
 .ro { text-shadow: none; }.ro label { color: #666451; }.ro span { color: #364b3a; }
 .world-hint { color: #525747; background: #fff8dfb8; border-radius: 12px; padding: 5px 9px; }
 @media (max-width: 1150px) { .readouts { top: 89px; } }
+
+#btn-oven { --icon: url('../assets/icons/oven.svg'); }
+.oven-status { position: absolute; bottom: 175px; left: 50%; transform: translateX(-50%); background: #fff6e7ed; border: 1px solid #d8cbb6; border-radius: 16px; padding: 10px 16px; font-size: 12px; }
+.oven-status:hover:not(:disabled) { transform: translateX(-50%); }
+#oven-status::before { display: none; }
+body:has(.drawer:not([hidden])) .oven-status { display: none; }

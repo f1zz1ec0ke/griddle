@@ -37,7 +37,16 @@
     }
     tiles.receiveShadow=true;room.add(tiles);
     box(.09,2.65,5.6,-2.8,.425,0,cream);box(.09,2.65,5.6,2.8,.425,0,cream);
-    box(5.6,2.65,.09,0,.425,-2.8,0xe5d9c3);
+    box(1.15,2.65,.09,-2.225,.425,-2.8,0xe5d9c3);
+    box(3.6,2.65,.09,1.0,.425,-2.8,0xe5d9c3);
+    box(.85,.53,.09,-1.225,1.485,-2.8,0xe5d9c3);
+    // A full-height oak door, inset panels and a brass lever.
+    box(.83,2.08,.045,-1.225,.17,-2.8,oak);
+    for(const x of [-1.675,-.775])box(.065,2.17,.09,x,.205,-2.74,0xf9f0dc);
+    box(.97,.065,.09,-1.225,1.30,-2.74,0xf9f0dc);
+    for(const y of [-.36,.59])box(.62,.75,.018,-1.225,y,-2.765,0xc79b66);
+    box(.04,.12,.025,-.94,.13,-2.745,brass,.65);
+    box(.13,.022,.04,-.98,.15,-2.72,brass,.65);
     box(1.95,2.65,.09,-1.825,.425,1.95,cream);box(1.95,2.65,.09,1.825,.425,1.95,cream);
     box(1.7,1,.09,0,-.4,1.95,cream);box(1.7,.48,.09,0,1.51,1.95,cream);
     for(const x of [-2.75,2.75])box(.018,.10,5.5,x,-.81,0,0xf8efd9);
@@ -98,14 +107,31 @@
     plant(1.07,.57,-2.62,1.05);
     // Island: pale stone, sage joinery, warm timber end panels, proper toe kick.
     box(1.55,.052,1.08,.10,-.027,0,0xd5c4a5);
-    box(1.41,.73,.94,.10,-.447,0,sage);
+    box(.46,.73,.94,-.375,-.447,0,sage);
+    box(.46,.73,.94,.575,-.447,0,sage);
+    box(.49,.73,.04,.10,-.447,.45,darkSage);
+    box(.49,.06,.94,.10,-.78,0,darkSage);
     box(1.41,.04,.94,.10,-.072,0,sage);
     box(1.29,.10,.83,.10,-.84,0,0x56645a);
-    for(const x of [-.375,.10,.575]) {
+    for(const x of [-.375,.575]) {
       box(.443,.64,.025,x,-.42,-.485,darkSage);box(.397,.588,.028,x,-.42,-.502,sage);
       box(.13,.012,.025,x,-.18,-.524,brass,.65);
     }
     for(const x of [-.614,.814])box(.018,.72,.95,x,-.443,0,oak);
+    // Built-in oven: open cavity, glazed front and a rack holding up to four patties.
+    box(.45,.085,.04,.10,-.125,-.497,0x484d47);
+    for(const x of [-.035,.235])cylinder(.023,.023,.018,x,-.074,-.48,brass);
+    box(.026,.52,.035,-.132,-.435,-.50,0x484d47);box(.026,.52,.035,.332,-.435,-.50,0x484d47);
+    box(.48,.055,.035,.10,-.71,-.50,0x484d47);
+    // Dark enamel liner separates the appliance from the surrounding cabinetry.
+    box(.44,.52,.012,.10,-.435,.422,0x333c3b);
+    box(.012,.52,.88,-.122,-.435,-.02,0x414b49);box(.012,.52,.88,.322,-.435,-.02,0x414b49);
+    box(.44,.012,.88,.10,-.698,-.02,0x333c3b);box(.44,.012,.88,.10,-.175,-.02,0x333c3b);
+    const glass=new T.Mesh(cube,new T.MeshPhysicalMaterial({color:0xaaa899,transparent:true,opacity:.20,roughness:.1,depthWrite:false}));
+    glass.scale.set(.435,.50,.009);glass.position.set(.10,-.435,-.51);room.add(glass);
+    box(.34,.022,.035,.10,-.225,-.535,brass,.65);
+    for(let i=0;i<10;i++)box(.012,.008,.80,-.10+i*.044,-.488,-.015,0x777b76,.7);
+    box(.44,.012,.014,.10,-.492,-.43,0x777b76,.7);
     // Small props stay outside the pan, food-drag and plating areas.
     plant(-.55,0,.39,.6);
     for(let i=0;i<2;i++) {

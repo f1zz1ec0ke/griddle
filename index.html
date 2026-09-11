@@ -6,7 +6,7 @@
 <meta content="width=device-width, initial-scale=1" name="viewport"/>
 <title>Griddle — a physically honest burger simulator</title>
 <link href="assets/icons/burger.svg" rel="icon" type="image/svg+xml"/>
-<link href="css/style.css?v=open-4" rel="stylesheet"/><link href="css/open-kitchen.css?v=daylight-1" rel="stylesheet"/></head>
+<link href="css/style.css?v=open-4" rel="stylesheet"/><link href="css/open-kitchen.css?v=finish-3" rel="stylesheet"/></head>
 <body data-phase="order">
 <canvas id="view"></canvas>
 <!-- top HUD -->
@@ -29,7 +29,7 @@
 <button hidden="" id="btn-end-practice">Leave practice</button>
 <div class="menu-divider"></div><div class="eyebrow">View &amp; sound</div>
 <button id="btn-cutaway" title="Cut the patty in half to watch the inside (C)">Cutaway</button>
-<span class="views"><button data-view="room">Room</button><button data-view="default" title="key 1">Cook</button><button data-view="top" title="key 2">Overhead</button><button data-view="side" title="key 3">Side</button><button data-view="close" title="key 4">Close</button></span>
+<span class="views"><button data-view="room">Room</button><button data-view="oven">Oven</button><button data-view="default" title="key 1">Cook</button><button data-view="top" title="key 2">Overhead</button><button data-view="side" title="key 3">Side</button><button data-view="close" title="key 4">Close</button></span>
 <button id="btn-inspector">Inspector</button>
 <button id="btn-audio">Sound off</button>
 </div></details>
@@ -90,7 +90,7 @@
 <button id="btn-stir" title="Rake the bed through with the tongs: ash off the lumps and into the bowl, and the fire draws harder for a minute.">Stir</button>
 <button id="btn-emptyash" title="Tip the ash out of the bowl. Only when the kettle is cold.">Empty ash</button>
 </div>
-</div><details class="tray-group" open=""><summary>Stove &amp; cooking fat</summary>
+</div><details class="tray-group" open=""><summary>Oven</summary><label for="oven-temp">Temperature</label><select id="oven-temp"><option value="0">Off</option><option value="120">120 °C</option><option value="150">150 °C</option><option value="180">180 °C</option><option value="200">200 °C</option><option value="220">220 °C</option><option value="250">250 °C</option></select><p class="muted">Preheat, sear, then finish on the rack. Probe the centre; take it out to rest.</p></details><details class="tray-group" open=""><summary>Stove &amp; cooking fat</summary>
 <div class="row two">
 <div><label for="e-stove">Stove</label><select id="e-stove"><option selected="" value="gas">Gas 3.5 kW</option><option value="electric">Electric coil</option><option value="induction">Induction</option><option value="charcoal">Charcoal kettle</option></select></div>
 <div id="e-pan-wrap"><label for="e-pan">Pan</label><select id="e-pan"><option selected="" value="castiron">Cast iron 12"</option><option value="carbonsteel">Carbon steel 12"</option><option value="stainless">Stainless 12"</option><option value="nonstick">Nonstick 10"</option></select></div>
@@ -141,7 +141,7 @@
 </div><div class="recovery-actions" data-phase="cook rest">
 <button id="btn-reheat">Back on the heat</button>
 <button class="danger" id="btn-discard">Discard topping</button>
-</div><details class="tray-group" data-phase="cook rest"><summary>Cook’s notebook</summary><div id="log"></div></details><div class="ro note" hidden="" id="h-sense"><label>cook's notes</label><span id="h-sense-v">—</span></div></section><div class="heat-dial" data-phase="cook"><label for="knob"><span id="knob-label">Burner</span> <b id="knob-v">0</b>/10</label><input id="knob" max="10" min="0" step="0.5" type="range" value="0"/></div><nav aria-label="Cooking actions" data-phase="cook rest" id="action-dock"><button class="primary" data-phase="cook" id="btn-place">Lay the patty in (space)</button><button data-phase="cook" id="btn-flip">Flip (F)</button><button data-phase="cook" id="btn-press">Press</button><button data-phase="cook" id="btn-smash">Smash</button><button data-phase="cook" id="btn-lid">Lid on</button><button data-phase="cook" id="btn-cheese">Cheese</button><button data-phase="cook" id="btn-baste">Baste</button><button class="danger" data-phase="cook" id="btn-remove">Off the heat → rest</button><button aria-controls="drawer-heat" aria-expanded="false" class="dock-launch" id="open-heat">Heat</button><button aria-controls="drawer-toppings" aria-expanded="false" class="dock-launch" id="open-toppings">Ingredients</button><button aria-controls="drawer-tools" aria-expanded="false" class="dock-launch" id="open-tools">Utensils</button><button class="primary" data-phase="rest" id="btn-cut">Cut &amp; serve</button></nav><div class="ro small" data-phase="cook rest" id="ro-side"><span id="h-side"></span></div></main>
+</div><details class="tray-group" data-phase="cook rest"><summary>Cook’s notebook</summary><div id="log"></div></details><div class="ro note" hidden="" id="h-sense"><label>cook's notes</label><span id="h-sense-v">—</span></div></section><div class="heat-dial" data-phase="cook"><label for="knob"><span id="knob-label">Burner</span> <b id="knob-v">0</b>/10</label><input id="knob" max="10" min="0" step="0.5" type="range" value="0"/></div><button id="oven-status" class="oven-status" data-phase="cook rest" hidden="">Oven off</button><nav aria-label="Cooking actions" data-phase="cook rest" id="action-dock"><button class="primary" data-phase="cook" id="btn-place">Lay the patty in (space)</button><button data-phase="cook" id="btn-flip">Flip (F)</button><button data-phase="cook" id="btn-press">Press</button><button data-phase="cook" id="btn-smash">Smash</button><button data-phase="cook" id="btn-lid">Lid on</button><button data-phase="cook" id="btn-cheese">Cheese</button><button data-phase="cook" id="btn-baste">Baste</button><button class="danger" data-phase="cook" id="btn-remove">Off the heat → rest</button><button id="btn-oven" title="Move the selected burger to the oven rack">Oven</button><button aria-controls="drawer-heat" aria-expanded="false" class="dock-launch" id="open-heat">Heat</button><button aria-controls="drawer-toppings" aria-expanded="false" class="dock-launch" id="open-toppings">Ingredients</button><button aria-controls="drawer-tools" aria-expanded="false" class="dock-launch" id="open-tools">Utensils</button><button class="primary" data-phase="rest" id="btn-cut">Cut &amp; serve</button></nav><div class="ro small" data-phase="cook rest" id="ro-side"><span id="h-side"></span></div></main>
 <!-- inspector -->
 <section hidden="" id="inspector">
 <h3>Inspector <small>live model state</small></h3>
@@ -197,12 +197,12 @@
 </div>
 </section>
 <script src="js/vendor/three.min.js"></script>
-<script src="js/physics.js"></script>
-<script src="js/kitchen-room.js?v=3"></script>
-<script src="js/render3d.js?v=room-3"></script>
+<script src="js/physics.js?v=finish-3"></script>
+<script src="js/kitchen-room.js?v=finish-3"></script>
+<script src="js/render3d.js?v=finish-3"></script>
 <script src="js/audio.js"></script>
-<script src="js/session.js"></script>
+<script src="js/session.js?v=finish-3"></script>
 <script src="js/cues.js?v=diner-2"></script>
-<script src="js/game.js?v=open-4"></script>
+<script src="js/game.js?v=finish-3"></script>
 </body>
 </html>

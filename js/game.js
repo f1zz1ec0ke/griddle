@@ -164,7 +164,7 @@
     reheat() {
       const it = this.selItem, p = this.patty;
       if (it) { if (!P.reheatItem(this.state, it)) return; }
-      else { if (!p || p.where !== 'rest') return; P.placePatty(this.state, p, P.freeSpot(this.state, p.D / 2).pos); }
+      else { if (!p || !['rest', 'oven'].includes(p.where)) return; P.placePatty(this.state, p, P.freeSpot(this.state, p.D / 2).pos); }
       this.setPhase('cook'); this.vp.forceTex = true;
       P.logEvent(this.state, 'Back at the stove — check the burner or vents before continuing.', 'info');
     }
@@ -344,6 +344,8 @@
       this.sel = i;
       if (this.phase === 'form') { this.loadForm(); this.rebuildPreview(); }
       else if (this.patty) {
+        if (this.patty.where === 'oven') this.cameraPreset = 'oven';
+        else if (this.state.patty && this.state.patty.where === 'oven') this.cameraPreset = this.patty.where === 'pan' ? 'default' : 'serve';
         P.selectPatty(this.state, this.patty);
         this.probe.reading = null;
         if (this.phase === 'result') { this.showPattyResult(); this.vp.controls.preset('serve'); }
@@ -353,6 +355,7 @@
     /** Select a topping instead of a patty: the flip and remove buttons point at it. */
     selectItem(it) {
       if (!it) return;
+      if (this.patty && this.patty.where === 'oven') this.cameraPreset = 'default';
       this.selItem = it; P.selectItem(this.state, it);
       this.refreshButtons(); this.updateChips();
     }
@@ -367,6 +370,7 @@
         if (this.phase === 'form') status = `${f.thicknessMm} mm · ${f.massG} g`;
         else if (this.phase === 'result') { const r = this.ticketResult && this.ticketResult.results.find((x) => x.patty === p); status = r ? `${r.total}/100` : '—'; }
         else if (!p || p.where === 'board') status = 'on the board';
+        else if (p.where === 'oven') status = `in the oven ${P.fmtTime(p.ovenTime || 0)}`;
         else if (p.where === 'pan') status = `in the pan ${P.fmtTime(p.cookTime)}`;
         else status = `resting ${P.fmtTime(p.restT || 0)}`;
         // each patty's chip carries the toppings that have been built onto it
@@ -517,6 +521,15 @@
       $('btn-add-patty').onclick = () => s.addPracticePatty();
       $('btn-clear-practice').onclick = () => s.clearPractice();
       $('btn-reheat').onclick = () => s.reheat();
+      $('oven-temp').addEventListener('change', () => {
+        if (s.stopped) return;
+        P.setOven(s.state, Number($('oven-temp').value)); s.stoveUsed = true; s.updateHUD();
+      });
+      $('btn-oven').onclick = () => {
+        if (s.stopped || s.selItem || !P.putInOven(s.state, s.patty)) return;
+        s.setPhase('cook'); s.cameraPreset = 'oven'; s.refreshButtons(); s.updateChips(); s.updateHUD();
+      };
+      $('oven-status').onclick = () => s.setDrawer('heat');
       $('btn-discard').onclick = () => s.discard();
       $('btn-accept').onclick = () => { s.ticketTiming = true; s.setSpeed(1); s.setPhase('form'); };  // the ticket clock starts at “yes chef”, at 1× — the speed buttons are hidden while forming, so the last ticket's 8× must not carry over
       const link = (id, key, fnv, fnd) => { const el = $(id); el.addEventListener('input', () => { s.form[key] = fnv(el.value); fnd && (fnd.textContent = fnd.dataset.fmt.replace('%', s.form[key])); s.rebuildPreview(); }); };
@@ -554,7 +567,7 @@
       $('btn-move-out').onclick = () => s.slide(true);
       // dragging in the viewport: the renderer asks what may be dragged and where a drop would land,
       // and hands the drop back here so the physics decides what the move costs
-      s.vp.canDrag = (o) => !s.stopped && s.phase === 'cook' && o && o.where === 'pan';
+      s.vp.canDrag = (o) => !(s.vp.isFlipping && s.vp.isFlipping(o)) && !s.stopped && s.phase === 'cook' && o && o.where === 'pan';
       s.vp.dropSpot = (o, want) => P.slideTo(s.state, o, (o.D != null ? o.D : o.Dcov) / 2, want);
       s.vp.onDrop = (o, land, moved) => {
         if (moved < 0.004) return; // a nudge of a few millimetres on screen is a click, not a move
@@ -563,6 +576,7 @@
         s.refreshButtons(); s.updateChips();
       };
       $('btn-flip').onclick = () => {
+        if (s.stopped || (!s.selItem && s.vp.isFlipping && s.vp.isFlipping(s.patty))) return;
         // one button, whatever is selected: turn the patty, turn the bun or the rasher or the egg,
         // or stir the onions
         const r = s.selItem ? P.flipItem(s.state, s.selItem) : P.flipPatty(s.state, s.patty);
@@ -743,8 +757,9 @@
       this.refreshButtons(); this.updateChips();
     }
     remove() {
-      const p = this.patty; if (!p || p.where !== 'pan') return;
-      P.removePatty(this.state, p);
+      const p = this.patty; if (!p || !['pan', 'oven'].includes(p.where)) return;
+      if (p.where === 'oven') this.cameraPreset = 'serve';
+      if (p.where === 'oven') P.takeFromOven(this.state, p); else P.removePatty(this.state, p);
       const board = this.patties.filter((q) => q.where === 'board').length;
       if (!this.maybeRest() && this.inPan().length === 0 && board > 0) {
         P.logEvent(this.state, `Nothing in the pan. ${board} patt${board > 1 ? 'ies' : 'y'} still on the board while patty ${p.id} rests and cools.`, 'info');
@@ -757,7 +772,7 @@
      */
     maybeRest() {
       if (this.phase !== 'cook' || this.mode === 'practice') return false;
-      const left = this.inPan().length + this.items.filter((q) => q.where === 'pan').length;
+      const left = this.patties.filter(q => q.where === 'oven').length + this.inPan().length + this.items.filter((q) => q.where === 'pan').length;
       const board = this.patties.filter((q) => q.where === 'board').length;
       if (left > 0 || board > 0 || !this.patties.some((q) => q.where !== 'board')) return false;
       // Burner off with the last thing off the pan: the pan (and its fat) cools in real time while the meat rests.
@@ -774,7 +789,7 @@
       $('practice-tools').hidden = this.mode !== 'practice' || !['cook', 'rest'].includes(this.phase);
       $('btn-add-patty').disabled = this.patties.length >= 4;
       $('btn-add-patty').textContent = this.patties.length >= 4 ? 'Four patties on the bench' : 'Form another patty';
-      $('btn-reheat').disabled = !(it ? it.where === 'rest' : p && p.where === 'rest');
+      $('btn-reheat').disabled = !(it ? it.where === 'rest' : p && ['rest', 'oven'].includes(p.where));
       $('btn-discard').disabled = !(it && it.where !== 'cut') && !(this.mode === 'practice' && p);
       $('btn-discard').textContent = it && it.pair != null ? 'Discard both bun halves' : it ? 'Discard ' + it.spec.short : this.mode === 'practice' ? 'Discard patty' : 'Discard topping';
       $('btn-cut').hidden = this.mode === 'practice';
@@ -788,8 +803,9 @@
       // the flip and remove buttons act on whichever chip is selected — a patty or a topping
       $('btn-flip').disabled = it ? !itemOn : !inPan;
       $('btn-flip').textContent = it ? (it.kind === 'onions' ? 'Stir' : 'Turn') : 'Flip';
-      $('btn-remove').disabled = it ? !itemOn : !inPan;
-      $('btn-remove').textContent = it ? 'Lift off' : 'Rest';
+      $('btn-oven').disabled = !!it || !p || !['cook', 'rest'].includes(this.phase) || !['pan', 'rest'].includes(where);
+      $('btn-remove').disabled = it ? !itemOn : !(inPan || where === 'oven');
+      $('btn-remove').textContent = it ? 'Lift off' : where === 'oven' ? 'Out & rest' : 'Rest';
       // a pan lid is for what is in the pan; a kettle lid is part of the fire (it is half the
       // airflow and it is what holds the smoke in), so it is always available on the kettle
       $('btn-lid').disabled = !on || (!this.state.grill && this.inPan().length === 0 && !this.items.some((q) => q.where === 'pan'));
@@ -815,7 +831,7 @@
       const canSense = (on || this.phase === 'rest') && !!p && (where === 'pan' || where === 'rest') && !it;
       $('btn-presstest').disabled = !canSense; $('btn-peek').disabled = !canSense;
       $('btn-hand').disabled = !(on || this.phase === 'rest');
-      $('btn-probe').disabled = !(inPan || (p && where === 'rest')) || this.hard; // hard mode: no thermometers at all
+      $('btn-probe').disabled = !(inPan || (p && ['rest', 'oven'].includes(where))) || this.hard; // hard mode: no thermometers at all
       $('btn-wash').disabled = !on || this.inPan().length > 0 || this.items.some((q) => q.where === 'pan'); $('btn-wipe').disabled = !on;
       // the fire: wood and coals go on any time there is a kettle, ash only comes out of a cold one
       if (this.state.grill) {
@@ -825,7 +841,7 @@
       }
       $('e-stove').disabled = $('e-pan').disabled = this.anyPlaced() || this.items.length > 0;
       if (this.state.grill) { $('btn-fat').disabled = true; }
-      $('btn-cut').disabled = this.inPan().length > 0 || this.items.some((q) => q.where === 'pan');
+      $('btn-cut').disabled = this.patties.some(q => q.where === 'oven') || this.inPan().length > 0 || this.items.some((q) => q.where === 'pan');
     }
     // ------------------------------------------------------------ loop
     frame(now) {
@@ -881,7 +897,11 @@
       const where = p ? p.where : 'board';
       const irTemperature = st.grill ? st.pan.T : st.pan.Tcenter;
       $('h-pan').textContent = this.hard ? '—' : fmt(irTemperature + (Math.random() - 0.5) * 1.5, 0) + ' °C';
-      $('h-time').textContent = p && where === 'pan' ? P.fmtTime(p.cookTime) : p && (where === 'rest' || where === 'cut') ? 'rest ' + P.fmtTime(p.restT || 0) : P.fmtTime(st.t);
+      const oven = st.oven;
+      $('oven-temp').value = String(oven ? oven.target : 0);
+      $('oven-status').hidden = !oven || (!oven.target && !this.patties.some(q => q.where === 'oven') && oven.T < 40);
+      $('oven-status').textContent = oven ? `Oven · ${oven.T.toFixed(0)} °C · ${oven.target ? 'set ' + oven.target + ' °C' : 'off'}${this.patties.some(q => q.where === 'oven') ? ' · cooking' : ''}` : 'Oven off';
+      $('h-time').textContent = p && where === 'oven' ? 'oven ' + P.fmtTime(p.ovenTime || 0) : p && where === 'pan' ? P.fmtTime(p.cookTime) : p && (where === 'rest' || where === 'cut') ? 'rest ' + P.fmtTime(p.restT || 0) : P.fmtTime(st.t);
       $('h-probe').textContent = this.probe.reading == null ? '—' : fmt(this.probe.reading, 1) + ' °C';
       const it = this.selItem;
       $('h-side').textContent = it
@@ -1117,7 +1137,7 @@
       $('r-stats').innerHTML = [
         ['Peak centre temperature', this.hard ? `— · it came out ${r.got.label.toLowerCase()}` : `${r.peak.toFixed(1)} °C (${r.got.label})`],
         ['Ordered', this.hard ? target.label : `${target.label} (${target.lo}–${target.hi} °C)`],
-        ['Time on the pan / resting', `${P.fmtTime(r.cookTime)} / ${P.fmtTime(r.restTime)}, ${r.flips} flip${r.flips === 1 ? '' : 's'}`],
+        ['Cooking / resting', `${P.fmtTime(r.cookTime)} / ${P.fmtTime(r.restTime)}, ${r.flips} flip${r.flips === 1 ? '' : 's'}`],
         ['Mass', `${(r.massStart * 1000).toFixed(0)} g → ${(r.massEnd * 1000).toFixed(0)} g (−${((1 - r.massEnd / r.massStart) * 100).toFixed(0)} %)`],
         ['Water', `${(r.waterRetained * 100).toFixed(0)} % retained · ${(r.waterEvap * 1000).toFixed(1)} g steamed off · ${(r.waterDrip * 1000).toFixed(1)} g ran out`],
         ['Fat rendered into the pan', `${(r.fatLost * 1000).toFixed(1)} g`],
