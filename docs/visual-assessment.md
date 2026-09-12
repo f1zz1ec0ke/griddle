@@ -21,3 +21,7 @@ September 2026. Aim: a warm, tactile kitchen with readable cooking states.
 | HUD and effects | Kept the SVG controls, cooking cues, steam, smoke, and spatter. Their current shapes serve the game; the material and lighting changes carry the visual upgrade. |
 
 Validation covers geometry bounds and mesh seams, cheese cutaway, browser rendering, assembled burgers, and repeated equipment swaps. Browser checks use desktop Chrome with software WebGL; they do not establish performance on every GPU. No simulation coefficients were changed.
+
+Second pass: continuous, closed cheese sheets with curved drape and mass-dependent thickness; fried cheese spreads and thins. Rebuilt the sink and tap, fridge doors and handles, oven handle and rack, pendant shades, mills, stools, books, botanical prints, garden foliage, and press-test finger. Existing cooking, interaction, and window behaviour are retained.
+
+Added cheese topology, volume, and spreading regressions. Checked room and food states in desktop Chrome with software WebGL.

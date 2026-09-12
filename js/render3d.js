@@ -634,69 +634,30 @@
       }
     }
     updateCheese() {
-      const p = this.p, g = this.group;
+      const p=this.p,g=this.group,CM=root.CheeseMesh;
       const plane=this.cheesePlane||(this.cheesePlane=new T.Plane());
       plane.normal.set(-Math.sin(this.cutPhi||0),0,Math.cos(this.cutPhi||0));plane.constant=-plane.normal.dot(g.position);
-      const clipCheese=mesh=>{
-        if(!!mesh.material.clippingPlanes!==this.cutaway)mesh.material.needsUpdate=true;
-        mesh.material.clippingPlanes=this.cutaway?[plane]:null;mesh.material.clipShadows=this.cutaway;
-      };
-      while (this.cheeseMeshes.length > p.cheeses.length) { const m = this.cheeseMeshes.pop(); g.remove(m); disposeTree(m); }
-      while (this.cheeseMeshes.length < p.cheeses.length) {
-        const k = this.cheeseMeshes.length;
-        const geo = new T.BoxGeometry(.095,.0014,.095,14,1,14);
-        geo.setAttribute('color', new T.BufferAttribute(new Float32Array(geo.attributes.position.count * 3).fill(1), 3));
-        const m = new T.Mesh(geo, new T.MeshPhysicalMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.5, clearcoat: 0.3, side: T.DoubleSide }));
-        m.castShadow = true; m.userData.base = geo.attributes.position.array.slice(); m.rotation.y = p.cheeses[k].rot; g.add(m); this.cheeseMeshes.push(m);
-      }
-      const yellow = lin([243,183,61]), melted = lin([249,187,55]), golden = lin([184,107,26]), dark = lin([71,33,13]);
-      const skirtColour = (sk, onTop) => { if (!sk) return onTop; let c = mix3(onTop, golden, clamp(sk.brown / 2.5, 0, 1)); c = mix3(c, dark, clamp((sk.brown - 2.5) / 3, 0, 1)); return mix3(c, [0.06, 0.05, 0.04], clamp(sk.char / 0.8, 0, 1)); };
-      while (this.underMeshes.length > p.cheeseUnder.length) { const m = this.underMeshes.pop(); g.remove(m); disposeTree(m); }
-      while (this.underMeshes.length < p.cheeseUnder.length) {
-        const geo = new T.BoxGeometry(.095,.0013,.095,16,1,16);
-        const m = new T.Mesh(geo, new T.MeshPhysicalMaterial({ color: 0xf2b23c, roughness: 0.5, clearcoat: 0.2, side: T.DoubleSide }));
-        m.userData.base=geo.attributes.position.array.slice();m.receiveShadow = true; g.add(m); this.underMeshes.push(m);
-      }
-      for (let k = 0; k < this.underMeshes.length; k++) {
-        const mesh = this.underMeshes[k], ch = p.cheeseUnder[k], sk = ch.skirt;
-        clipCheese(mesh);
-        const position=mesh.geometry.attributes.position,base=mesh.userData.base,round=.0005+.007*ch.melt,inner=.0475-round;
-        for(let i=0;i<position.count;i++){
-          const x=base[i*3],z=base[i*3+2],cx=clamp(x,-inner,inner),cz=clamp(z,-inner,inner),dx=x-cx,dz=z-cz,d=Math.hypot(dx,dz),f=d>round?round/d:1;
-          const a=Math.atan2(z,x),wave=1+.014*ch.melt*Math.sin(a*5+k*2);
-          position.setXYZ(i,(cx+dx*f)*wave,base[i*3+1],(cz+dz*f)*wave);
+      const yellow=lin([243,183,61]),melted=lin([249,187,55]),gold=lin([184,107,26]),dark=lin([71,33,13]),char=lin([16,13,10]);
+      for(const [slices,meshes,fried] of [[p.cheeses,this.cheeseMeshes,false],[p.cheeseUnder,this.underMeshes,true]]){
+        while(meshes.length>slices.length){const mesh=meshes.pop();g.remove(mesh);disposeTree(mesh);}
+        while(meshes.length<slices.length){
+          const mesh=new T.Mesh(CM.create(),new T.MeshPhysicalMaterial({vertexColors:true,roughness:.5,clearcoat:.3,side:T.DoubleSide}));mesh.castShadow=mesh.receiveShadow=true;g.add(mesh);meshes.push(mesh);
         }
-        position.needsUpdate=true;mesh.geometry.computeVertexNormals();
-        const lift = 0.0012 * p.cheeseUnder.length;
-        mesh.rotation.y = ch.rot; mesh.position.y = -lift + 0.0005 + k * 0.0012; const sp = 1.06 + 0.06 * ch.melt; mesh.scale.set(sp, 1, sp);
-        const c = skirtColour(sk, mix3(yellow, melted, ch.melt)); mesh.material.color.setRGB(c[0], c[1], c[2]);
-        mesh.material.roughness = clamp(0.5 - 0.3 * ch.melt + (sk ? 0.4 * sk.dry : 0), 0.05, 1);
-      }
-      for (let k = 0; k < this.cheeseMeshes.length; k++) {
-        const mesh = this.cheeseMeshes[k], ch = p.cheeses[k], R = p.D / 2, geo = mesh.geometry, pos = geo.attributes.position.array, col = geo.attributes.color.array, base = mesh.userData.base;
-        clipCheese(mesh);
-        const topY = p.h * (1 + 0.28 * p.dome) + k * 0.0015; mesh.position.y = topY + 0.0008;
-        const floorLocal = -mesh.position.y + 0.0006 + k * 0.0004;
-        const sk = ch.skirt; const sc = 1 + 0.15 * ch.melt + 0.004 * k;
-        const onTop = mix3(yellow, melted, ch.melt);
-        const skirtCol = skirtColour(sk, onTop);
-        for (let i = 0; i < pos.length; i += 3) {
-          let x = base[i], z = base[i + 2];
-          const round=.0005+.006*ch.melt,inner=.0475-round,cx=clamp(x,-inner,inner),cz=clamp(z,-inner,inner),dist=Math.hypot(x-cx,z-cz);
-          if(dist>round){x=cx+(x-cx)*round/dist;z=cz+(z-cz)*round/dist;}
-          const rr = Math.hypot(x, z);
-          const over = Math.max(0, rr - R * 0.98);
-          let y = base[i + 1] - over * (0.2 + 1.6 * ch.melt);
-          const touching = y <= floorLocal;
-          let spread = sc;
-          if (touching) { y = floorLocal; spread = sc + (sk ? 0.18 * sk.melt : 0) + 0.1 * ch.melt * over / Math.max(rr, 1e-4); }
-          pos[i] = x * spread; pos[i + 2] = z * spread; pos[i + 1] = y;
-          const cc = touching || ch.submerged || ch.fried ? skirtCol : onTop;
-          col[i] = cc[0]; col[i + 1] = cc[1]; col[i + 2] = cc[2];
-        }
-        geo.attributes.position.needsUpdate = true; geo.attributes.color.needsUpdate = true; geo.computeVertexNormals();
-        mesh.material.roughness = clamp(0.6 - 0.45 * ch.melt + (sk ? 0.35 * sk.dry : 0), 0.05, 1);
-        mesh.material.clearcoat = 0.3 * (1 - (sk ? sk.dry : 0));
+        slices.forEach((ch,k)=>{
+          const mesh=meshes[k],sk=ch.skirt||{},mat=mesh.material;
+          if(!!mat.clippingPlanes!==this.cutaway)mat.needsUpdate=true;mat.clippingPlanes=this.cutaway?[plane]:null;mat.clipShadows=this.cutaway;
+          mesh.rotation.y=ch.rot||0;mesh.position.y=fried?-.0012*slices.length:0;
+          const key=[ch.mass??.02,ch.melt||0,p.D,p.h,p.dome,k,fried].join('|');
+          if(mesh.userData.shapeKey!==key){CM.update(mesh.geometry,ch,{radius:p.D/2,height:p.h,dome:p.dome,layer:k,fried});mesh.userData.shapeKey=key;}
+          const onTop=mix3(yellow,melted,ch.melt||0);
+          let skirt=mix3(onTop,gold,clamp((sk.brown||0)/2.5,0,1));skirt=mix3(skirt,dark,clamp(((sk.brown||0)-2.5)/3,0,1));skirt=mix3(skirt,char,clamp((sk.char||0)/.8,0,1));
+          const pos=mesh.geometry.attributes.position,col=mesh.geometry.attributes.color;
+          for(let i=0;i<pos.count;i++){
+            const contact=fried||ch.submerged||ch.fried?1:1-smoothstep(.0015+k*.0011,.0045+k*.0011,pos.getY(i));
+            for(let c=0;c<3;c++)col.array[i*3+c]=lerp(onTop[c],skirt[c],contact);
+          }
+          col.needsUpdate=true;mat.roughness=clamp(.55-.38*(ch.melt||0)+.35*(sk.dry||0),.12,.95);mat.clearcoat=.3*(1-(sk.dry||0));
+        });
       }
     }
   }
@@ -1492,12 +1453,15 @@
     _buildFinger() {
       const g = new T.Group();
       const skin = new T.MeshStandardMaterial({ roughness: 0.9 }); setLin(skin, [176, 118, 92]); // sRGB skin, converted like every other colour in here
-      const tip = new T.Mesh(new T.SphereGeometry(0.0092, 14, 10), skin); tip.scale.set(1, 0.8, 1); tip.castShadow = true; g.add(tip);
-      const seg = new T.Mesh(new T.CylinderGeometry(0.0086, 0.0094, 0.038, 12), skin);
-      seg.rotation.z = Math.PI / 2 - 0.55; seg.position.set(0.016, 0.011, 0); seg.castShadow = true; g.add(seg); // angled up and back toward the hand
-      const knuckle = new T.Mesh(new T.SphereGeometry(0.0098, 12, 9), skin); knuckle.position.set(0.032, 0.021, 0); knuckle.castShadow = true; g.add(knuckle);
+      const geo=new T.SphereGeometry(1,32,32),pos=geo.attributes.position;
+      // One continuous tapered surface from the fingertip to the first knuckle.
+      for(let i=0;i<pos.count;i++){
+        const t=(pos.getY(i)+1)/2,x=-.009+t*.052,r=.0092*(1+.10*Math.sin(t*Math.PI*3));
+        pos.setXYZ(i,x,pos.getX(i)*r*.82+Math.max(0,x)*.60,-pos.getZ(i)*r);
+      }
+      geo.computeVertexNormals();const finger=new T.Mesh(geo,skin);finger.castShadow=true;g.add(finger);
       const nailMat = new T.MeshStandardMaterial({ roughness: 0.35 }); setLin(nailMat, [217, 182, 164]);
-      const nail = new T.Mesh(new T.SphereGeometry(0.0062, 10, 8), nailMat);
+      const nail = new T.Mesh(new T.SphereGeometry(0.0062, 24, 16), nailMat);
       nail.position.set(0.003, 0.0062, 0); nail.scale.set(0.9, 0.45, 0.75); g.add(nail);
       return g;
     }

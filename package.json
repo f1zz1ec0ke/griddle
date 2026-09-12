@@ -6,8 +6,8 @@
   "scripts": {
     "start": "python3 -m http.server 8000",
     "test": "node test/run.js",
-    "test:serial": "node --test test/physics.test.js test/features.test.js test/cues.test.js test/dynamics.test.js",
-    "test:features": "node --test test/features.test.js test/cues.test.js test/dynamics.test.js",
+    "test:serial": "node --test test/physics.test.js test/features.test.js test/cues.test.js test/dynamics.test.js test/cheese-mesh.test.js",
+    "test:features": "node --test test/features.test.js test/cues.test.js test/dynamics.test.js test/cheese-mesh.test.js",
     "e2e": "node test/e2e/run.js",
     "calibrate": "node test/calibrate.js",
     "perf": "node test/perf.js",

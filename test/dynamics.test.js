@@ -7,7 +7,7 @@ function patty(s,T=70){const p=P.makePatty({id:1,massG:150,thicknessMm:20,fatFra
 
 function visualLibrary(){
   const fs=require('node:fs'),vm=require('node:vm'),THREE=require('../js/vendor/three.min.js'),root={THREE,BurgerPhysics:P};
-  for(const file of ['visual-assets','render3d'])vm.runInNewContext(fs.readFileSync(require.resolve('../js/'+file+'.js'),'utf8'),{window:root});
+  for(const file of ['visual-assets','cheese-mesh','render3d'])vm.runInNewContext(fs.readFileSync(require.resolve('../js/'+file+'.js'),'utf8'),{window:root});
   return root;
 }
 test('rounded furniture preserves its bounds and flat faces while beveling its edges',()=>{
