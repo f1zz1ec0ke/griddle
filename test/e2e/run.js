@@ -17,6 +17,7 @@ const SCENARIOS = [
   require('./scenario-real-visuals.js'),
   require('./scenario-real-grips.js'),
   require('./scenario-real-detail.js'),
+  require('./scenario-real-polish.js'),
   require('./scenario-medium-rare.js'),
   require('./scenario-ticket-of-three.js'),
   require('./scenario-charcoal.js'),

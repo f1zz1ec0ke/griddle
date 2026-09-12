@@ -5,7 +5,12 @@ body[data-experience="choose"]> :not(#mode-choice):not(script),body[data-experie
 .experience-card h1{font:700 48px Georgia;margin:0 0 12px}.experience-card p{color:#687063;line-height:1.6}.experience-options{display:flex;gap:14px;margin:28px 0}.experience-options button{flex:1;padding:22px;font-size:21px;background:#e5eadb;border:1px solid #bdc8ad;border-radius:16px}.experience-options small{display:block;font-size:13px;margin-top:8px;color:#586652}
 #real-hud{position:fixed;inset:0;pointer-events:none;color:#fff9e8;font:15px system-ui;z-index:120;text-shadow:0 2px 5px #13271f}
 #real-crosshair{position:absolute;left:50%;top:50%;width:5px;height:5px;border:1px solid #fff;border-radius:50%;transform:translate(-50%,-50%);box-shadow:0 0 0 4px #ffffff12}
-#real-hint{position:absolute;left:50%;top:54%;transform:translateX(-50%);text-align:center;max-width:480px;background:#173d3444;padding:8px 16px;border-radius:18px;white-space:pre-line}
+#real-hint{position:absolute;left:50%;top:55%;transform:translateX(-50%);text-align:center;width:max-content;max-width:480px;background:#203e37df;padding:10px 18px;border:1px solid #fff4;border-radius:14px;white-space:pre-line;font-size:13px;line-height:1.7;text-shadow:none;box-shadow:0 4px 16px #17352c22}
+#real-hint::first-line{font-weight:600;color:#fff8e8;font-size:14px}
+#real-crosshair.focused{background:#fff8e8;box-shadow:0 0 0 4px #ffffff24}
+#real-action{position:absolute;left:50%;top:44%;transform:translateX(-50%);padding:5px 14px 9px;border-radius:9px;color:#fff8e8;background:#203e37df;text-shadow:none;font-size:12px;min-width:90px;text-align:center;overflow:hidden}
+#real-action::after{content:'';position:absolute;bottom:0;left:0;height:3px;width:var(--progress,0%);background:#edc583}
+@media(prefers-reduced-motion:no-preference){#real-crosshair{transition:background .12s,box-shadow .12s}}
 #real-hands{position:absolute;bottom:34px;left:34px;padding:12px 20px;border-radius:16px;background:#203e37aa;white-space:pre-line}
 #real-toast{position:absolute;top:16%;left:50%;transform:translateX(-50%);background:#fff4dd;color:#35483a;text-shadow:none;padding:12px 24px;border-radius:20px;max-width:550px;text-align:center}
 #real-badge{position:absolute;left:30px;top:26px;font:700 26px Georgia}#real-badge small{display:block;font:12px system-ui;letter-spacing:2px;margin-top:6px}

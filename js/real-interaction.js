@@ -5,7 +5,7 @@
   class RealInteraction {
     constructor(real){this.r=real;this.yaw=0;this.probe=null;this.ghost=null;this.ghostId=null;this.reportUntil=0;}
     reset(){this.probe=null;this.yaw=0;this.reportUntil=0;this.clearGhost();this.clearShells();}
-    clearGhost(){if(this.ghost){this.ghost.parent?.remove(this.ghost);this.ghost.traverse(o=>o.material?.dispose());this.ghost=null;}this.ghostId=null;}
+    clearGhost(){if(this.ghost){this.ghost.parent?.remove(this.ghost);this.ghost.traverse(o=>{for(const m of Array.isArray(o.material)?o.material:o.material?[o.material]:[])m.dispose();});this.ghost=null;}this.ghostId=null;}
     wheel(event){
       const r=this.r,w=r.world,h=r.heldEntity(),step=Math.sign(event.deltaY);
       if(this.probe){this.probe.depth=P.clamp(this.probe.depth+step*.001,0,this.probe.height);this.probe.manual=true;}
@@ -37,14 +37,14 @@
       }
       if(!t)return false;
       if(h?.kind==='cloth'&&e?.food?.assembly?.at(-1)?.cold){
-        const top=e.food.assembly.at(-1);if(root.BurgerAssembly.cold[top.cold].sauce){r.animate('wipe',()=>{const part=w.peel(e);if(part){part.discarded=true;r.toast('Sauce wiped away.');}});return true;}
+        const top=e.food.assembly.at(-1);if(root.BurgerAssembly.cold[top.cold].sauce){if(e.trayCarrier){r.toast('Move the burger off the plate before rebuilding it.');return true;}r.animate('wipe',()=>{const part=w.peel(e);if(part){part.discarded=true;r.toast('Sauce wiped away.');}});return true;}
       }
       if(h?.kind==='knife'&&e&&!e.food&&['tomato','pickles','onion','cheeseBlock','bunWhole'].includes(e.kind)){
         if(e.held||e.station||e.trayCarrier){r.toast('Put it on the board first.');return true;}
         r.animate('slice',()=>{const out=w.cut(e,w.settings.sliceMm);r.toast(!out.length?'Make space beside the ingredient first.':e.discarded?'Finished slicing.':'Slice cut.');},.65);return true;
       }
       if(!h&&w.portion.mass>=25&&['board','surface'].includes(d.type)){
-        const point=t.point.clone();r.animate('form',()=>{if(r.left)w.form([point.x,point.y+.002,point.z]);},1.2);return true;
+        const point=t.point.clone();r.animate('form',()=>{if(!r.left)return;const pos=this.counterPlacement({kind:'patty',food:this.shapeSize()},point);if(pos)w.form(pos);else r.toast('Make room on the board first.');},1.2);return true;
       }
       if(['meat','meatLean','meatRich'].includes(h?.kind)&&d.type==='bowl'){
         r.animate('pour',()=>{w.addMince(h);r.held=null;});return true;
@@ -52,9 +52,10 @@
       if(h?.kind==='probe'&&(e?.kind==='pan'||t.data.type==='station')){r.toast('Aim at food to probe it.');return true;}
       if(h?.kind==='probe'&&e?.food){
         if(r.blocked(e)){r.toast(r.blocked(e));return true;}
-        const height=e.kind==='patty'?e.food.h:.013;
-        const point=t.point.clone();point.y=e.pos[1]+height;
-        this.probe={id:e.id,height,depth:0,radius:P.clamp(Math.hypot(t.point.x-e.pos[0],t.point.z-e.pos[2]),0,(e.food.D||.1)/2),point,manual:false};return true;
+        const hit=w.get(t.data.entity),food=hit?.kind==='patty'?hit:e,mesh=food.station?r.stations.get(food.station)?.views.get(food.food)?.group:r.meshes.get(food.id)?.mesh;
+        const baseY=food.kind==='patty'&&mesh?mesh.getWorldPosition(new T.Vector3()).y:food.pos[1],height=food.kind==='patty'?food.food.h*(mesh?.scale.y||1):.013;
+        const point=t.point.clone();point.y=baseY+height;
+        this.probe={id:food.id,height,baseY,depth:0,point,manual:false};return true;
       }
       if(h?.kind==='egg'&&!h.food&&d.type==='station'){
         const st=w.station(d.id);if(st.state.lid||(!st.panId&&d.id!=='charcoal')){r.toast('Open a cooking surface first.');return true;}
@@ -99,38 +100,63 @@
       for(const side of [-1,1]){const shell=this.r.copyModel(mesh);this.r.scene.add(shell);shell.position.copy(centre);shell.quaternion.copy(mesh.getWorldQuaternion(new T.Quaternion()));const plane=new T.Plane();shell.traverse(o=>{if(o.material){o.material.clippingPlanes=[plane];o.material.side=T.DoubleSide;}});this.shells.push({shell,plane,side,centre:centre.clone(),rotation:shell.quaternion.clone()});}
     }
     clearShells(){for(const part of this.shells||[])this.r.dispose(part.shell);this.shells=null;}
+    makeGhost(e,source){
+      this.clearGhost();const r=this.r,g=new T.Group(),parts=e.food?.assembly?.length?r.world.entities.filter(q=>q===e||q.stackRoot===e.id).map(q=>r.meshes.get(q.id)?.mesh).filter(Boolean):[source];
+      for(const mesh of parts){const copy=mesh.clone(true);if(parts.length===1){copy.position.set(0,0,0);copy.rotation.y=0;if(!e.food||e.kind==='pan')copy.rotation.set(0,0,0);}else{copy.position.x-=source.position.x;copy.position.z-=source.position.z;}g.add(copy);}
+      // The preview includes every layer, with the same bun orientation and compression.
+      const box=new T.Box3().setFromObject(g);for(const part of g.children)part.position.y-=box.min.y;
+      g.traverse(o=>{if(o.isMesh)o.material=new T.MeshBasicMaterial({color:0x6ec7a0,transparent:true,opacity:.18,depthWrite:false,side:T.DoubleSide});});r.scene.add(g);this.ghost=g;
+    }
     render(){
       const r=this.r,h=r.heldEntity(),e=h?.payload?r.world.get(h.payload):h,t=r.hover;
       if(this.shells){if(r.action?.kind!=='crack')this.clearShells();else{if(h&&!h.food)r.meshes.get(h.id).mesh.visible=false;const u=r.action.time/r.action.duration;for(const p of this.shells){if(h&&!h.food){const original=r.meshes.get(h.id)?.mesh;if(original)p.centre.copy(original.getWorldPosition(new T.Vector3()));}p.shell.position.copy(p.centre);p.shell.quaternion.copy(p.rotation);p.shell.position.x+=p.side*Math.sin(u*Math.PI)*.045;p.shell.rotation.z=p.side*u*.7;p.plane.setFromNormalAndCoplanarPoint(new T.Vector3(p.side,0,0),p.shell.position);}}}
       const report=document.getElementById('real-tasting');if(report){report.hidden=performance.now()>this.reportUntil||!r.world.lastTasting;report.textContent=r.world.lastTasting?'Your cook\n'+r.world.lastTasting.notes.join('\n'):'';}
       if(this.probe){
-        if(!r.left){this.probe=null;}else{
+        if(!r.left||h?.kind!=='probe'||!r.world.get(this.probe.id)){this.probe=null;}else{
           const p=this.probe,food=r.world.get(p.id),grip=r.grip(h);r.camera.updateMatrixWorld(true);
           const tip=r.meshes.get(h.id).mesh.localToWorld(new T.Vector3(...grip.tip)),wanted=p.point.clone();wanted.y-=p.depth;
           p.valid=tip.distanceTo(wanted)<.004;
-          p.temperature=p.valid?r.world.probe(food,Math.hypot(tip.x-food.pos[0],tip.z-food.pos[2]),P.clamp(food.pos[1]+p.height-tip.y,0,p.height)):null;
+          const depth=P.clamp(p.baseY+p.height-tip.y,0,p.height);
+          p.temperature=p.valid?r.world.probe(food,Math.hypot(tip.x-food.pos[0],tip.z-food.pos[2]),food.kind==='patty'?depth/p.height*food.food.h:depth):null;
         }
       }
       const station=t?.data.type==='station'?t.data.id:t?.data.entity?r.world.get(t.data.entity)?.station:null;
       if(!e||!t||r.action||this.probe||(!['board','surface'].includes(t.data.type)&&!station)){if(this.ghost)this.ghost.visible=false;return;}
       const source=r.meshes.get(e.id)?.mesh;if(!source)return;
-      if(this.ghostId!==e.id){this.clearGhost();this.ghost=source.clone(true);this.ghost.traverse(o=>{if(o.isMesh)o.material=new T.MeshBasicMaterial({color:0x6ec7a0,transparent:true,opacity:.24,depthWrite:false});});r.scene.add(this.ghost);this.ghostId=e.id;}
-      const g=this.ghost;g.visible=true;g.scale.copy(source.scale);g.rotation.set(0,this.yaw,0);g.position.copy(t.point);g.position.y+=.003;let valid=true;
+      const key=[e.id,e.food?.assembly?.length||0,(e.cargo||[]).join('/'),e.cutFraction,e.sliceMm].join(':');
+      if(this.ghostId!==key){this.makeGhost(e,source);this.ghostId=key;}
+      const g=this.ghost;g.visible=true;g.rotation.set(0,this.yaw,0);g.position.copy(t.point);g.position.y+=.002;let valid=true;
       if(station&&e.food&&e.kind!=='pan'){const st=r.world.station(station),to=r.world.placement(e,station,this.panPoint(t,station));valid=to.ok&&!st.state.lid&&(st.panId||station==='charcoal')&&!e.stackRoot&&!e.food.assembly?.length;if(valid){g.position.x=st.x+to.pos.x;g.position.z=st.z+to.pos.y;g.position.y=this.r.stations.get(station).scene.position.y+this.r.stations.get(station).panFloorY;}}
-      else if(station)valid=e.kind==='pan'&&!r.world.station(station).panId;
+      else if(station)valid=e.kind==='pan'&&!['charcoal','oven'].includes(station)&&!r.world.station(station).panId;
       else {const point=this.counterPlacement(e,t.point);valid=!!point;if(point)g.position.set(...point);}
       g.traverse(o=>{if(o.material)o.material.color.setHex(valid?0x6ec7a0:0xe78069);});
     }
-    hint(){
-      const r=this.r,w=r.world,h=r.heldEntity(),e=r.foodAt(r.hover);
+    hint(target=this.r.hover){
+      const r=this.r,w=r.world,h=r.heldEntity(),e=r.foodAt(target);
       if(this.probe)return this.probe.valid?`${this.probe.temperature?.toFixed(1)||'…'} °C · ${(this.probe.depth*1000).toFixed(1)} mm deep\nMove mouse up/down or scroll to probe · Release to withdraw`:'Move closer to insert the probe. Release to withdraw.';
       if(w.portion.mass>0)return `Scroll: patty thickness ${w.settings.thicknessMm} mm · ${Math.round((w.portion.fatFrac??.2)*100)}% fat\nHold left click on the board to shape`;
-      if(h?.kind==='knife'&&e&&!e.food)return `Scroll: ${w.settings.sliceMm} mm slices · Left click: one cut`;
+      if(h?.kind==='knife'&&e&&!e.food&&['tomato','pickles','onion','bunWhole','cheeseBlock'].includes(e.kind))return e.kind==='bunWhole'?'Left click: split the bun':`Left click: one cut · Scroll: ${w.settings.sliceMm} mm slices`;
       if(h?.kind==='salt'&&e?.kind==='patty')return `${(e.salt||0).toFixed(1)} g salt · ${((e.salt||0)/(e.food.massKg0*10)).toFixed(1)}% of meat\nHold left click: season`;
       if(h?.kind==='cloth'&&e?.food?.assembly?.at(-1)?.cold&&root.BurgerAssembly.cold[e.food.assembly.at(-1).cold].sauce)return 'Left click: wipe off the top sauce';
-      if(e?.food?.assembly?.length&&(!h||['spatula','tongs','spoon'].includes(h.kind)))return 'E: lift the top layer · Right click: lift the burger';
-      if(h?.kind==='plate'||r.hover?.data.entity&&w.get(r.hover.data.entity)?.kind==='plate')return 'Place a burger on the plate · Left click: taste';
-      if(h)return 'Scroll: rotate placement';return '';
+      if(e?.food?.assembly?.length&&!h?.payload&&(!h||['spatula','tongs','spoon'].includes(h.kind)))return (e.trayCarrier?'':'E: lift the top layer · ')+'Right click: lift the burger';
+      const plate=h?.kind==='plate'?h:e?.kind==='plate'?e:null;
+      if(plate)return plate.cargo?.length?'Left click: taste · Right click: '+(h?'place plate':'pick up plate'):h?'Right click: place plate · Scroll: rotate':'Place a burger here to taste it';
+      if(!h?.payload){
+        if(h?.kind==='probe'&&e?.food&&e.kind!=='pan')return 'Hold left click: insert probe · Scroll: depth';
+        if(h?.kind==='knife'&&e?.kind==='patty')return 'Left click: inspect the centre';
+        if(h?.kind==='spatula'&&['patty','bun','egg'].includes(e?.kind))return 'Left click: flip · Right click: lift';
+        if(h?.kind==='tongs'&&e?.kind==='bacon')return 'Left click: flip · Right click: lift';
+        if(h?.kind==='spoon'&&e?.kind==='onions')return 'Left click: stir · Right click: lift';
+        if(h?.kind==='cheese'&&e?.kind==='patty')return 'Left click: add cheese';
+        if(h?.kind==='press'&&e?.kind==='patty')return 'Left click: smash';
+        if(['ketchup','mayo','mustard'].includes(h?.kind)&&e?.food?.assembly?.length)return 'Left click: add sauce';
+        if(target?.data.type==='station'||e?.station){
+          if(['oil','water'].includes(h?.kind))return 'Hold left click: pour';
+          if(h?.kind==='egg'&&!h.food)return 'Left click: crack egg';
+          if(h?.kind==='glove')return 'Right click: lift pan';
+        }
+      }
+      return '';
     }
   }
   root.RealInteraction=RealInteraction;

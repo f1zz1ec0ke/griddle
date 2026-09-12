@@ -182,11 +182,11 @@
       for(const hit of hits){const d=hit.object.userData.realTarget;if(!d)continue;if(d.entity===this.held)continue;if(d.type==='supply'&&!this.world.doors.fridge)continue;return {data:d,point:hit.point,object:hit.object};}return null;
     }
     turn(d,dx){const st=this.world.station(d.id);if(d.type==='ovenKnob'){const oven=this.world.station('oven').state;this.ovenDrag=clamp((this.ovenDrag??oven.oven.target)+dx*1.5,0,250);P.setOven(oven,this.ovenDrag<40?0:this.ovenDrag);return;}if(d.type==='vent')P.setTopVent(st.state,clamp(st.state.grill.topVent+dx*.008,0,1));else P.setKnob(st.state,clamp(st.state.stove.knob+dx*.035,0,10));}
-    animate(kind,fn,duration=.65){if(this.action)return;this.action={kind,time:0,duration,fn,done:false};}
+    animate(kind,fn,duration=.65){if(this.action)return;const target=this.hover?{...this.hover,point:this.hover.point.clone()}:null;this.action={kind,time:0,duration,fn,done:false,target};}
     hot(e){if(e.kind==='pan')return (e.pan.Tcenter||e.pan.T)>55;if(e.kind==='tray')return (e.trayT||21)>55;return e.food?(e.kind==='patty'?P.centerT(e.food):P.itemT(e.food))>55:false;}
     blocked(e){if(e?.station==='oven'&&!this.world.doors.oven)return 'Open the oven first.';if(e?.food&&(e.station||e.panCarrier)&&this.world.owner(e).lid)return 'Lift the lid first.';return null;}
     toggleGrab(){
-      if(this.action)return;const h=this.heldEntity(),t=this.hover;
+      if(this.action)return;this.interaction.probe=null;const h=this.heldEntity(),t=this.hover;
       if(h){if(!t){this.toast('Look at a counter, tool rest or cooking surface.');return;}
         const food=this.foodAt(t),pan=t.data.type==='station'?this.world.get(this.world.station(t.data.id).panId):food,picked=h.kind==='glove'?pan:food;
         if(!h.payload&&picked&&((h.kind==='glove'&&['pan','tray'].includes(picked.kind))||(h.kind==='spatula'&&['patty','egg','bun'].includes(picked.kind))||(h.kind==='tongs'&&picked.kind==='bacon')||(h.kind==='spoon'&&picked.kind==='onions'))){if(picked.kind!=='pan'&&picked.station&&this.world.owner(picked).lid){this.toast('Lift the lid first.');return;}this.carry(h,picked);return;}
@@ -203,7 +203,7 @@
       this.pick(e);
     }
     pick(e){const error=this.blocked(e);if(error){this.toast(error);return;}if(e.kind==='lid'&&(e.station||e.panCarrier)){if(e.panCarrier){const pan=this.world.get(e.panCarrier);pan.parked.lid=false;pan.lidId=null;e.panCarrier=null;}else this.world.station(e.station).state.lid=false;e.station=null;}else if(e.kind==='pan')this.world.liftPan(e);else if(['tray','plate'].includes(e.kind))this.world.liftTray(e);else this.world.detach(e);e.held=true;this.held=e.id;this.interaction.yaw=e.yaw||0;this.animate('grab',()=>{},.35);}
-    carry(tool,e){const error=this.blocked(e);if(error){this.toast(error);return;}if(e.kind==='pan')this.world.liftPan(e);else if(['tray','plate'].includes(e.kind))this.world.liftTray(e);else this.world.detach(e);tool.payload=e.id;e.held=true;this.animate('grab',()=>{},.4);}
+    carry(tool,e){const error=this.blocked(e);if(error){this.toast(error);return;}if(e.kind==='pan')this.world.liftPan(e);else if(['tray','plate'].includes(e.kind))this.world.liftTray(e);else this.world.detach(e);tool.payload=e.id;e.held=true;this.interaction.yaw=e.yaw||0;this.animate('grab',()=>{},.4);}
     placeHeld(t){
       const tool=this.heldEntity(),e=tool?.payload?this.world.get(tool.payload):tool;let d=t.data;if(!e)return;
       const release=()=>{e.yaw=this.interaction.yaw;e.held=false;if(tool.payload)tool.payload=null;else this.held=null;};
@@ -220,7 +220,6 @@
       }
       if(!['surface','board','sink'].includes(d.type)){this.toast('Place it on a counter or its tool rest.');return;}
       const placement=this.interaction.counterPlacement(e,t.point);if(!placement){this.toast('Make a little space here first.');return;}e.pos=placement;release();
-      if(e.home&&Math.hypot(e.pos[0]-e.home[0],e.pos[2]-e.home[2])<.18)e.pos=e.home.slice();
       const support=this.surfaces.find(s=>Math.abs(e.pos[0]-s.x)<=s.w/2&&Math.abs(e.pos[2]-s.z)<=s.d/2);
       if(support){const mx=support.w/2-Math.abs(e.pos[0]-support.x),mz=support.d/2-Math.abs(e.pos[2]-support.z);if(Math.min(mx,mz)<(e.kind==='pan'?.07:.012)){e.fall=.03;e.slide=mx<mz?[Math.sign(e.pos[0]-support.x),0]:[0,Math.sign(e.pos[2]-support.z)];}}
     }
@@ -358,6 +357,7 @@
         const heights=layers.map((l,i)=>l.patty?(l.meat||root.food).h+(l.meat||root.food).cheeses.length*.0015:l.item?this.meshes.get(parts[i]?.id)?.view?.layerH()||.01:l.height||window.BurgerAssembly.cold[l.cold].height||.004);
         const layout=window.BurgerAssembly.stackLayout(root.food,P,heights);let y=0;
         for(let i=0;i<parts.length;i++){const part=parts[i],rec=this.meshes.get(part?.id);if(rec){
+          rec.mesh.rotation.y=root.held?0:root.yaw||0;
           let lift=(rec.lift||0)*layout[i].scale;if(part.kind==='bun'){rec.mesh.rotation.x=part.food.half==='top'?0:Math.PI;lift=part.food.half==='top'?0:heights[i]*layout[i].scale;}
           if(root.trayCarrier){const plate=this.meshes.get(root.trayCarrier)?.mesh;if(plate){plate.add(rec.mesh);rec.mesh.position.set(0,.008+y+lift,0);}}
           else if(root.held){this.heldAnchor.add(rec.mesh);const tool=this.heldEntity(),grip=this.grip(tool?.payload===root.id?tool:root);rec.mesh.position.copy(tool?.payload===root.id?this.gripPoint(grip,grip.tip).add(new T.Vector3(0,y+lift,0)):this.gripPoint(grip,[0,y+lift,0]));}else{this.scene.add(rec.mesh);rec.mesh.position.set(root.pos[0],root.pos[1]+y+lift,root.pos[2]);}
@@ -381,7 +381,7 @@
       let reach=this.left?.85:0;if(this.action){this.action.time+=dt;const u=this.action.time/this.action.duration;reach=Math.sin(Math.PI*Math.min(1,u));if(u>=.55&&!this.action.done){this.action.done=true;this.action.fn();}if(u>=1)this.action=null;}
       const held=this.heldEntity(),item=held?.kind==='glove'&&held.payload?this.world.get(held.payload):held;
       const profile=item?this.grip(item):portion?root.RealGrips.profile({kind:'portion'}):null;
-      const action=this.action?.kind,d=this.hover?.data,food=this.foodAt(this.hover);
+      const target=this.action?.target||this.hover,action=this.action?.kind,d=target?.data,food=this.foodAt(target);
       if(profile&&item?.kind==='press'&&action==='smash'){profile.support=[-.02,.09,0];profile.supportPose='flat';}
       const freeHand=held&&(this.grabControl||action==='reach'||action==='press'&&held.kind!=='lighter');
       const seasoning=held?.kind==='salt'&&(d?.type==='bowl'||food?.kind==='patty');
@@ -394,12 +394,12 @@
       const anchor=new T.Vector3(profile?.support?.12:.20,-.27,-.48);
       const probing=profile&&this.interaction.probePose(profile);if(probing){this.heldAnchor.quaternion.copy(probing.rotation);anchor.copy(probing.position);}
       if(action==='taste')anchor.set(.05,-.16,-.32);
-      if(profile&&reach>0&&this.hover&&!freeHand&&!probing&&action!=='taste'){
-        const target=this.camera.worldToLocal(this.hover.point.clone());if(target.length()>1.1)target.setLength(1.1);
+      if(profile&&reach>0&&target&&!freeHand&&!probing&&action!=='taste'){
+        const reachPoint=this.camera.worldToLocal(target.point.clone());if(reachPoint.length()>1.1)reachPoint.setLength(1.1);
         // Reach with the working end; the handle stays behind it.
         const working=this.gripPoint(profile,pouring&&profile.spout?profile.spout:profile.tip||[0,0,0]);
-        target.sub(working.applyQuaternion(this.heldAnchor.quaternion));target.y+=pouring?.09:.012;
-        anchor.lerp(target,reach);
+        reachPoint.sub(working.applyQuaternion(this.heldAnchor.quaternion));reachPoint.y+=pouring?.09:.012;
+        anchor.lerp(reachPoint,reach);
       }
       if(action==='stir'||this.left&&held?.kind==='spoon'&&d?.type==='bowl'){anchor.x+=Math.sin(this.clock*14)*.035;anchor.z+=Math.cos(this.clock*14)*.025;}
       if(action==='wipe')anchor.x+=Math.sin(this.action.time*16)*.08;
@@ -417,7 +417,7 @@
           end.copy(right?anchor:this.gripPoint(profile,profile.support).applyQuaternion(this.heldAnchor.quaternion).add(this.heldAnchor.position)).sub(contact);
         }else{
           const r=right?reach:assisting?reach*.8:0;
-          if(r>0&&this.hover){const target=this.camera.worldToLocal(this.hover.point.clone());if(target.length()>1.1)target.setLength(1.1);target.y+=.035;target.z+=.08;target.x+=right?.025:-.07;end.lerp(target,r);}
+          if(r>0&&target){const reachPoint=this.camera.worldToLocal(target.point.clone());if(reachPoint.length()>1.1)reachPoint.setLength(1.1);reachPoint.y+=.035;reachPoint.z+=.08;reachPoint.x+=right?.025:-.07;end.lerp(reachPoint,r);}
           a.hand.quaternion.slerp(rotation,Math.min(1,dt*18));
         }
         const shoulder=new T.Vector3(a.side*.25,-.20,.015),wristOffset=new T.Vector3(0,0,.029).applyQuaternion(a.hand.quaternion);
@@ -433,11 +433,29 @@
     }
 
     hint(){
-      const t=this.hover,h=this.heldEntity();let text='';if(t){const d=t.data;text=d.name||'Counter';if(['knob','ovenKnob','vent'].includes(d.type)){const s=this.world.station(d.id||'oven').state;const value=d.type==='ovenKnob'?Math.round(s.oven.target)+' °C':d.type==='vent'?Math.round(s.grill.topVent*100)+'%':s.stove.knob.toFixed(1)+'/10';text+=' · '+value+'\nHold left click + move mouse to turn';}
-        else if(d.type==='bowl')text+=' · '+Math.round(this.world.bowl.mass)+' g · '+this.world.bowl.salt.toFixed(1)+' g salt\n'+(h?'Hold left click to mix / season':'Hold left click to take mince · Right click returns 25 g');
-        else if(d.type==='supply')text+='\nRight click to take one';else text+='\n'+(h?'Left click: use · Right click: place':'Left click: interact · Right click: pick up');}
-      const detail=this.interaction.hint();if(detail)text+=(text?'\n':'')+detail;$('real-hint').textContent=this.game.tempText(text);$('real-hint').hidden=!text;
-      $('real-hands').textContent=(h?'Holding '+(LABELS[h.kind]||h.label):'Hands free')+(this.world.portion.mass>0?'\nPortion '+Math.round(this.world.portion.mass)+' g · '+this.world.portion.salt.toFixed(1)+' g salt\nHold left click on the board to shape':'');
+      const t=this.action?.target||this.hover,h=this.heldEntity(),payload=h?.payload?this.world.get(h.payload):null,e=this.foodAt(t),d=t?.data;
+      const name=q=>q?.kind==='patty'&&q.food?.assembly?.length?'burger':LABELS[q?.kind]||q?.label||q?.kind||'';
+      let title=d?.name||(e?name(e):'Counter'),detail='';
+      if(d&&['knob','ovenKnob','vent'].includes(d.type)){
+        const s=this.world.station(d.id||'oven').state;title+=' · '+(d.type==='ovenKnob'?Math.round(s.oven.target)+' °C':d.type==='vent'?Math.round(s.grill.topVent*100)+'%':s.stove.knob.toFixed(1)+'/10');detail='Hold left click + drag to turn';
+      }else if(d?.type==='bowl'){
+        title='Mixing bowl · '+Math.round(this.world.bowl.mass)+' g · '+this.world.bowl.salt.toFixed(1)+' g salt';
+        detail=!h?(this.world.bowl.mass?'Hold left click: take mince':'Add a mince pack')+(this.world.portion.mass?' · Right click: return 25 g':''):h.kind==='spoon'?'Hold left click: mix':h.kind==='salt'?'Hold left click: season':['meat','meatLean','meatRich'].includes(h.kind)?'Left click: add mince':'Put your tool down to take mince';
+      }else if(d?.type==='supply')detail=h?'Put down '+name(h)+' to take an ingredient':'Right click: take one';
+      else if(d?.type==='rest')detail=(payload||h)?.id===d.entity?'Right click: return to its rest':'A rest for '+name(this.world.get(d.entity));
+      else if(d&&['fridge','ovenDoor','window','tap','button','grillLid','exit'].includes(d.type))detail='Left click: '+({fridge:'open / close',ovenDoor:'open / close',window:'open / close',tap:'water on / off',button:'press',grillLid:'open / close',exit:'pause'}[d.type]);
+      else {
+        detail=this.interaction.hint(t);
+        if(!detail&&t){
+          if(h&&['surface','board','sink','station','ovenRack','bin'].includes(d.type))detail='Right click: '+(d.type==='bin'?'discard '+name(payload||h):'place '+name(payload||h))+(h.kind==='knife'?'':' · Scroll: rotate');
+          else if(e)detail=h?'Left click: use · Right click: '+(payload?'place':'lift'):'Right click: pick up '+name(e);
+        }
+      }
+      const labels={slice:'Slicing',form:'Shaping',crack:'Cracking',taste:'Tasting',wipe:'Wiping',wash:'Washing',flip:'Flipping',smash:'Pressing',pour:'Pouring'};
+      const progress=$('real-action');if(progress){progress.hidden=!labels[this.action?.kind];if(!progress.hidden){progress.textContent=labels[this.action.kind];progress.style.setProperty('--progress',Math.min(1,this.action.time/this.action.duration)*100+'%');}}
+      const text=detail?(t?title+'\n':'')+detail:'';$('real-hint').textContent=this.game.tempText(text);$('real-hint').hidden=!text;
+      $('real-crosshair').classList.toggle('focused',!!t);
+      $('real-hands').textContent=(h?name(h)+(payload?' · '+name(payload):''):'Hands free')+(this.world.portion.mass>0?'\n'+Math.round(this.world.portion.mass)+' g mince · '+this.world.portion.salt.toFixed(1)+' g salt':'');
     }
     frame(now){
       const dt=Math.min(.05,Math.max(0,(now-this.last)/1000));this.last=now;
@@ -453,7 +471,7 @@
   root.RealMode=RealMode;
   root.addEventListener('DOMContentLoaded',()=>{
     const menu=document.createElement('section');menu.id='mode-choice';menu.innerHTML='<div class="experience-card"><h1>griddle.</h1><p>Your kitchen. Your kind of cooking.</p><div class="experience-options"><button id="choose-legacy">Legacy<small>The original simulation</small></button><button id="choose-real">Real<small>Step into the kitchen</small></button></div><button id="choose-resume">Resume Real kitchen</button><p id="choose-status" role="status"></p></div>';document.body.append(menu);
-    const hud=document.createElement('div');hud.id='real-hud';hud.hidden=true;hud.innerHTML='<div id="real-badge">griddle.<small>REAL KITCHEN · PRACTICE</small></div><div id="real-crosshair"></div><div id="real-hint"></div><div id="real-hands"></div><div id="real-toast" hidden></div><div id="real-tasting" hidden role="status"></div><div id="real-controls">WASD · move / Shift · jog / Space · jump / Ctrl · crouch<br>Left click · interact / Right click · pick up & place / Esc · pause</div>';document.body.append(hud);
+    const hud=document.createElement('div');hud.id='real-hud';hud.hidden=true;hud.innerHTML='<div id="real-badge">griddle.<small>REAL KITCHEN · PRACTICE</small></div><div id="real-crosshair"></div><div id="real-hint"></div><div id="real-action" hidden></div><div id="real-hands"></div><div id="real-toast" hidden></div><div id="real-tasting" hidden role="status"></div><div id="real-controls">WASD · move / Shift · jog / Space · jump / Ctrl · crouch<br>Left click · interact / Right click · pick up & place / Esc · pause</div>';document.body.append(hud);
     const pause=document.createElement('section');pause.id='real-pause';pause.hidden=true;pause.innerHTML='<div class="experience-card"><h1>Take your time.</h1><p>Open the fridge, bring mince to the bowl, mix and portion it. Tools live on the island. Every station keeps cooking while you work elsewhere.</p><p>Hold left click to reach, turn, pour or season. Right click picks up or places. Right click the bowl to return 25 g. Scroll adjusts thickness, probe depth or placement rotation. E lifts a burger layer. Use the plate to taste your cook.</p><button id="real-resume">Apron on · Resume</button><button id="real-save">Save kitchen</button><button id="real-leave">Mode selection</button><p id="real-save-status"></p></div>';document.body.append(pause);
     const enter=resume=>{root.realMode ||= new RealMode(root.game);root.realMode.start(resume);};
     $('choose-legacy').onclick=()=>{document.body.dataset.experience='legacy';menu.hidden=true;root.game.vp.resize();};$('choose-real').onclick=()=>enter(false);$('choose-resume').onclick=()=>enter(true);
