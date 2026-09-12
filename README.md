@@ -8,6 +8,8 @@ Work a six-ticket shift, if you have the patience because this shit is real time
 
 Desktop browser, mouse and keyboard. No mobile support.
 
+Choose **Legacy** for the original game or **Real** for first-person practice: walk the kitchen, prepare ingredients and cook with physical tools. Real saves separately.
+
 ## Play locally
 
 With Node.js 22+ and Python 3 installed:
@@ -19,6 +21,10 @@ npm start
 Open [localhost:8000](http://localhost:8000). GG
 
 ## Controls
+
+**Real:** WASD to walk, Shift to jog, Space to jump, Ctrl to crouch. Hold left click to interact or use a tool; right click to pick up, lift food with a tool, or place it. Esc pauses. Open the fridge to get started.
+
+**Legacy:**
 
 | Input | Action |
 |---|---|

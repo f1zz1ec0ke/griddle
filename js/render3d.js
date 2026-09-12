@@ -977,9 +977,10 @@
 
   // ------------------------------------------------------------ the viewport
   class Viewport {
-    constructor(canvas) {
+    constructor(canvas, embedded = null) {
+      this.embedded=embedded;
       this.canvas = canvas;
-      this.renderer = new T.WebGLRenderer({ canvas, antialias: true, alpha: false });
+      this.renderer = embedded?.renderer || new T.WebGLRenderer({ canvas, antialias: true, alpha: false });
       this.renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
       this.renderer.shadowMap.enabled = true; this.renderer.shadowMap.type = T.PCFSoftShadowMap;
       this.renderer.localClippingEnabled = true; // the toppings on a served burger are cut with the same plane the patty is
@@ -990,16 +991,19 @@
       this.clock = 0; this.texBudget = 0;
       this.mode = 'board'; // 'board' | 'stove'
       this.cutaway = false;
-      this._buildLights(); this._buildKitchen(); this._buildReflections(); this._buildRoomSmoke(); this._buildStove(); this._buildBoard(); this._buildParticles(); this._buildProbe();
-      this._buildTextures();
+      if(embedded){this.flameLight=new T.PointLight(0xff8a2a,0,.6,2);this.scene.add(this.flameLight);}
+      else{this._buildLights(); this._buildKitchen(); this._buildReflections(); this._buildRoomSmoke();}
+      this._buildStove(); this._buildBoard(); this._buildParticles(); this._buildProbe();
+      if(embedded?.textures)for(const k of ['noise','noiseFine','marble','marbleCut','spots','blotch'])this[k]=embedded.textures[k];else this._buildTextures();
       this.views = new Map(); this.itemViews = new Map(); this.selected = null; this.selectedItem = null; this.previewPatty = null;
       this.peeks = new Map(); // patty → when the cut the cook made in it closes again (wall clock, ms)
-      this.controls = new Orbit(this);
+      this.controls = embedded?{goal:{azimuth:0},azimuth:0,reset(){},update(){}}:new Orbit(this);
       this.resize();
-      window.addEventListener('resize', () => this.resize());
+      if(!embedded)window.addEventListener('resize', () => this.resize());
       this.setMode('board');
     }
     resize() {
+      if(this.embedded)return;
       const w = this.canvas.clientWidth || 800, h = this.canvas.clientHeight || 600;
       this.renderer.setSize(w, h, false); this.camera.aspect = w / h;
       // Preserve horizontal framing on smaller desktop windows.
@@ -1045,6 +1049,7 @@
       this.cleanFog=this.scene.fog;this.smokeFog=new T.FogExp2(0x8f9891,.02);
     }
     _updateRoomAir(state) {
+      if(this.embedded)return;
       const air=state.room||{opening:0,upper:0,lower:0},time=state.t||0;
       for(const w of this.room.userData.windows)w.hinge.rotation.y=w.side*air.opening*1.05;
       const burden=air.lower*.7+air.upper*.3;
@@ -2028,7 +2033,7 @@
       this.controls.update(cameraDt);
       // Keep bounced light subtle; explicit wet-surface reflection strengths survive.
       this.scene.traverse(o=>{if(o.isMesh && o.material?.envMapIntensity===1)o.material.envMapIntensity=.22;});
-      this.renderer.render(this.scene, this.camera);
+      if(!this.embedded)this.renderer.render(this.scene, this.camera);
     }
     /** Sizzle, steam, smoke, spatter, juice beads and fat drips around every patty on the pan. */
     _updateParticles(state, dt, list, stoveOn) {

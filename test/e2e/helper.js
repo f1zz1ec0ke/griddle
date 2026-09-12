@@ -140,11 +140,11 @@ class Kitchen {
 }
 
 /** Boot a browser + server, hand the scenario a Kitchen, and tear everything down again. */
-async function runScenario(name, fn) {
+async function runScenario(name, fn, experience = 'legacy') {
   const { chromium } = loadPlaywright();
   fs.mkdirSync(OUT, { recursive: true });
   const { server, url } = await serve();
-  const browser = await chromium.launch({ args: CHROME_ARGS });
+  const browser = await chromium.launch({ args: CHROME_ARGS, ...(process.env.CHROME_PATH ? {executablePath:process.env.CHROME_PATH} : {}) });
   const page = await browser.newPage({ viewport: VIEWPORT });
   const k = new Kitchen(page, name);
   page.on('pageerror', (e) => k.pageErrors.push(String(e && e.stack ? e.stack : e)));
@@ -154,6 +154,7 @@ async function runScenario(name, fn) {
   try {
     await page.goto(url, { waitUntil: 'load' });
     await page.waitForFunction(() => window.game && window.game.state, null, { timeout: 30000 });
+    await page.locator('#choose-'+experience).click();
     await fn(k);
   } catch (e) {
     error = e;

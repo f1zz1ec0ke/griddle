@@ -1,0 +1,13 @@
+body[data-experience="choose"]> :not(#mode-choice):not(script),body[data-experience="real"]> :not(#view):not(#real-hud):not(#real-pause):not(script){display:none!important}
+#mode-choice,#real-pause{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;background:radial-gradient(ellipse at 35% 15%,#a8b599,#3c594d);color:#283d33}
+#mode-choice[hidden],#real-pause[hidden]{display:none}
+.experience-card{width:min(620px,90vw);padding:42px;border-radius:28px;background:#fff6e5;box-shadow:0 25px 100px #14291f55}
+.experience-card h1{font:700 48px Georgia;margin:0 0 12px}.experience-card p{color:#687063;line-height:1.6}.experience-options{display:flex;gap:14px;margin:28px 0}.experience-options button{flex:1;padding:22px;font-size:21px;background:#e5eadb;border:1px solid #bdc8ad;border-radius:16px}.experience-options small{display:block;font-size:13px;margin-top:8px;color:#586652}
+#real-hud{position:fixed;inset:0;pointer-events:none;color:#fff9e8;font:15px system-ui;z-index:120;text-shadow:0 2px 5px #13271f}
+#real-crosshair{position:absolute;left:50%;top:50%;width:5px;height:5px;border:1px solid #fff;border-radius:50%;transform:translate(-50%,-50%);box-shadow:0 0 0 4px #ffffff12}
+#real-hint{position:absolute;left:50%;top:54%;transform:translateX(-50%);text-align:center;max-width:480px;background:#173d3444;padding:8px 16px;border-radius:18px;white-space:pre-line}
+#real-hands{position:absolute;bottom:34px;left:34px;padding:12px 20px;border-radius:16px;background:#203e37aa;white-space:pre-line}
+#real-toast{position:absolute;top:16%;left:50%;transform:translateX(-50%);background:#fff4dd;color:#35483a;text-shadow:none;padding:12px 24px;border-radius:20px;max-width:550px;text-align:center}
+#real-badge{position:absolute;left:30px;top:26px;font:700 26px Georgia}#real-badge small{display:block;font:12px system-ui;letter-spacing:2px;margin-top:6px}
+#real-controls{position:absolute;right:24px;bottom:24px;font-size:12px;opacity:.8;text-align:right;line-height:1.8}
+#real-pause button{margin:6px;padding:12px 18px}#real-pause .experience-card{max-height:90vh;overflow:auto}
