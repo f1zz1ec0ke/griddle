@@ -3,28 +3,66 @@
   'use strict';
   root.buildKitchenRoom = function (T, scene) {
     const room = new T.Group(); room.name = 'Daylight kitchen'; scene.add(room);
-    const cube = new T.BoxGeometry(1, 1, 1), materials = new Map();
+    const A=root.KitchenAssets,cube = new T.BoxGeometry(1, 1, 1), materials = new Map(),shapes=new Map();
     const mat = (color, metalness = 0) => {
       const key = color + ':' + metalness;
-      if (!materials.has(key)) materials.set(key, new T.MeshStandardMaterial({color, roughness: metalness ? .35 : .82, metalness}));
+      if (!materials.has(key)) {
+        const wood=[0xb98b59,0xc79b66,0xc8b997,0xbaa079,0xb2976f,0x8d7658].includes(color);
+        const stone=[0xf3e8d1,0xd5c4a5].includes(color);
+        const m=A.material(metalness?'steel':wood?'wood':stone?'stone':'paint',color);
+        if(metalness)m.metalness=1;
+        if([0xe8deca,0xe5d9c3].includes(color)){m.roughness=.94;m.clearcoat=0;}
+        materials.set(key,m);
+      }
       return materials.get(key);
     };
     const cream = 0xe8deca, sage = 0x6e947c, darkSage = 0x496f59, oak = 0xb98b59, brass = 0xb68b43;
     function box(w,h,d,x,y,z,color,metalness=0) {
-      const m = new T.Mesh(cube, mat(color, metalness)); m.scale.set(w,h,d);m.position.set(x,y,z);
+      const key=[w,h,d].join(':');
+      // Visible furniture edges catch the window light; walls remain inexpensive boxes.
+      const rounded=Math.max(w,h,d)<2 && Math.min(w,h,d)>.011;
+      if(rounded&&!shapes.has(key))shapes.set(key,A.roundedBox(w,h,d,Math.min(.009,Math.min(w,h,d)*.18),2));
+      const m = new T.Mesh(rounded?shapes.get(key):cube, mat(color, metalness)); if(!rounded)m.scale.set(w,h,d);m.position.set(x,y,z);
       m.receiveShadow = true; m.castShadow = true; room.add(m); return m;
     }
     function cylinder(r1,r2,h,x,y,z,color) {
-      const m = new T.Mesh(new T.CylinderGeometry(r1,r2,h,16),mat(color));m.position.set(x,y,z);room.add(m);return m;
+      const m = new T.Mesh(new T.CylinderGeometry(r1,r2,h,32),mat(color,color===brass?1:0));m.position.set(x,y,z);m.castShadow=m.receiveShadow=true;room.add(m);return m;
+    }
+    function tube(points,r,color,metal=0) {
+      const curve=new T.CatmullRomCurve3(points.map(p=>new T.Vector3(...p)));
+      const mesh=new T.Mesh(new T.TubeGeometry(curve,40,r,10,false),mat(color,metal));
+      mesh.castShadow=mesh.receiveShadow=true;room.add(mesh);return mesh;
+    }
+    function turned(profile,x,y,z,color,metal=0) {
+      const curve=new T.CatmullRomCurve3(profile.map(p=>new T.Vector3(p[0],p[1],0)));
+      const points=curve.getPoints(profile.length*4).map(p=>new T.Vector2(Math.max(0,p.x),p.y));
+      const mesh=new T.Mesh(new T.LatheGeometry(points,48),mat(color,metal));
+      mesh.position.set(x,y,z);mesh.castShadow=mesh.receiveShadow=true;room.add(mesh);return mesh;
+    }
+    function foliage(x,y,z,size,color,seed=0) {
+      const geo=new T.SphereGeometry(size,24,16),pos=geo.attributes.position;
+      for(let i=0;i<pos.count;i++){
+        const a=pos.getX(i)/size,b=pos.getY(i)/size,c=pos.getZ(i)/size;
+        const d=1+.09*Math.sin(a*9+seed)*Math.sin(b*7+c*6)+.05*Math.cos(c*11+a*3);
+        pos.setXYZ(i,a*size*d,b*size*d,c*size*d);
+      }
+      geo.computeVertexNormals();const material=mat(color);material.roughness=.95;material.clearcoat=0;
+      const mesh=new T.Mesh(geo,material);mesh.position.set(x,y,z);mesh.castShadow=true;room.add(mesh);return mesh;
     }
     function plant(x,y,z,size=1) {
       cylinder(.052*size,.039*size,.10*size,x,y+.05*size,z,0xb96f50);
       cylinder(.046*size,.046*size,.008*size,x,y+.103*size,z,0x554734);
-      const leaves = new T.SphereGeometry(1,7,5);
-      for(let i=0;i<7;i++) {
-        const a=i*2.4, m=new T.Mesh(leaves,mat(i%2?0x75945c:0x4f7758));
-        m.position.set(x+Math.cos(a)*.045*size,y+(.17+(i%3)*.025)*size,z+Math.sin(a)*.045*size);
-        m.scale.set(.024*size,.075*size,.036*size);m.rotation.z=Math.cos(a)*.8;room.add(m);
+      const rim=new T.Mesh(new T.TorusGeometry(.05*size,.004*size,8,32),mat(0xb96f50));rim.rotation.x=Math.PI/2;rim.position.set(x,y+.101*size,z);room.add(rim);
+      const leaves=new T.BufferGeometry(),pos=[],idx=[];
+      for(let j=0;j<=10;j++){
+        const t=j/10,w=Math.sin(t*Math.PI)*.024;
+        for(const side of [-1,0,1])pos.push(w*side,.055*t+.018*Math.sin(t*Math.PI)*(1-Math.abs(side)),.095*t);
+        if(j<10)for(let k=0;k<2;k++){const a=j*3+k;idx.push(a,a+3,a+1,a+1,a+3,a+4);}
+      }
+      leaves.setAttribute('position',new T.Float32BufferAttribute(pos,3));leaves.setIndex(idx);leaves.computeVertexNormals();
+      for(let i=0;i<11;i++) {
+        const a=i*2.4,leafMat=mat(i%2?0x648847:0x3d6c3e);leafMat.side=T.DoubleSide;leafMat.roughness=.7;leafMat.clearcoat=.08;
+        const m=new T.Mesh(leaves,leafMat);m.position.set(x,y+(.105+(i%3)*.035)*size,z);m.scale.setScalar(size*(.7+(i%3)*.15));m.rotation.y=a;m.rotation.x=(i%3)*-.35;m.castShadow=true;room.add(m);
       }
     }
     // A real floor and four walls, with a wide opening for the garden window.
@@ -33,7 +71,7 @@
     const color=new T.Color();let n=0;
     for(let ix=0;ix<14;ix++)for(let iz=0;iz<14;iz++) {
       dummy.position.set(-2.6+ix*.4,-.875,-2.6+iz*.4);dummy.scale.set(.396,.008,.396);dummy.updateMatrix();tiles.setMatrixAt(n,dummy.matrix);
-      tiles.setColorAt(n++,color.setHex((ix+iz)%2?0xc4c5ae:0xeee3ce));
+      tiles.setColorAt(n++,color.setHex((ix+iz)%2?0xc4c5ae:0xeee3ce).convertSRGBToLinear());
     }
     tiles.receiveShadow=true;room.add(tiles);
     box(.09,2.65,5.6,-2.8,.425,0,cream);
@@ -69,16 +107,15 @@
     for(const y of [-.55,-.05])box(7.25,.07,.10,0,y,6.93,0x8d7658);
     function tree(x,z,size) {
       cylinder(.065*size,.09*size,1.25*size,x,-.84+.625*size,z,0x786248);
-      for(let j=0;j<5;j++) {
-        const canopy=new T.Mesh(new T.SphereGeometry(.43*size,10,8),mat(j%2?0x668154:0x81975d));
-        canopy.position.set(x+Math.cos(j*2.4)*.25*size,-.84+(1.2+(j%2)*.25)*size,z+Math.sin(j*2.4)*.22*size);
-        canopy.scale.y=1.18;canopy.castShadow=true;room.add(canopy);
+      for(let j=0;j<9;j++) {
+        const a=j*2.4,dx=Math.cos(a)*.31*size,dz=Math.sin(a)*.31*size,cy=-.84+(1.12+(j%3)*.21)*size;
+        tube([[x,-.84+.65*size,z],[x+dx*.4,cy-.25*size,z+dz*.4],[x+dx,cy,z+dz]],.018*size,0x786248);
+        const canopy=foliage(x+dx,cy,z+dz,.30*size,[0x668154,0x81975d,0x728d50][j%3],j);canopy.scale.y=1.18;
       }
     }
     tree(-2.25,5.2,1.5);tree(2.4,5.65,1.8);tree(.6,7.7,2.0);tree(4.8,-.6,1.6);
     for(let i=0;i<12;i++) {
-      const bush=new T.Mesh(new T.SphereGeometry(.32,9,7),mat(i%2?0x94a46a:0x69875b));
-      bush.position.set(-3.1+i*.56,-.56,6.35+(i%3)*.17);bush.scale.set(1.3,.9,1);room.add(bush);
+      const bush=foliage(-3.1+i*.56,-.56,6.35+(i%3)*.17,.32,i%2?0x94a46a:0x69875b,i);bush.scale.set(1.3,.9,1);
     }
     const windows=[];
     function windowFrame(x,y,z,w,h,rotation=0) {
@@ -106,8 +143,13 @@
     for(const z of [-.65,.05]) {
       box(.035,.57,.43,-2.735,.65,z,oak);
       box(.015,.50,.36,-2.711,.65,z,0xf4e7c8);
-      const print=new T.Mesh(new T.CircleGeometry(.11,24),mat(z<0?0xb86f4b:0x82946c));
-      print.rotation.y=Math.PI/2;print.position.set(-2.698,.65,z);room.add(print);
+      // Raised botanical artwork: a curved stem and tapered leaves over warm paper.
+      tube([[-2.697,.46,z+.06],[-2.697,.62,z],[-2.697,.83,z-.035]],.003,0x62764e);
+      for(let i=0;i<7;i++) {
+        const shape=new T.Shape();shape.moveTo(0,0);shape.bezierCurveTo(.03,.01,.04,.055,0,.08);shape.bezierCurveTo(-.025,.045,-.02,.012,0,0);
+        const leaf=new T.Mesh(new T.ShapeGeometry(shape,12),mat(z<0?0xb86f4b:0x82946c));leaf.material.side=T.DoubleSide;
+        leaf.rotation.set(0,Math.PI/2,(i%2?1:-1)*.8);leaf.position.set(-2.692,.49+i*.045,z+.04-i*.012);room.add(leaf);
+      }
     }
     // Cabinets sit against the wall, leaving a clear walking aisle around the island.
     for(let i=0;i<6;i++) {
@@ -123,14 +165,34 @@
     box(.50,.05,.13,.28,-.045,1.315,0xf3e8d1);
     box(.50,.05,.19,.28,-.045,1.795,0xf3e8d1);
     box(3.6,.11,.035,0,.035,1.865,0xd5ddd0);
-    // Simple sink and curved brass tap, offset from the window plants.
-    box(.50,.018,.32,.28,-.175,1.54,0xaabfbb);
-    for(const x of [.039,.521])box(.018,.16,.32,x,-.09,1.54,0xd4ded7);
-    for(const z of [1.389,1.691])box(.50,.16,.018,.28,-.09,z,0xd4ded7);
-    cylinder(.025,.025,.005,.28,-.163,1.54,0x303d3b);
-    const tap=new T.Mesh(new T.TorusGeometry(.065,.008,7,20,Math.PI),mat(brass,.7));
-    tap.position.set(.28,.14,1.72);room.add(tap);
-    cylinder(.008,.008,.15,.215,.055,1.72,brass);
+    // Continuous drawn basin with rounded corners and a gently sloping floor.
+    const basinPos=[],basinIdx=[],basinRings=9,basinSegments=96;
+    for(let j=0;j<basinRings;j++){
+      const t=j/(basinRings-1),w=.205+.04*Math.sin(t*Math.PI/2),d=.112+.043*Math.sin(t*Math.PI/2),y=-.159+.141*t*t;
+      for(let i=0;i<basinSegments;i++){
+        const a=i/basinSegments*Math.PI*2,c=Math.cos(a),v=Math.sin(a);
+        basinPos.push(.28+w*Math.sign(c)*Math.pow(Math.abs(c),.35),y,1.54+d*Math.sign(v)*Math.pow(Math.abs(v),.35));
+        if(j<basinRings-1){const n=j*basinSegments+i,k=j*basinSegments+(i+1)%basinSegments;basinIdx.push(n,k,n+basinSegments,k,k+basinSegments,n+basinSegments);}
+      }
+    }
+    const basinGeo=new T.BufferGeometry();basinGeo.setAttribute('position',new T.Float32BufferAttribute(basinPos,3));basinGeo.setIndex(basinIdx);basinGeo.computeVertexNormals();
+    const basinMat=A.material('steel',0xc4cecd);basinMat.side=T.DoubleSide;basinMat.roughness=.28;
+    const basin=new T.Mesh(basinGeo,basinMat);basin.name='Drawn sink basin';basin.receiveShadow=true;room.add(basin);
+    box(.414,.012,.23,.28,-.163,1.54,0xc4cecd,1);
+    const rim=[];for(let i=0;i<=96;i++){const a=i/96*Math.PI*2,c=Math.cos(a),v=Math.sin(a);rim.push([.28+.247*Math.sign(c)*Math.pow(Math.abs(c),.35),-.016,1.54+.157*Math.sign(v)*Math.pow(Math.abs(v),.35)]);}tube(rim,.004,0xc4cecd,1);
+    const flangePos=[],flangeIdx=[];
+    for(let i=0;i<96;i++){
+      const a=i/96*Math.PI*2,c=Math.cos(a),v=Math.sin(a),m=Math.max(Math.abs(c),Math.abs(v));
+      flangePos.push(...rim[i],.28+.258*c/m,-.018,1.54+.168*v/m);
+      const k=i*2,n=((i+1)%96)*2;flangeIdx.push(k,n,k+1,n,n+1,k+1);
+    }
+    const flangeGeo=new T.BufferGeometry();flangeGeo.setAttribute('position',new T.Float32BufferAttribute(flangePos,3));flangeGeo.setIndex(flangeIdx);flangeGeo.computeVertexNormals();room.add(new T.Mesh(flangeGeo,basinMat));
+    cylinder(.025,.025,.003,.28,-.154,1.54,brass);
+    for(let i=0;i<8;i++){const a=i*Math.PI/4;cylinder(.0025,.0025,.001,.28+Math.cos(a)*.015,-.152,1.54+Math.sin(a)*.015,0x303d3b);}
+    cylinder(.023,.025,.012,.215,-.009,1.74,brass);
+    tube([[.215,0,1.74],[.215,.16,1.74],[.215,.22,1.69],[.215,.20,1.59],[.215,.16,1.58]],.010,brass,1);
+    cylinder(.013,.013,.015,.215,.154,1.58,brass);
+    tube([[.239,.035,1.74],[.262,.046,1.74],[.277,.085,1.74]],.005,brass,1);
     for(const x of [-1.34,1.34]) {
       box(.70,.62,.30,x,.83,1.72,sage);
       for(const dx of [-.17,.17]) {
@@ -140,11 +202,23 @@
       }
     }
     // Tall fridge and a little open shelf on the opposite wall.
-    box(.61,1.43,.58,-2.20,-.12,1.52,0xf0e6d2);
-    box(.57,.80,.025,-2.20,.18,1.216,0xfaf0da);box(.57,.49,.025,-2.20,-.49,1.216,0xfaf0da);
-    box(.023,.25,.035,-1.98,.14,1.185,brass,.65);box(.023,.15,.035,-1.98,-.40,1.185,brass,.65);
+    const fridge=new T.Mesh(A.roundedBox(.61,1.43,.58,.045,6),A.material('paint',0xece4d1));fridge.position.set(-2.20,-.12,1.52);fridge.castShadow=true;room.add(fridge);
+    for(const [y,h] of [[.18,.80],[-.49,.49]]){
+      const door=new T.Mesh(A.roundedBox(.57,h,.055,.025,5),A.material('paint',0xfaf0da));door.position.set(-2.20,y,1.207);door.castShadow=true;room.add(door);
+      tube([[-1.98,y-.10,1.176],[-1.98,y-.08,1.14],[-1.98,y+.08,1.14],[-1.98,y+.10,1.176]],.009,brass,1);
+    }
+    box(.52,.043,.025,-2.20,-.79,1.213,0x496058);
+    for(let i=0;i<9;i++)box(.026,.004,.005,-2.39+i*.046,-.788,1.197,0x303b38);
+    box(.095,.018,.006,-2.35,.46,1.176,brass,1);
     box(1.18,.035,.23,.75,.55,-2.63,oak);
-    for(let i=0;i<5;i++)box(.055,.20+(i%2)*.04,.12,.40+i*.063,.66,-2.62,[0xb9694a,0x8da293,0xd9b56b][i%3]);
+    for(let i=0;i<5;i++){
+      const x=.40+i*.063,h=.20+(i%2)*.04,y=.57+h/2,c=[0xb9694a,0x8da293,0xd9b56b][i%3];
+      box(.047,h-.009,.113,x,y,-2.62,0xe7dcc4);
+      for(const dx of [-.026,.026])box(.005,h,.124,x+dx,y,-2.62,c);
+      box(.054,h,.01,x,y,-2.559,c);
+      for(const dy of [-h*.35,h*.35])box(.043,.004,.002,x,y+dy,-2.553,brass);
+      box(.026,.018,.002,x,y+.025,-2.553,0xe7dcc4);
+    }
     plant(1.07,.57,-2.62,1.05);
     // Island: pale stone, sage joinery, warm timber end panels, proper toe kick.
     box(1.55,.052,1.08,.10,-.027,0,0xd5c4a5);
@@ -161,7 +235,16 @@
     for(const x of [-.614,.814])box(.018,.72,.95,x,-.443,0,oak);
     // Built-in oven: open cavity, glazed front and a rack holding up to four patties.
     box(.45,.085,.04,.10,-.125,-.497,0x484d47);
-    for(const x of [-.035,.235])cylinder(.023,.023,.018,x,-.074,-.48,brass);
+    for(const [i,x] of [-.035,.235].entries()){
+      const bezel=cylinder(.025,.025,.005,x,-.125,-.525,brass);bezel.rotation.x=Math.PI/2;
+      const knob=cylinder(.019,.021,.025,x,-.125,-.54,0x303b38);knob.rotation.x=Math.PI/2;
+      const pointer=new T.Mesh(A.roundedBox(.0025,.009,.0015,.0003,1),mat(0xf7ead1));pointer.position.set(x,-.114,-.554);room.add(pointer);
+      for(let j=0;j<7;j++){
+        const a=-Math.PI*.75+j*Math.PI*1.5/6;
+        const tick=new T.Mesh(cube,mat(0xe8deca));tick.scale.set(.0014,.004,.001);tick.position.set(x+Math.sin(a)*.032,-.125+Math.cos(a)*.032,-.519);tick.rotation.z=-a;room.add(tick);
+      }
+      knob.name=i?'Oven temperature knob':'Oven function knob';
+    }
     box(.026,.52,.035,-.132,-.435,-.50,0x484d47);box(.026,.52,.035,.332,-.435,-.50,0x484d47);
     box(.48,.055,.035,.10,-.71,-.50,0x484d47);
     // Dark enamel liner separates the appliance from the surrounding cabinetry.
@@ -170,26 +253,32 @@
     box(.44,.012,.88,.10,-.698,-.02,0x333c3b);box(.44,.012,.88,.10,-.175,-.02,0x333c3b);
     const glass=new T.Mesh(cube,new T.MeshPhysicalMaterial({color:0xaaa899,transparent:true,opacity:.20,roughness:.1,depthWrite:false}));
     glass.scale.set(.435,.50,.009);glass.position.set(.10,-.435,-.51);room.add(glass);
-    box(.34,.022,.035,.10,-.225,-.535,brass,.65);
-    for(let i=0;i<10;i++)box(.012,.008,.80,-.10+i*.044,-.488,-.015,0x777b76,.7);
+    tube([[-.07,-.225,-.526],[-.05,-.225,-.56],[.25,-.225,-.56],[.27,-.225,-.526]],.011,brass,1);
+    for(const y of [-.29,-.62])box(.42,.018,.014,.10,y,-.52,0x303b38);
+    for(let i=0;i<5;i++)for(const x of [-.11,.31])tube([[x,-.36-i*.056,-.4],[x,-.36-i*.056,.35]],.004,0x777b76,1);
+    for(let i=0;i<10;i++)tube([[-.10+i*.044,-.488,-.415],[-.10+i*.044,-.488,.385]],.004,0x777b76,1);
     box(.44,.012,.014,.10,-.492,-.43,0x777b76,.7);
     // Small props stay outside the pan, food-drag and plating areas.
     plant(-.55,0,.39,.6);
     for(let i=0;i<2;i++) {
-      cylinder(.022,.027,.09,-.44+i*.065,.045,.40,i?0xdbbb8a:0x574b3b);
-      cylinder(.028,.028,.019,-.44+i*.065,.095,.40,oak);
+      const x=-.44+i*.065;
+      turned([[0,0],[.024,0],[.027,.005],[.025,.018],[.017,.039],[.015,.057],[.022,.07],[.025,.083],[.02,.095],[0,.10]],x,0,.40,i?0xdbbb8a:0x574b3b);
+      cylinder(.004,.004,.005,x,.103,.40,brass);
     }
     // Two tucked-in stools give the island a readable human scale.
     for(const x of [-.32,.48]) {
-      cylinder(.14,.14,.045,x,-.36,-.85,oak);
-      for(const dx of [-.08,.08])for(const dz of [-.08,.08])box(.025,.48,.025,x+dx,-.62,-.85+dz,darkSage);
+      turned([[0,-.024],[.125,-.024],[.139,-.013],[.14,0],[.133,.013],[.07,.01],[0,.008]],x,-.36,-.85,oak);
+      for(const dx of [-.08,.08])for(const dz of [-.08,.08])tube([[x+dx*1.4,-.86,-.85+dz*1.4],[x+dx,-.38,-.85+dz]],.012,darkSage);
+      const foot=new T.Mesh(new T.TorusGeometry(.123,.006,10,48),mat(brass,1));foot.rotation.x=Math.PI/2;foot.position.set(x,-.69,-.85);room.add(foot);
     }
     // No ceiling slab: overhead camera stays useful. Pendant shades sit off the cooking axis.
     for(const x of [-.50,.65]) {
       cylinder(.003,.003,.34,x,1.43,.22,0x63574a);
-      const shade=new T.Mesh(new T.ConeGeometry(.13,.14,20,1,true),mat(0xc99655));
-      shade.position.set(x,1.20,.22);room.add(shade);
-      const bulb=new T.Mesh(new T.SphereGeometry(.024,10,8),new T.MeshBasicMaterial({color:0xffe0a0}));
+      const shade=turned([[.128,0],[.131,.008],[.124,.023],[.099,.043],[.077,.071],[.044,.115],[.025,.134],[.018,.14]],x,1.13,.22,0xc99655);
+      shade.material=shade.material.clone();shade.material.side=T.DoubleSide;
+      cylinder(.019,.019,.028,x,1.284,.22,brass);
+      const lip=new T.Mesh(new T.TorusGeometry(.128,.003,10,64),mat(0xf5dfb8));lip.rotation.x=Math.PI/2;lip.position.set(x,1.132,.22);room.add(lip);
+      const bulb=new T.Mesh(new T.SphereGeometry(.024,24,16),new T.MeshBasicMaterial({color:0xffe0a0}));
       bulb.position.set(x,1.145,.22);room.add(bulb);
     }
     return room;

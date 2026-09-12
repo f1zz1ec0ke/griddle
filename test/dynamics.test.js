@@ -4,6 +4,44 @@ const assert=require('node:assert/strict');
 const P=require('../js/physics'),O=require('../js/oil-film'),A=require('../js/assembly'),S=require('../js/session');
 function state(){return P.createState({stove:'gas',pan:'castiron'});}
 function patty(s,T=70){const p=P.makePatty({id:1,massG:150,thicknessMm:20,fatFrac:.2,tempC:T,target:'medium'});P.placePatty(s,p,{x:0,y:0});return p;}
+
+function visualLibrary(){
+  const fs=require('node:fs'),vm=require('node:vm'),THREE=require('../js/vendor/three.min.js'),root={THREE,BurgerPhysics:P};
+  for(const file of ['visual-assets','cheese-mesh','render3d'])vm.runInNewContext(fs.readFileSync(require.resolve('../js/'+file+'.js'),'utf8'),{window:root});
+  return root;
+}
+test('rounded furniture preserves its bounds and flat faces while beveling its edges',()=>{
+  const {KitchenAssets:A}=visualLibrary(),g=A.roundedBox(.42,.025,.30,.009);g.computeBoundingBox();
+  const p=g.attributes.position,n=g.attributes.normal;
+  for(const [axis,half] of [['x',.21],['y',.0125],['z',.15]]){assert.ok(Math.abs(g.boundingBox.max[axis]-half)<1e-7);assert.ok(Math.abs(g.boundingBox.min[axis]+half)<1e-7);}
+  let flat=0,bevel=0;
+  for(let i=0;i<p.count;i++){
+    assert.ok(Number.isFinite(p.getX(i)+p.getY(i)+p.getZ(i)));
+    if(p.getY(i)>.01249&&Math.abs(p.getX(i))<.205&&Math.abs(p.getZ(i))<.145){assert.ok(n.getY(i)>.999);flat++;}
+    if(Math.abs(n.getY(i))>.1&&Math.abs(n.getY(i))<.9)bevel++;
+  }
+  assert.ok(flat>0&&bevel>0);
+});
+test('egg white closes its final segment and onion slivers are closed solids',()=>{
+  const {THREE,BurgerRender:R}=visualLibrary();
+  for(const build of ['buildEgg','buildOnions']){
+    const v={it:{D:.10,id:1},group:new THREE.Group()};R.ItemView.prototype[build].call(v);
+    const g=build==='buildEgg'?v.whiteGeo:v.onionInst.geometry,edges=new Map();
+    for(const n of g.index.array)assert.ok(n<g.attributes.position.count,'index must reference a real vertex');
+    for(let i=0;i<g.index.count;i+=3)for(let k=0;k<3;k++){const a=g.index.array[i+k],b=g.index.array[i+(k+1)%3],key=[Math.min(a,b),Math.max(a,b)].join(':');edges.set(key,(edges.get(key)||0)+1);}
+    const boundary=[...edges.values()].filter(n=>n===1).length;
+    assert.equal(boundary,build==='buildEgg'?v.eggN:0,'only the egg perimeter may be open');
+  }
+});
+test('top and fried cheese share the cutaway plane and return when it closes',()=>{
+  const {THREE,BurgerRender:R}=visualLibrary(),g=new THREE.Group();g.position.set(.4,.03,.12);
+  const slice={rot:.2,melt:.5,skirt:{brown:0,dry:0,char:0}};
+  const v={p:{D:.1,h:.02,dome:0,cheeses:[slice],cheeseUnder:[slice]},group:g,cheeseMeshes:[],underMeshes:[],cutaway:true,cutPhi:.7};
+  R.PattyView.prototype.updateCheese.call(v);
+  const plane=v.underMeshes[0].material.clippingPlanes[0];assert.ok(Math.abs(plane.distanceToPoint(g.position))<1e-10);
+  assert.equal(v.cheeseMeshes[0].material.clippingPlanes[0],plane);
+  v.cutaway=false;R.PattyView.prototype.updateCheese.call(v);assert.equal(v.underMeshes[0].material.clippingPlanes,null);assert.equal(v.cheeseMeshes[0].material.clippingPlanes,null);
+});
 test('room smoke gathers overhead, lingers after cooking and clears through an open window',()=>{
   const s=state();s.diag.smoke=1;
   for(let i=0;i<2400;i++)P.stepRoom(s,.05);

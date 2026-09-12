@@ -7,6 +7,7 @@
   'use strict';
   const T = root.THREE;
   const P = root.BurgerPhysics;
+  const VA = root.KitchenAssets;
   const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
   const lerp = (a, b, t) => a + (b - a) * t;
   const smoothstep = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
@@ -17,6 +18,11 @@
 
 
   function bunProfile(R,half) {
+    if(half==='top'){
+      const p=[{r:0,y:0,v:0},{r:R*.96,y:0,v:.08},{r:R,y:.003,v:.18}];
+      for(let i=0;i<=20;i++){const a=i/20*Math.PI/2;p.push({r:R*Math.cos(a),y:.004+.021*Math.sin(a),v:.18+.82*i/20});}
+      return p;
+    }
     return half === 'top'
         ? [{ r: 0, y: 0, v: 0 }, { r: R * 0.97, y: 0, v: 0.15 }, { r: R, y: 0.006, v: 0.3 }, { r: R * 0.93, y: 0.013, v: 0.5 }, { r: R * 0.72, y: 0.02, v: 0.7 }, { r: R * 0.4, y: 0.024, v: 0.85 }, { r: 0, y: 0.025, v: 1 }]
         : [{ r: 0, y: 0, v: 0 }, { r: R * 0.92, y: 0, v: 0.2 }, { r: R, y: 0.007, v: 0.4 }, { r: R * 0.98, y: 0.017, v: 0.6 }, { r: R * 0.85, y: 0.022, v: 0.8 }, { r: 0, y: 0.022, v: 1 }];
@@ -59,7 +65,7 @@
 
   // ------------------------------------------------------------ colour model
   const COL = {
-    frozen: [190, 120, 130], raw: [150, 32, 44], rawWarm: [176, 58, 66], pink: [205, 118, 118],
+    frozen: [190, 120, 130], raw: [177, 53, 61], rawWarm: [184, 65, 70], pink: [205, 118, 118],
     cooked: [158, 112, 96], dry: [118, 82, 62],
     fat: [236, 226, 208], fatMelt: [238, 200, 140],
     brown: [[168, 122, 88], [190, 140, 92], [160, 100, 52], [122, 66, 30], [86, 42, 20], [56, 28, 14], [32, 18, 12], [22, 14, 10]],
@@ -125,6 +131,16 @@
       ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(x, y, r * rand(0.6, 1.4), r * rand(0.6, 1.4), Math.random() * 3, 0, Math.PI * 2); ctx.fill();
     }
     return cv;
+  }
+  function minceFat(size,count){
+    const cv=document.createElement('canvas');cv.width=cv.height=size;const c=cv.getContext('2d');
+    let seed=8291;const rnd=()=>((seed=(Math.imul(seed,1664525)+1013904223)>>>0)/4294967296);
+    c.lineCap='round';
+    for(let i=0;i<count;i++){
+      const x=rnd()*size,y=rnd()*size,a=rnd()*6.28,len=(1+Math.pow(rnd(),2)*8)*size/512;
+      c.strokeStyle=`rgba(255,255,255,${.25+rnd()*.65})`;c.lineWidth=(.5+rnd()*1.5)*size/512;
+      c.beginPath();c.moveTo(x,y);c.quadraticCurveTo(x+Math.cos(a+.6)*len*.6,y+Math.sin(a+.6)*len*.6,x+Math.cos(a)*len,y+Math.sin(a)*len);c.stroke();
+    }return cv;
   }
 
   // ------------------------------------------------------------ geometry
@@ -219,7 +235,7 @@
     for (const g of geos) if (!(keep && keep.has(g))) g.dispose();
     for (const m of mats) {
       if (keep && keep.has(m)) continue;
-      for (const k of MAPS) { const t = m[k]; if (t && t.isTexture && !(keep && keep.has(t))) t.dispose(); }
+      for (const k of MAPS) { const t = m[k]; if (t && t.isTexture && !VA?.shared.has(t) && !(keep && keep.has(t))) t.dispose(); }
       m.dispose();
     }
   }
@@ -308,11 +324,14 @@
       this.group = new T.Group(); vp.scene.add(this.group);
       this.atlas = document.createElement('canvas'); this.atlas.width = 1024; this.atlas.height = 1024;
       this.atlasTex = new T.CanvasTexture(this.atlas); this.atlasTex.anisotropy = 8;
+      this.atlasTex.encoding=T.sRGBEncoding;
       this.roughCv = document.createElement('canvas'); this.roughCv.width = 256; this.roughCv.height = 256;
       this.roughTex = new T.CanvasTexture(this.roughCv);
       this.cut = document.createElement('canvas'); this.cut.width = 512; this.cut.height = 256;
       this.cutTex = new T.CanvasTexture(this.cut);
+      this.cutTex.encoding=T.sRGBEncoding;
       this.mat = new T.MeshPhysicalMaterial({ map: this.atlasTex, roughnessMap: this.roughTex, roughness: 0.75, metalness: 0, clearcoat: 0.25, clearcoatRoughness: 0.5 });
+      this.mat.bumpMap=VA.texture('mince').relief;this.mat.bumpScale=.00065;
       this.cutMat = new T.MeshStandardMaterial({ map: this.cutTex, roughness: 0.6, side: T.DoubleSide });
       this.mesh = new T.Mesh(new T.BufferGeometry(), this.mat); this.mesh.castShadow = true; this.mesh.receiveShadow = true; this.mesh.userData.patty = p; this.group.add(this.mesh);
       this.cutMesh = new T.Mesh(new T.BufferGeometry(), this.cutMat); this.cutMesh.visible = false; this.cutMesh.castShadow = true; this.cutMesh.userData.patty = p; this.group.add(this.cutMesh);
@@ -332,6 +351,15 @@
       const prof = pattyProfile(R, h, dome, p.dimple, raw);
       const phi = this.cutaway ? Math.PI : Math.PI * 2;
       this.mesh.geometry.dispose(); this.mesh.geometry = buildLathe(prof, 96, phi, this.cutaway ? this.cutPhi : 0);
+      // Hand-formed edges. Leave cut boundaries intact so the cross-section still seals.
+      const vertices=this.mesh.geometry.attributes.position;
+      for(let i=0;i<vertices.count;i++){
+        const x=vertices.getX(i),z=vertices.getZ(i),r=Math.hypot(x,z),a=Math.atan2(z,x),edge=smoothstep(R*.7,R,r);
+        const border=this.cutaway?Math.sin((i%97)/96*Math.PI):1;
+        const f=1+edge*border*(.012*Math.sin(a*7+p.id)+.007*Math.sin(a*17+vertices.getY(i)*190));
+        vertices.setXYZ(i,x*f,vertices.getY(i),z*f);
+      }
+      this.mesh.geometry.computeVertexNormals();
       if (this.served) this.buildBuns();
       if (this.cutaway) {
         this.cutMesh.geometry.dispose(); this.cutMesh.geometry = new T.ShapeGeometry(crossSectionShape(prof), 4);
@@ -383,7 +411,7 @@
       if (bf.bottom) half(bottom, -this.bunBottomH, p.bunSoak || 0, bf.bottom, true);
       if (!bf.top) return;
       this.bunTop = half(top, 0, 0, bf.top, false);
-      const seedGeo = new T.SphereGeometry(1, 6, 5); const seedMat = new T.MeshStandardMaterial({ color: 0xf6ead2, roughness: 0.6 });
+      const seedGeo = new T.SphereGeometry(1, 6, 5); const seedMat = VA.material('bread',0xdcc59a);
       let sd = 7 + (p.id || 0); const rnd = () => { sd = (sd * 1103515245 + 12345) & 0x7fffffff; return sd / 0x7fffffff; };
       for (let i = 0; i < 70; i++) {
         const a = rnd() * Math.PI * 2, rr = Math.sqrt(rnd()) * Rb * 0.9;
@@ -424,6 +452,7 @@
       }
       c.globalCompositeOperation = 'multiply'; c.globalAlpha = 0.7; c.drawImage(vp.noise, 0, 0, W, H); c.globalAlpha = 1;
       c.globalCompositeOperation = 'multiply'; c.globalAlpha = 0.35; c.drawImage(vp.noiseFine, 0, 0, W, H); c.globalAlpha = 1;
+      c.globalAlpha=.7;c.drawImage(VA.texture('mince').map.image,0,0,W,H);c.globalAlpha=1;
       c.globalCompositeOperation = 'source-over';
       const fatLeft = (k, j) => { const i = k * Nr + j; return clamp((p.fs[i] + p.fl[i]) / (p.fat0c[i] + 1e-12), 0, 1); };
       const fatLeftLayer = (k) => { let f = 0; for (let j = 0; j < Nr; j++) f += fatLeft(k, j) * p.aj[j]; return f; };
@@ -605,59 +634,30 @@
       }
     }
     updateCheese() {
-      const p = this.p, g = this.group;
-      while (this.cheeseMeshes.length > p.cheeses.length) { const m = this.cheeseMeshes.pop(); g.remove(m); disposeTree(m); }
-      while (this.cheeseMeshes.length < p.cheeses.length) {
-        const k = this.cheeseMeshes.length;
-        const geo = new T.PlaneGeometry(0.095, 0.095, 14, 14); geo.rotateX(-Math.PI / 2);
-        geo.setAttribute('color', new T.BufferAttribute(new Float32Array(geo.attributes.position.count * 3).fill(1), 3));
-        const m = new T.Mesh(geo, new T.MeshPhysicalMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.5, clearcoat: 0.3, side: T.DoubleSide }));
-        m.castShadow = true; m.userData.base = geo.attributes.position.array.slice(); m.rotation.y = p.cheeses[k].rot; g.add(m); this.cheeseMeshes.push(m);
-      }
-      const yellow = [0.95, 0.70, 0.24], melted = [0.99, 0.74, 0.20], golden = [0.72, 0.42, 0.10], dark = [0.28, 0.13, 0.05];
-      const skirtColour = (sk, onTop) => { if (!sk) return onTop; let c = mix3(onTop, golden, clamp(sk.brown / 2.5, 0, 1)); c = mix3(c, dark, clamp((sk.brown - 2.5) / 3, 0, 1)); return mix3(c, [0.06, 0.05, 0.04], clamp(sk.char / 0.8, 0, 1)); };
-      while (this.underMeshes.length > p.cheeseUnder.length) { const m = this.underMeshes.pop(); g.remove(m); disposeTree(m); }
-      while (this.underMeshes.length < p.cheeseUnder.length) {
-        const geo = new T.PlaneGeometry(0.095, 0.095, 2, 2); geo.rotateX(-Math.PI / 2);
-        const m = new T.Mesh(geo, new T.MeshPhysicalMaterial({ color: 0xf2b23c, roughness: 0.5, clearcoat: 0.2, side: T.DoubleSide }));
-        m.receiveShadow = true; g.add(m); this.underMeshes.push(m);
-      }
-      for (let k = 0; k < this.underMeshes.length; k++) {
-        const mesh = this.underMeshes[k], ch = p.cheeseUnder[k], sk = ch.skirt;
-        const lift = 0.0012 * p.cheeseUnder.length;
-        mesh.rotation.y = ch.rot; mesh.position.y = -lift + 0.0005 + k * 0.0012; const sp = 1.06 + 0.06 * ch.melt; mesh.scale.set(sp, 1, sp);
-        const c = skirtColour(sk, mix3(yellow, melted, ch.melt)); mesh.material.color.setRGB(c[0], c[1], c[2]);
-        mesh.material.roughness = clamp(0.5 - 0.3 * ch.melt + (sk ? 0.4 * sk.dry : 0), 0.05, 1);
-      }
-      const TAU = Math.PI * 2;
-      const clipFor = (rot) => {
-        if (!this.cutaway) return null;
-        const cr = Math.cos(rot), sr = Math.sin(rot), cp = this.cutPhi, dx = Math.cos(cp), dz = Math.sin(cp);
-        return (x, z) => { const gx = x * cr + z * sr, gz = -x * sr + z * cr; const rel = ((Math.atan2(gz, gx) - cp) % TAU + TAU) % TAU; if (rel < Math.PI) return null; const t = gx * dx + gz * dz; const px = t * dx, pz = t * dz; return [px * cr - pz * sr, px * sr + pz * cr]; };
-      };
-      for (let k = 0; k < this.cheeseMeshes.length; k++) {
-        const mesh = this.cheeseMeshes[k], ch = p.cheeses[k], R = p.D / 2, geo = mesh.geometry, pos = geo.attributes.position.array, col = geo.attributes.color.array, base = mesh.userData.base;
-        const clip = clipFor(ch.rot);
-        const topY = p.h * (1 + 0.28 * p.dome) + k * 0.0015; mesh.position.y = topY + 0.0008;
-        const floorLocal = -mesh.position.y + 0.0006 + k * 0.0004;
-        const sk = ch.skirt; const sc = 1 + 0.15 * ch.melt + 0.004 * k;
-        const onTop = mix3(yellow, melted, ch.melt);
-        const skirtCol = skirtColour(sk, onTop);
-        for (let i = 0; i < pos.length; i += 3) {
-          const x = base[i], z = base[i + 2]; const rr = Math.hypot(x, z);
-          const over = Math.max(0, rr - R * 0.98);
-          let y = base[i + 1] - over * (0.2 + 1.6 * ch.melt);
-          const touching = y <= floorLocal;
-          let spread = sc;
-          if (touching) { y = floorLocal; spread = sc + (sk ? 0.18 * sk.melt : 0) + 0.1 * ch.melt * over / Math.max(rr, 1e-4); }
-          pos[i] = x * spread; pos[i + 2] = z * spread; pos[i + 1] = y;
-          if (clip) { const q = clip(pos[i], pos[i + 2]); if (q) { pos[i] = q[0]; pos[i + 2] = q[1]; } }
-          const cc = touching || ch.submerged || ch.fried ? skirtCol : onTop;
-          col[i] = cc[0]; col[i + 1] = cc[1]; col[i + 2] = cc[2];
+      const p=this.p,g=this.group,CM=root.CheeseMesh;
+      const plane=this.cheesePlane||(this.cheesePlane=new T.Plane());
+      plane.normal.set(-Math.sin(this.cutPhi||0),0,Math.cos(this.cutPhi||0));plane.constant=-plane.normal.dot(g.position);
+      const yellow=lin([243,183,61]),melted=lin([249,187,55]),gold=lin([184,107,26]),dark=lin([71,33,13]),char=lin([16,13,10]);
+      for(const [slices,meshes,fried] of [[p.cheeses,this.cheeseMeshes,false],[p.cheeseUnder,this.underMeshes,true]]){
+        while(meshes.length>slices.length){const mesh=meshes.pop();g.remove(mesh);disposeTree(mesh);}
+        while(meshes.length<slices.length){
+          const mesh=new T.Mesh(CM.create(),new T.MeshPhysicalMaterial({vertexColors:true,roughness:.5,clearcoat:.3,side:T.DoubleSide}));mesh.castShadow=mesh.receiveShadow=true;g.add(mesh);meshes.push(mesh);
         }
-        geo.attributes.position.needsUpdate = true; geo.attributes.color.needsUpdate = true; geo.computeVertexNormals();
-        mesh.material.roughness = clamp(0.6 - 0.45 * ch.melt + (sk ? 0.35 * sk.dry : 0), 0.05, 1);
-        mesh.material.clearcoat = 0.3 * (1 - (sk ? sk.dry : 0));
+        slices.forEach((ch,k)=>{
+          const mesh=meshes[k],sk=ch.skirt||{},mat=mesh.material;
+          if(!!mat.clippingPlanes!==this.cutaway)mat.needsUpdate=true;mat.clippingPlanes=this.cutaway?[plane]:null;mat.clipShadows=this.cutaway;
+          mesh.rotation.y=ch.rot||0;mesh.position.y=fried?-.0012*slices.length:0;
+          const key=[ch.mass??.02,ch.melt||0,p.D,p.h,p.dome,k,fried].join('|');
+          if(mesh.userData.shapeKey!==key){CM.update(mesh.geometry,ch,{radius:p.D/2,height:p.h,dome:p.dome,layer:k,fried});mesh.userData.shapeKey=key;}
+          const onTop=mix3(yellow,melted,ch.melt||0);
+          let skirt=mix3(onTop,gold,clamp((sk.brown||0)/2.5,0,1));skirt=mix3(skirt,dark,clamp(((sk.brown||0)-2.5)/3,0,1));skirt=mix3(skirt,char,clamp((sk.char||0)/.8,0,1));
+          const pos=mesh.geometry.attributes.position,col=mesh.geometry.attributes.color;
+          for(let i=0;i<pos.count;i++){
+            const contact=fried||ch.submerged||ch.fried?1:1-smoothstep(.0015+k*.0011,.0045+k*.0011,pos.getY(i));
+            for(let c=0;c<3;c++)col.array[i*3+c]=lerp(onTop[c],skirt[c],contact);
+          }
+          col.needsUpdate=true;mat.roughness=clamp(.55-.38*(ch.melt||0)+.35*(sk.dry||0),.12,.95);mat.clearcoat=.3*(1-(sk.dry||0));
+        });
       }
     }
   }
@@ -739,8 +739,8 @@
     buildBun() {
       const R = this.it.D / 2;
       const prof=bunProfile(R,this.it.half);
-      this.crustMat = new T.MeshStandardMaterial({ color: 0xc98a45, roughness: 0.78 });
-      const dome = new T.Mesh(buildLathe(prof, 48, Math.PI * 2), this.crustMat); dome.castShadow = true; dome.receiveShadow = true;
+      this.crustMat = VA.material('bread',0xc98a45);
+      const dome = new T.Mesh(buildLathe(prof, 80, Math.PI * 2), this.crustMat); dome.castShadow = true; dome.receiveShadow = true;
       this.group.add(dome);
       const crumb=crumbTexture(this.it.id+41);
       this.faceMat = new T.MeshStandardMaterial({ color: 0xeedebe, map:crumb,bumpMap:crumb,bumpScale:.00035,roughness: 0.85, side: T.DoubleSide });
@@ -748,12 +748,12 @@
       face.rotation.x = Math.PI / 2; face.position.y = 0.0004; // the cut plane, facing down
       this.group.add(face); this.faceMesh = face;
       if (this.it.half === 'top') {
-        const seedGeo = new T.SphereGeometry(1, 6, 5), seedMat = new T.MeshStandardMaterial({ color: 0xf6ead2, roughness: 0.6 });
+        const seedGeo = new T.SphereGeometry(1, 6, 5), seedMat = VA.material('bread',0xdcc59a);
         let sd = 13 + this.it.id; const rnd = () => { sd = (sd * 1103515245 + 12345) & 0x7fffffff; return sd / 0x7fffffff; };
         for (let i = 0; i < 40; i++) {
           const a = rnd() * Math.PI * 2, rr = Math.sqrt(rnd()) * R * 0.85;
           const sm = new T.Mesh(seedGeo, seedMat);
-          sm.position.set(Math.cos(a) * rr, 0.024 * (1 - (rr / R) ** 2) + 0.0005, Math.sin(a) * rr);
+          sm.position.set(Math.cos(a) * rr, .004+.021*Math.sqrt(1-(rr/R)**2)+.0005, Math.sin(a) * rr);
           sm.scale.set(0.0016, 0.0009, 0.0011); sm.rotation.y = rnd() * 3; this.group.add(sm);
         }
       }
@@ -778,7 +778,10 @@
       g.setAttribute('normal', new T.BufferAttribute(nor, 3));
       g.setIndex(idx);
       this.baconGeo = g; this.NL = NL; this.NW = NW;
+      const uv=new Float32Array(NL*NW*4);for(let side=0;side<2;side++)for(let i=0;i<NL;i++)for(let j=0;j<NW;j++){const k=(side*NL*NW+i*NW+j)*2;uv[k]=j/(NW-1);uv[k+1]=i/(NL-1);}
+      g.setAttribute('uv',new T.BufferAttribute(uv,2));
       const m = new T.Mesh(g, new T.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.45, clearcoat: 0.5, clearcoatRoughness: 0.3, side: T.DoubleSide }));
+      m.material.bumpMap=VA.texture('mince').relief;m.material.bumpScale=.00012;
       m.castShadow = true; m.frustumCulled = false; // its vertices move every frame; the bounding sphere would be a stale point at the origin
       this.baconMesh = m; this.group.add(m);
     }
@@ -791,8 +794,8 @@
       const p1 = rnd() * 6.3, p2 = rnd() * 6.3;
       for (let i = 0; i < N; i++) { const a = (i / N) * Math.PI * 2; shape.push(0.90 + 0.07 * Math.sin(3 * a + p1) + 0.05 * Math.sin(5 * a + p2) + 0.02 * rnd()); }
       this.eggShape = shape;
-      const pos = new Float32Array((N + 1) * 2 * 3), idx = [];
-      for (let i = 0; i < N; i++) { const a = 1 + i * 2, b = a + 1, c = a + 2, d = a + 3; idx.push(0, a, c, a, b, d, a, d, c); }
+      const pos = new Float32Array((N * 2 + 1) * 3), idx = [];
+      for (let i = 0; i < N; i++) { const a = 1 + i * 2, b = a + 1, c = 1 + ((i+1)%N)*2, d = c+1; idx.push(0, a, c, a, b, d, a, d, c); }
       const g = new T.BufferGeometry(); g.setAttribute('position', new T.BufferAttribute(pos, 3)); g.setIndex(idx);
       this.whiteGeo = g; this.eggN = N; this.eggR = R;
       this.whiteMat = new T.MeshPhysicalMaterial({ color: 0xf6f6f2, roughness: 0.35, clearcoat: 0.6, transparent: true, opacity: 0.75, side: T.DoubleSide });
@@ -813,13 +816,13 @@
       const lace = new T.Mesh(lg, this.laceMat);
       this.laceMesh = lace; this.group.add(lace);
       this.yolkMat = new T.MeshPhysicalMaterial({ color: 0xe8921c, roughness: 0.25, clearcoat: 0.8, clearcoatRoughness: 0.15 });
-      const y = new T.Mesh(new T.SphereGeometry(0.021, 24, 16), this.yolkMat);
+      const y = new T.Mesh(new T.SphereGeometry(.021,40,20,0,Math.PI*2,0,Math.PI/2), this.yolkMat);
       y.scale.set(1, 0.55, 1); y.castShadow = true; this.yolkMesh = y; this.group.add(y);
     }
     // ---- sliced onion: a heap of curved slivers that shrink, slump and darken. Each one is a
     // ribbon cut from a ring — which is what a slice of onion is — lying flat in the pile.
     buildOnions() {
-      const N = 110, NA = 9;
+      const N = 110, NA = 16;
       const pos = new Float32Array(NA * 2 * 3), idx = [];
       for (let i = 0; i < NA; i++) {
         const a = (i / (NA - 1) - 0.5) * 2.3, c = Math.cos(a), s = Math.sin(a);
@@ -828,8 +831,13 @@
         pos[k + 3] = c; pos[k + 4] = sag; pos[k + 5] = s;
         if (i < NA - 1) { const v = i * 2; idx.push(v, v + 2, v + 1, v + 1, v + 2, v + 3); }
       }
-      const geo = new T.BufferGeometry();
-      geo.setAttribute('position', new T.BufferAttribute(pos, 3)); geo.setIndex(idx); geo.computeVertexNormals();
+      const geo = new T.BufferGeometry(),solid=new Float32Array(pos.length*2),count=pos.length/3;
+      solid.set(pos);solid.set(pos,pos.length);
+      for(let i=0;i<count;i++)solid[i*3+1]+=.045;
+      const faces=idx.slice();for(let i=0;i<idx.length;i+=3)faces.push(idx[i]+count,idx[i+2]+count,idx[i+1]+count);
+      const edge=[];for(let i=0;i<NA;i++)edge.push(i*2);for(let i=NA-1;i>=0;i--)edge.push(i*2+1);
+      for(let i=0;i<edge.length;i++){const a=edge[i],b=edge[(i+1)%edge.length];faces.push(a,b,a+count,b,b+count,a+count);}
+      geo.setAttribute('position', new T.BufferAttribute(solid, 3)); geo.setIndex(faces); geo.computeVertexNormals();
       this.onionMat = new T.MeshPhysicalMaterial({ color: 0xece5d4, roughness: 0.36, clearcoat: 0.65,clearcoatRoughness:.18, side: T.DoubleSide, transparent: true, opacity: 0.87 });
       const inst = new T.InstancedMesh(geo, this.onionMat, N);
       inst.castShadow = true; inst.receiveShadow = true;
@@ -1011,11 +1019,13 @@
     }
     // ---- static scenery
     _buildLights() {
-      this.scene.add(new T.HemisphereLight(0xfff7e8, 0xb5ac8f, 0.72));
-      const key = new T.SpotLight(0xfff0d8, 0.8, 5, Math.PI / 5, 0.5, 1);
+      this.scene.add(new T.HemisphereLight(0xe9f2ff, 0x645446, 0.38));
+      const key = new T.SpotLight(0xfff0d8, 1.05, 5, Math.PI / 4, 0.8, 1);
       key.position.set(0.3, 1.3, 0.5); key.castShadow = true; key.shadow.mapSize.set(2048, 2048); key.shadow.bias = -0.0004; key.shadow.radius = 4;
       key.target.position.set(0, 0, 0); this.scene.add(key); this.scene.add(key.target);
-      const fill = new T.DirectionalLight(0xe2f4ff, 0.72); fill.position.set(-0.6, 2.0, 2.8); this.scene.add(fill);
+      const fill = new T.DirectionalLight(0xfff3db, 1.0); fill.position.set(-1.2, 3.0, 3.5);
+      fill.castShadow=true;fill.shadow.mapSize.set(2048,2048);fill.shadow.camera.left=-3;fill.shadow.camera.right=3;fill.shadow.camera.top=3;fill.shadow.camera.bottom=-3;fill.shadow.camera.near=.1;fill.shadow.camera.far=10;fill.shadow.bias=-.00015;fill.shadow.normalBias=.008;
+      this.scene.add(fill);
       this.flameLight = new T.PointLight(0xff8a2a, 0, 0.6, 2); this.flameLight.position.set(0, 0.022, 0); this.scene.add(this.flameLight);
       this.key = key;
     }
@@ -1050,9 +1060,14 @@
     _buildReflections() {
       // Capture the actual windows and room once; food and particles never incur
       // six extra renders per frame. Rough materials use the filtered mip levels.
-      const target=new T.WebGLCubeRenderTarget(128,{generateMipmaps:true,minFilter:T.LinearMipmapLinearFilter});
+      const target=new T.WebGLCubeRenderTarget(256,{generateMipmaps:true,minFilter:T.LinearMipmapLinearFilter});
       const capture=new T.CubeCamera(.03,16,target); capture.position.set(0,.12,0);
+      // The ceiling is omitted from camera geometry for overhead play. Include its
+      // broad, softly lit reflection so polished metal reflects a room, not blue sky.
+      const ceiling=new T.Mesh(new T.PlaneGeometry(5.5,5.5),new T.MeshBasicMaterial({color:0xf4ead9}));
+      ceiling.rotation.x=Math.PI/2;ceiling.position.y=1.77;this.scene.add(ceiling);
       capture.update(this.renderer,this.scene);
+      this.scene.remove(ceiling);ceiling.geometry.dispose();ceiling.material.dispose();
       const pmrem=new T.PMREMGenerator(this.renderer);
       this.roomReflection=pmrem.fromCubemap(target.texture);
       this.scene.environment=this.roomReflection.texture;
@@ -1100,7 +1115,7 @@
     }
     _buildStove() {
       const g = new T.Group(); this.stove = g;
-      const top = new T.Mesh(new T.BoxGeometry(0.43, 0.03, 0.40), new T.MeshStandardMaterial({ color: 0x3a4140, roughness: 0.3, metalness: 0.7 }));
+      const top = new T.Mesh(VA.roundedBox(.43,.03,.40,.009), VA.material('steel',0x9ba7a5));
       top.position.y = -0.015; top.receiveShadow = true; g.add(top);
       this.burnerGroup = null; this.flames = []; this.setStove('gas');
       // pan
@@ -1147,6 +1162,38 @@
     /** Build the burner for a stove type. Each has its own pan height: a gas pan sits on a grate
      *  above the flames, an electric pan rests on the coil in its drip bowl, an induction pan sits
      *  flush on the glass. */
+    _buildHobControls(id,g) {
+      this.hobDial=null;this.hobLevels=[];this.hobPower=null;
+      if(id==='charcoal')return; // The kettle already has a state-driven damper wheel.
+      const controls=new T.Group();controls.name=id+' hob controls';controls.position.set(0,.003,-.218);g.add(controls);
+      const ink=new T.MeshBasicMaterial({color:id==='induction'?0xb4b7b1:0x3b4440});
+      const stroke=(x,z,w,d,material=ink)=>{const m=new T.Mesh(new T.PlaneGeometry(w,d),material);m.rotation.x=-Math.PI/2;m.position.set(x,.002,z);controls.add(m);return m;};
+      if(id==='induction'){
+        controls.rotation.y=Math.PI; // Read from the cook's side of the island.
+        // Printed touch controls on the glass, with a ten-step illuminated power strip.
+        const power=new T.Mesh(new T.RingGeometry(.007,.0085,32,1,.3,Math.PI*2-.6),ink);power.rotation.set(-Math.PI/2,0,Math.PI/2);power.position.set(-.11,.002,0);controls.add(power);
+        stroke(-.11,-.006,.0018,.010);stroke(-.068,0,.011,.0018);stroke(.112,0,.011,.0018);stroke(.112,0,.0018,.011);
+        for(let i=0;i<10;i++){
+          const material=new T.MeshBasicMaterial({color:0x34221b});this.hobLevels.push(stroke(-.04+i*.012,0,.007,.013,material));
+        }
+        return;
+      }
+      const panel=new T.Mesh(VA.roundedBox(.43,.023,.084,.006),VA.material('steel',0x9ba7a5));panel.position.y=-.013;panel.receiveShadow=true;controls.add(panel);
+      const bezel=new T.Mesh(new T.CylinderGeometry(.023,.025,.004,48),VA.material('steel',0xc6c5bb));bezel.position.set(0,.003,0);controls.add(bezel);
+      const dial=new T.Group();dial.position.y=.005;controls.add(dial);this.hobDial=dial;
+      const grip=new T.Mesh(new T.CylinderGeometry(.017,.021,.018,48),VA.material('rubber',0x303b38));grip.position.y=.009;grip.castShadow=true;dial.add(grip);
+      const pointer=new T.Mesh(VA.roundedBox(.002,.001,.009,.0002),new T.MeshBasicMaterial({color:0xf5e8ce}));pointer.position.set(0,.0185,-.010);dial.add(pointer);
+      for(let i=0;i<=10;i++){
+        const a=-Math.PI*.75+i*Math.PI*1.5/10;
+        const tick=stroke(Math.sin(a)*.030,-Math.cos(a)*.030,.0012,i%5===0?.005:.0028);tick.rotation.z=-a;
+      }
+      // Separate power lamp and a small engraved burner symbol.
+      const lamp=new T.Mesh(new T.CircleGeometry(.003,24),new T.MeshBasicMaterial({color:0x382519}));lamp.rotation.x=-Math.PI/2;lamp.position.set(.068,.002,0);controls.add(lamp);this.hobPower=lamp.material;
+      const ring=new T.Mesh(new T.RingGeometry(.007,.008,32),ink);ring.rotation.x=-Math.PI/2;ring.position.set(-.068,.002,0);controls.add(ring);
+      if(id==='electric'){
+        const inner=new T.Mesh(new T.RingGeometry(.003,.004,24),ink);inner.rotation.x=-Math.PI/2;inner.position.set(-.068,.002,0);controls.add(inner);
+      }else for(const dx of [-.011,.011])stroke(-.068+dx,0,.004,.001);
+    }
     setStove(id) {
       this.stoveType = id;
       if (this.burnerGroup) { this.stove.remove(this.burnerGroup); disposeTree(this.burnerGroup); } // a swap is a whole new burner: give the old one's meshes back
@@ -1154,7 +1201,7 @@
       this.flames = []; this.coilMat = null; this.indLed = null;
       if (id === 'electric') {
         // chrome drip bowl with a spiral sheathed element; the pan sits on top of the coil
-        const chrome = new T.MeshStandardMaterial({ color: 0xb4b4b4, metalness: 0.9, roughness: 0.35, side: T.DoubleSide });
+        const chrome = VA.material('steel',0xc4cbcd);chrome.side=T.DoubleSide;
         const bowl = new T.Mesh(new T.CylinderGeometry(0.118, 0.075, 0.013, 56, 1, true), chrome); bowl.position.y = 0.0065; bowl.receiveShadow = true; g.add(bowl);
         const floor = new T.Mesh(new T.CircleGeometry(0.075, 56), chrome); floor.rotation.x = -Math.PI / 2; floor.position.y = 0.0006; floor.receiveShadow = true; g.add(floor);
         const coilY = 0.0125, coilR = 0.0045;
@@ -1180,9 +1227,9 @@
         // a 22" kettle on the counter: enamelled bowl on three legs, a bed of lump charcoal, a
         // steel grate 2 cm below the rim, and a domed lid with a wooden handle that sits on when
         // the lid is on. The grate is the cooking surface: PAN_Y is its top.
-        const enamel = new T.MeshPhysicalMaterial({ color: 0x0c0c0e, roughness: 0.25, metalness: 0.2, clearcoat: 0.8, clearcoatRoughness: 0.15 });
+        const enamel = VA.material('paint',0x263736);enamel.clearcoat=.85;enamel.clearcoatRoughness=.14;
         const inside = new T.MeshStandardMaterial({ color: 0x1a1816, roughness: 0.75, metalness: 0.1, side: T.BackSide });
-        const steel = new T.MeshStandardMaterial({ color: 0x3a3a3c, roughness: 0.5, metalness: 0.8 });
+        const steel = VA.material('steel',0xa4adae);steel.roughness=.36;
         const Rk = 0.285, bowlBottom = 0.06, bowlTop = 0.235;
         this.PAN_Y = bowlTop - 0.022; this.stainY = 0.0012;
         const bp = []; const nb = 16;
@@ -1201,6 +1248,7 @@
         const ash = new T.Mesh(new T.CircleGeometry(0.2, 48), this.ashMat); ash.rotation.x = -Math.PI / 2; ash.position.y = bedY - 0.012; g.add(ash);
         this.ashDisc = ash; this.ashY0 = bedY - 0.012;
         this.coalMat = new T.MeshStandardMaterial({ color: 0x0f0e0d, roughness: 0.95, emissive: new T.Color(0xff3a08), emissiveIntensity: 0 });
+        this.coalMat.bumpMap=VA.texture('iron').relief;this.coalMat.bumpScale=.0015;
         const lumpGeo = new T.DodecahedronGeometry(0.019, 0);
         const lumps = new T.InstancedMesh(lumpGeo, this.coalMat, 160); lumps.castShadow = true; lumps.receiveShadow = true;
         let sd = 99; const rnd = () => { sd = (sd * 1103515245 + 12345) & 0x7fffffff; return sd / 0x7fffffff; };
@@ -1219,8 +1267,8 @@
         // black, glowing at its edges once it is hot enough to be smouldering.
         this.woodMats = []; this.woodMeshes = [];
         for (let i = 0; i < 6; i++) {
-          const m = new T.MeshStandardMaterial({ color: 0x9e7342, roughness: 0.95, emissive: new T.Color(0xff3c08), emissiveIntensity: 0 });
-          const box = new T.Mesh(new T.BoxGeometry(1, 1, 1), m); // unit cube, scaled to the chunk's side
+          const m=VA.material('wood',0x9e7342);m.roughness=.95;m.emissive.setHex(0xff3c08);m.emissiveIntensity=0;
+          const box = new T.Mesh(VA.roundedBox(1,1,1,.05,2), m); // unit cube, scaled to the chunk's side
           const a = (i * 2.4) + 0.7, rr = 0.055 + 0.035 * (i % 3);
           box.userData.home = { x: Math.cos(a) * rr, z: Math.sin(a) * rr, ry: a * 1.7 };
           box.castShadow = true; box.visible = false;
@@ -1239,7 +1287,7 @@
         lp[nl].r = 0.0001;
         const dome = new T.Mesh(buildLathe(lp, 72, Math.PI * 2), enamel); dome.castShadow = true; lid.add(dome);
         const lrim = new T.Mesh(new T.TorusGeometry(Rk, 0.005, 8, 96), steel); lrim.rotation.x = Math.PI / 2; lrim.position.y = 0.004; lid.add(lrim);
-        const wood = new T.MeshStandardMaterial({ color: 0x6b4a2a, roughness: 0.7 });
+        const wood = VA.material('wood',0x997047);
         const handle = new T.Mesh(new T.CylinderGeometry(0.012, 0.012, 0.11, 12), wood); handle.rotation.z = Math.PI / 2; handle.position.y = lidH + 0.035; lid.add(handle);
         for (const x of [-0.045, 0.045]) { const post = new T.Mesh(new T.CylinderGeometry(0.004, 0.004, 0.03, 8), steel); post.position.set(x, lidH + 0.018, 0); lid.add(post); }
         // The top vent, on the shoulder of the dome where a kettle's actually is (clear of the
@@ -1276,8 +1324,8 @@
         this.PAN_Y = 0.036;
         this.stainY = 0.0012;
         const grateTop = this.PAN_Y - 0.0005, barH = 0.010, barY = grateTop - barH / 2;
-        const grateMat = new T.MeshStandardMaterial({ color: 0x141312, roughness: 0.9, metalness: 0.3 });
-        const addBox = (w, h, d, x, y, z, ry) => { const m = new T.Mesh(new T.BoxGeometry(w, h, d), grateMat); m.position.set(x, y, z); m.rotation.y = ry || 0; m.castShadow = true; m.receiveShadow = true; g.add(m); return m; };
+        const grateMat = VA.material('iron',0x303332);
+        const addBox = (w, h, d, x, y, z, ry) => { const m = new T.Mesh(VA.roundedBox(w,h,d,.0025,2), grateMat); m.position.set(x, y, z); m.rotation.y = ry || 0; m.castShadow = true; m.receiveShadow = true; g.add(m); return m; };
         const half = 0.175;
         addBox(2 * half + 0.012, barH, 0.012, 0, barY, half); addBox(2 * half + 0.012, barH, 0.012, 0, barY, -half);
         addBox(0.012, barH, 2 * half + 0.012, half, barY, 0); addBox(0.012, barH, 2 * half + 0.012, -half, barY, 0);
@@ -1299,6 +1347,7 @@
           g.add(f); this.flames.push(f);
         }
       }
+      this._buildHobControls(id,g);
       this.flameLight.position.y = id === 'charcoal' ? this.coalY + 0.03 : this.PAN_Y - 0.01;
       if (id !== 'charcoal') { this.coals = null; this.coalMat = null; this.kettleLid = null; this.coalSeeds = null; this.woodMeshes = null; this.ashDisc = null; this.ventWheel = null; this.ventPos = null; this.grateBars = null; }
       if (this.panSpec) this.setPan(this.panSpec.id);
@@ -1311,25 +1360,40 @@
       const pan = P.PANS[id] || P.PANS.castiron; this.panSpec = pan;
       if (this.stoveType === 'charcoal') { this.panGroup.visible = false; this.panFloorY = this.PAN_Y; this.panR = 0.26; return; }
       this.panGroup.visible = true;
-      if (this.panMesh) { this.panGroup.remove(this.panMesh); disposeTree(this.panMesh, this.sharedRes); } // panMat is shared with the next pan; its geometry is not
-      const R = pan.diam / 2, wall = 0.045;
-      const prof = [{ r: 0, y: 0, v: 0, hard: false }, { r: R * 0.97, y: 0, v: 0.3, hard: true }, { r: R * 1.02, y: wall * 0.5, v: 0.6, hard: false }, { r: R * 1.06, y: wall, v: 0.8, hard: true }, { r: R * 1.06, y: wall - 0.004, v: 0.85, hard: true }, { r: R * 1.0, y: wall - 0.004, v: 0.9, hard: true }, { r: R * 0.95, y: 0.004, v: 0.95, hard: true }, { r: 0, y: 0.004, v: 1, hard: false }];
-      const geo = buildLathe(prof, 96, Math.PI * 2);
-      const look = { castiron: [0x17140f, 0.55, 0.5], carbonsteel: [0x23201d, 0.4, 0.8], stainless: [0x9ea2a6, 0.25, 0.95], nonstick: [0x141416, 0.35, 0.3] }[id] || [0x17140f, 0.55, 0.5];
-      this.panMat.color.setHex(look[0]); this.panMat.roughness = look[1]; this.panMat.metalness = look[2];
-      const m = new T.Mesh(geo, this.panMat); m.castShadow = true; m.receiveShadow = true; m.position.y = this.PAN_Y;
-      // handle: rooted in the wall just under the rim, rising outward; a boss covers the joint
-      const rimR = R * 1.06, hy = wall - 0.009, tilt = 0.14, len = 0.23;
-      const handle = new T.Mesh(new T.BoxGeometry(len, 0.012, 0.028), this.panMat);
-      handle.position.set(-(rimR - 0.012) - (len / 2) * Math.cos(tilt), hy + (len / 2) * Math.sin(tilt), 0); handle.rotation.z = -tilt; handle.castShadow = true; m.add(handle);
-      const boss = new T.Mesh(new T.BoxGeometry(0.03, 0.022, 0.04), this.panMat); boss.position.set(-rimR + 0.004, hy - 0.002, 0); boss.castShadow = true; m.add(boss);
-      if (id === 'nonstick' || id === 'stainless') {
-        const grip = new T.Mesh(new T.BoxGeometry(0.15, 0.02, 0.034), new T.MeshStandardMaterial({ color: 0x111111, roughness: 0.8 }));
-        const d = 0.04 + 0.075; grip.position.set(-(rimR - 0.012) - d * Math.cos(tilt), hy + d * Math.sin(tilt), 0); grip.rotation.z = -tilt; grip.castShadow = true; m.add(grip);
+      if (this.panMesh) { this.sharedRes.delete(this.panMat);this.panGroup.remove(this.panMesh); disposeTree(this.panMesh, this.sharedRes); }
+      const R=pan.diam/2,wall=id==='castiron'?.041:id==='carbonsteel'?.037:.043;
+      const rimR=R*(id==='carbonsteel'?1.14:1.075),hy=wall-.010;
+      const base=R*.95,thick=id==='castiron'?.004:.0025;
+      const prof=[{r:0,y:0,v:0},{r:base-.006,y:0,v:.1},{r:base,y:.001,v:.12},
+        {r:base+.004,y:.004,v:.16},{r:rimR-.002,y:wall-.005,v:.46},
+        {r:rimR,y:wall-.002,v:.49},{r:rimR-.001,y:wall,v:.5},
+        {r:rimR-thick,y:wall,v:.52},{r:rimR-thick-.001,y:wall-.003,v:.54},
+        {r:base-.001,y:.009,v:.85},{r:base-.005,y:.005,v:.9},
+        {r:base-.012,y:.004,cap:{R:base,cx:.5,cy:.5}},{r:0,y:.004,cap:{R:base,cx:.5,cy:.5}}];
+      const look={castiron:['iron',0x333536],carbonsteel:['carbon',0x514e46],stainless:['steel',0xe2e6e8],nonstick:['iron',0x303536]}[id]||['iron',0x333536];
+      this.panMat=VA.material(...look);if(id==='nonstick'){this.panMat.metalness=.05;this.panMat.roughness=.65;this.panMat.bumpScale=.000035;}
+      this.sharedRes.add(this.panMat);
+      const m=new T.Mesh(buildLathe(prof,128,Math.PI*2),this.panMat);m.castShadow=m.receiveShadow=true;m.position.y=this.PAN_Y;m.name=id+' skillet';
+      const steel=VA.material('steel',0xb9c1c5),handleMat=id==='nonstick'?VA.material('rubber',0x292d2c):id==='stainless'?steel:this.panMat;
+      // A forged handle with a rounded hanging slot, rather than a rectangular bar.
+      const outline=new T.Shape();outline.moveTo(0,-.017);outline.quadraticCurveTo(.035,-.014,.075,-.012);
+      outline.bezierCurveTo(.14,-.016,.19,-.024,.213,-.017);outline.quadraticCurveTo(.236,0,.213,.017);
+      outline.bezierCurveTo(.19,.024,.14,.016,.075,.012);outline.quadraticCurveTo(.035,.014,0,.017);outline.closePath();
+      const hole=new T.Path();hole.absellipse(.195,0,.016,.007,0,Math.PI*2,true);outline.holes.push(hole);
+      const hg=new T.ExtrudeGeometry(outline,{depth:id==='nonstick'?.013:.007,bevelEnabled:true,bevelThickness:.002,bevelSize:.002,bevelSegments:3,steps:1,curveSegments:18});
+      // Extrusion Z becomes thickness; length extends away from the rim, with a gentle rise.
+      hg.rotateX(Math.PI/2);hg.rotateY(Math.PI);const handle=new T.Mesh(hg,handleMat);handle.position.set(-rimR+.012,hy+.006,0);handle.rotation.z=-.15;handle.castShadow=true;m.add(handle);
+      const rootMesh=new T.Mesh(VA.roundedBox(.026,.011,.039,.004),id==='stainless'?steel:this.panMat);rootMesh.position.set(-rimR+.009,hy,0);rootMesh.rotation.z=-.15;rootMesh.castShadow=true;m.add(rootMesh);
+      if(id!=='castiron')for(const z of [-.012,.012]){
+        const rivet=new T.Mesh(new T.SphereGeometry(.004,16,10),steel);rivet.scale.x=.3;rivet.position.set(-rimR+thick+.003,hy,z);m.add(rivet);
       }
-      // helper handle opposite: a loop cast into the rim
-      class Loop extends T.Curve { getPoint(t, target) { const a = -Math.PI / 2 + t * Math.PI; return (target || new T.Vector3()).set(rimR - 0.004 + 0.028 * Math.cos(a), hy, 0.03 * Math.sin(a)); } }
-      const loop = new T.Mesh(new T.TubeGeometry(new Loop(), 24, 0.006, 8, false), this.panMat); loop.castShadow = true; m.add(loop);
+      if(id==='castiron'){
+        const curve=new T.CatmullRomCurve3([new T.Vector3(rimR-.006,hy,-.030),new T.Vector3(rimR+.025,hy+.004,-.023),new T.Vector3(rimR+.032,hy+.004,0),new T.Vector3(rimR+.025,hy+.004,.023),new T.Vector3(rimR-.006,hy,.030)]);
+        const loop=new T.Mesh(new T.TubeGeometry(curve,32,.0055,10,false),this.panMat);loop.castShadow=true;m.add(loop);
+      }
+      if(id==='stainless'||id==='nonstick'){
+        const lip=new T.Mesh(new T.TorusGeometry(rimR-.001,.0013,8,128),steel);lip.rotation.x=Math.PI/2;lip.position.y=wall-.001;m.add(lip);
+      }
       // lid: glass dome with a steel rim and knob, shown when the lid is on; fogs with steam
       if (this.lid) { this.panGroup.remove(this.lid); disposeTree(this.lid, this.sharedRes); }
       const lid = new T.Group(); this.lid = lid; lid.position.y = this.PAN_Y + wall; lid.visible = false;
@@ -1338,7 +1402,7 @@
       for (let i = 0; i <= nd; i++) { const t = i / nd; const a = (Math.PI / 2) * t; lp.push({ r: rimR * Math.cos(a) * (1 - 0.15 * t) + 0 * t, y: 0.004 + domeH * Math.sin(a), v: t }); }
       lp[nd].r = 0.0001;
       const dome = new T.Mesh(buildLathe(lp, 72, Math.PI * 2), this.lidGlass); lid.add(dome);
-      const steel = new T.MeshStandardMaterial({ color: 0xc9ccd0, metalness: 0.9, roughness: 0.3 });
+
       const rim = new T.Mesh(new T.TorusGeometry(rimR, 0.004, 8, 72), steel); rim.rotation.x = Math.PI / 2; rim.position.y = 0.003; lid.add(rim);
       const knob = new T.Mesh(new T.CylinderGeometry(0.014, 0.01, 0.018, 24), new T.MeshStandardMaterial({ color: 0x111111, roughness: 0.6 })); knob.position.y = 0.004 + domeH + 0.009; lid.add(knob);
       const stem = new T.Mesh(new T.CylinderGeometry(0.004, 0.004, 0.012, 12), steel); stem.position.y = 0.004 + domeH + 0.002; lid.add(stem);
@@ -1349,7 +1413,7 @@
     }
     _buildBoard() {
       const g = new T.Group(); this.board = g;
-      const wood = new T.Mesh(new T.BoxGeometry(0.42, 0.025, 0.30), new T.MeshStandardMaterial({ color: 0xb8865a, roughness: 0.8 }));
+      const wood = new T.Mesh(VA.roundedBox(.42,.025,.30,.009), VA.material('wood',0xc59964));
       wood.position.y = -0.0125; wood.receiveShadow = true; wood.castShadow = true; g.add(wood);
       // a ruler for scale
       const ruler = new T.Mesh(new T.BoxGeometry(0.15, 0.002, 0.02), new T.MeshStandardMaterial({ color: 0xe8e0c8, roughness: 0.6 })); ruler.position.set(0.09, 0.001, 0.1); ruler.rotation.y = Math.PI; g.add(ruler);
@@ -1360,9 +1424,9 @@
     }
     _buildProbe() {
       const g = new T.Group(); this.probeGroup = g;
-      const steel = new T.MeshStandardMaterial({ color: 0xcfd2d6, metalness: 0.9, roughness: 0.3 });
+      const steel = VA.material('steel',0xcfd2d6);
       const rod = new T.Mesh(new T.CylinderGeometry(0.0012, 0.0006, 0.10, 8), steel); rod.rotation.z = Math.PI / 2; rod.position.x = 0.05; g.add(rod);
-      const body = new T.Mesh(new T.BoxGeometry(0.035, 0.016, 0.022), new T.MeshStandardMaterial({ color: 0xd8382e, roughness: 0.5 })); body.position.x = 0.117; g.add(body);
+      const body = new T.Mesh(VA.roundedBox(.035,.016,.022,.003), new T.MeshStandardMaterial({ color: 0xd8382e, roughness: 0.5 })); body.position.x = 0.117; g.add(body);
       const screen = new T.Mesh(new T.PlaneGeometry(0.02, 0.009), new T.MeshBasicMaterial({ color: 0xb9c7a8 })); screen.position.set(0.117, 0.0081, 0); screen.rotation.x = -Math.PI / 2; g.add(screen);
       g.visible = false; this.scene.add(g);
     }
@@ -1404,8 +1468,8 @@
     _buildTextures() {
       this.noise = makeNoise(512, 5, true);
       this.noiseFine = makeNoise(512, 6, false);
-      this.marble = makeBlobs(1024, 3200, 1.2, 5.5, 'rgba(255,255,255,1)');
-      this.marbleCut = makeBlobs(512, 900, 1, 4, 'rgba(255,255,255,1)');
+      this.marble = minceFat(1024,3800);
+      this.marbleCut = minceFat(512,1500);
       this.spots = makeBlobs(1024, 1400, 2, 9, 'rgba(0,0,0,1)'); this.blotch = makeBlobs(1024, 40, 14, 50, 'rgba(0,0,0,1)');
     }
 
@@ -1422,21 +1486,24 @@
     _buildFinger() {
       const g = new T.Group();
       const skin = new T.MeshStandardMaterial({ roughness: 0.9 }); setLin(skin, [176, 118, 92]); // sRGB skin, converted like every other colour in here
-      const tip = new T.Mesh(new T.SphereGeometry(0.0092, 14, 10), skin); tip.scale.set(1, 0.8, 1); tip.castShadow = true; g.add(tip);
-      const seg = new T.Mesh(new T.CylinderGeometry(0.0086, 0.0094, 0.038, 12), skin);
-      seg.rotation.z = Math.PI / 2 - 0.55; seg.position.set(0.016, 0.011, 0); seg.castShadow = true; g.add(seg); // angled up and back toward the hand
-      const knuckle = new T.Mesh(new T.SphereGeometry(0.0098, 12, 9), skin); knuckle.position.set(0.032, 0.021, 0); knuckle.castShadow = true; g.add(knuckle);
+      const geo=new T.SphereGeometry(1,32,32),pos=geo.attributes.position;
+      // One continuous tapered surface from the fingertip to the first knuckle.
+      for(let i=0;i<pos.count;i++){
+        const t=(pos.getY(i)+1)/2,x=-.009+t*.052,r=.0092*(1+.10*Math.sin(t*Math.PI*3));
+        pos.setXYZ(i,x,pos.getX(i)*r*.82+Math.max(0,x)*.60,-pos.getZ(i)*r);
+      }
+      geo.computeVertexNormals();const finger=new T.Mesh(geo,skin);finger.castShadow=true;g.add(finger);
       const nailMat = new T.MeshStandardMaterial({ roughness: 0.35 }); setLin(nailMat, [217, 182, 164]);
-      const nail = new T.Mesh(new T.SphereGeometry(0.0062, 10, 8), nailMat);
+      const nail = new T.Mesh(new T.SphereGeometry(0.0062, 24, 16), nailMat);
       nail.position.set(0.003, 0.0062, 0); nail.scale.set(0.9, 0.45, 0.75); g.add(nail);
       return g;
     }
     /** A 10 cm offset spatula: a thin steel blade, a cranked neck and a wooden handle. */
     _buildSpatula() {
       const g = new T.Group();
-      const steel = new T.MeshStandardMaterial({ color: 0xb9bcc0, metalness: 0.9, roughness: 0.3 });
-      const wood = new T.MeshStandardMaterial({ color: 0x6b4a2a, roughness: 0.8 });
-      const blade = new T.Mesh(new T.BoxGeometry(0.075, 0.0012, 0.095), steel); // 7.5 × 9.5 cm, 1.2 mm
+      const steel = VA.material('steel',0xb9bcc0);
+      const wood = VA.material('wood',0x996638);
+      const blade = new T.Mesh(VA.roundedBox(.075,.0012,.095,.00025), steel); // 7.5 × 9.5 cm, 1.2 mm
       blade.position.set(0, 0.0006, -0.02); blade.castShadow = true; g.add(blade);
       const bevel = new T.Mesh(new T.BoxGeometry(0.075, 0.0006, 0.012), steel); bevel.position.set(0, 0.0003, -0.0715); g.add(bevel); // the thin leading edge
       const neck = new T.Mesh(new T.BoxGeometry(0.016, 0.0025, 0.05), steel); neck.position.set(0, 0.008, 0.045); neck.rotation.x = -0.5; g.add(neck);
@@ -1549,6 +1616,10 @@
               mesh.position.set(count>1?Math.cos(j*2.4)*R*.57:0,spec.height/2,count>1?Math.sin(j*2.4)*R*.57:0);
               if(l.cold==='lettuce') { mesh.rotation.y=j*2.4; mesh.rotation.x=(j%2?1:-1)*.15; }
               mesh.castShadow=true; mesh.receiveShadow=true; layer.add(mesh);
+              if(l.cold==='pickles'){
+                const flesh=new T.MeshPhysicalMaterial({map:VA.texture('pickle').map,roughness:.3,clearcoat:.45});
+                for(const side of [-1,1]){const cut=new T.Mesh(new T.CircleGeometry(r*.995,48),flesh);cut.rotation.x=-side*Math.PI/2;cut.position.y=side*(spec.height/2+.00002);mesh.add(cut);}
+              }
               if(l.cold==='tomato') {
                 const seedMat=new T.MeshStandardMaterial({color:0xcab15f,roughness:.45});seedMat.color.convertSRGBToLinear();
                 const gelMat=new T.MeshPhysicalMaterial({color:0xa95a29,roughness:.21,clearcoat:.8});gelMat.color.convertSRGBToLinear();
@@ -1690,6 +1761,9 @@
       }
       // stove: gas flames, electric coil glow (follows delivered power, so it lags), induction LED
       const knob = state.stove.knob / 10, stv = state.stove;
+      if(this.hobDial)this.hobDial.rotation.y=Math.PI*.75-knob*Math.PI*1.5;
+      if(this.hobPower)this.hobPower.color.setHex(knob>0?0xff823b:0x382519);
+      this.hobLevels.forEach((m,i)=>m.material.color.setHex(i<Math.ceil(knob*10)?0xff823b:0x34221b));
       if (this.stoveType === 'gas') {
         for (let i = 0; i < this.flames.length; i++) {
           const f = this.flames[i]; const fl = 0.6 + 0.4 * Math.sin(this.clock * 37 + i * 1.7) * Math.random();
@@ -1758,7 +1832,7 @@
       this.panMat.emissive = this.panMat.emissive || new T.Color(0); this.panMat.emissive.setRGB(0.06 * hot * hot, 0.01 * hot, 0);
       this._updateOil(state);
       const depth=pan.oilDepth||0, deep=clamp(depth/.02,0,1);
-      this.oilMat.opacity=.32+.3*deep;
+      this.oilMat.opacity=.12+.38*deep;
       // lid: on/off, and a light fogging that follows the steam trapped under it
       if (this.lid) {
         this.lid.visible = !!state.lid && this.stoveType !== 'charcoal';
@@ -1814,7 +1888,7 @@
       }
       if (flare > 0 && this.stoveType !== 'charcoal') { this.flameLight.color.setHex(0xff7a10); this.flameLight.intensity = 3 * (0.7 + 0.3 * Math.random()); }
       const fondT = clamp((pan.fond + pan.fondBurnt + (pan.carbon || 0)) / 0.003, 0, 1);
-      this.oilMat.color.setRGB(lerp(0.85, 0.6, Math.max(deep, fondT * 0.5)), lerp(0.63, 0.34, Math.max(deep, fondT)), lerp(0.22, 0.07, deep));
+      setLin(this.oilMat,[lerp(235,173,Math.max(deep,fondT*.5)),lerp(205,119,Math.max(deep,fondT)),lerp(134,50,deep)]);
       this._paintDirt(pan, dt);
 
       // ---- patties: one view each; the selected one gets the probe and the cutaway
@@ -1842,9 +1916,9 @@
       if(this.passTiers!==tiers) {
         if(this.passRack){this.scene.remove(this.passRack);disposeTree(this.passRack);}
         this.passRack=new T.Group();this.scene.add(this.passRack);this.passTiers=tiers;
-        const mat=new T.MeshStandardMaterial({color:0xb3bab4,metalness:.55,roughness:.35});
+        const mat=VA.material('steel',0xb3bab4);
         for(let i=1;i<=tiers;i++) {
-          const tray=new T.Mesh(new T.BoxGeometry(.61,.008,.97),mat);tray.position.set(.555,i*.18-.003,0);tray.receiveShadow=tray.castShadow=true;this.passRack.add(tray);
+          const tray=new T.Mesh(VA.roundedBox(.61,.008,.97,.0018),mat);tray.position.set(.555,i*.18-.003,0);tray.receiveShadow=tray.castShadow=true;this.passRack.add(tray);
           for(const x of [.262,.848])for(const z of [-.473,.473]){const leg=new T.Mesh(new T.CylinderGeometry(.004,.004,i*.18,8),mat);leg.position.set(x,i*.09,z);this.passRack.add(leg);}
         }
       }
@@ -2142,7 +2216,7 @@
       const stack = this.vp.assemblyViews?.get(this.vp.selected);
       const t = itemView ? itemView.group.position.clone().add(new T.Vector3(0, .01, 0)) : stack ? stack.position.clone().add(new T.Vector3(0,(stack.userData.height||0)*.45,0)) : pg || (this.vp.mode === 'stove' ? new T.Vector3(0, this.vp.PAN_Y + 0.01, 0) : new T.Vector3(0, 0.01, 0));
       if (name === 'pan') { this.reset(this.vp.mode);this.goal.target.set(0,this.vp.panFloorY+.01,0);this.goal.dist=Math.max(.48,this.vp.panR*3.4); }
-      if (name === 'oven') this.goal = { target: new T.Vector3(.10, -.43, -.29), azimuth: -Math.PI/2, polar: 1.38, dist: .95 };
+      if (name === 'oven') this.goal = { target: new T.Vector3(.10, -.35, -.29), azimuth: -Math.PI/2, polar: 1.38, dist: 1.15 };
       if (name === 'room') this.goal = { target: new T.Vector3(0, -.13, .12), azimuth: -1.05, polar: 1.07, dist: 2.5 };
       if (name === 'top') this.goal = { target: t, azimuth: this.goal.azimuth, polar: 0.12, dist: 0.5 };
       if (name === 'side') this.goal = { target: t.clone().setY(t.y + 0.01), azimuth: -Math.PI / 2, polar: 1.45, dist: 0.32 };
