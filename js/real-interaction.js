@@ -30,8 +30,8 @@
     use(){
       const r=this.r,w=r.world,h=r.heldEntity(),t=r.hover,e=r.foodAt(t),d=t?.data;
       if(r.action)return true;
-      const plate=h?.kind==='plate'?h:d?.entity?w.get(d.entity):null;
-      if(plate?.kind==='plate'&&plate.cargo?.length){
+      const plate=h?.kind==='plate'?h:e?.trayCarrier?w.get(e.trayCarrier):d?.entity?w.get(d.entity):null;
+      if(plate?.kind==='plate'&&plate.cargo?.length&&(!h||h===plate)){
         const burger=w.get(plate.cargo[0]);if(burger?.kind!=='patty'){r.toast('Put a patty or built burger on the tasting plate.');return true;}
         r.animate('taste',()=>{w.taste(burger);this.reportUntil=performance.now()+14000;},.9);return true;
       }
@@ -57,10 +57,11 @@
         const point=t.point.clone();point.y=baseY+height;
         this.probe={id:food.id,height,baseY,depth:0,point,manual:false};return true;
       }
-      if(h?.kind==='egg'&&!h.food&&d.type==='station'){
-        const st=w.station(d.id);if(st.state.lid||(!st.panId&&d.id!=='charcoal')){r.toast('Open a cooking surface first.');return true;}
+      const eggStation=d.type==='station'?d.id:e?.station;
+      if(h?.kind==='egg'&&!h.food&&eggStation){
+        const point=this.panPoint(t,eggStation),error=w.crackEgg(h,eggStation,point,true);if(error){r.toast(error);return true;}
         this.makeShells(h);
-        r.animate('crack',()=>{w.makeFood(h,'egg');const error=w.placeFood(h,d.id,this.panPoint(t,d.id));if(error)r.toast(error);else r.held=null;},1.0);return true;
+        r.animate('crack',()=>{const error=w.crackEgg(h,eggStation,point);if(error)r.toast(error);else r.held=null;},1.0);return true;
       }
       return false;
     }
@@ -138,15 +139,16 @@
       if(h?.kind==='knife'&&e&&!e.food&&['tomato','pickles','onion','bunWhole','cheeseBlock'].includes(e.kind))return e.kind==='bunWhole'?'Left click: split the bun':`Left click: one cut · Scroll: ${w.settings.sliceMm} mm slices`;
       if(h?.kind==='salt'&&e?.kind==='patty')return `${(e.salt||0).toFixed(1)} g salt · ${((e.salt||0)/(e.food.massKg0*10)).toFixed(1)}% of meat\nHold left click: season`;
       if(h?.kind==='cloth'&&e?.food?.assembly?.at(-1)?.cold&&root.BurgerAssembly.cold[e.food.assembly.at(-1).cold].sauce)return 'Left click: wipe off the top sauce';
+      if(!h&&e?.trayCarrier&&w.get(e.trayCarrier)?.kind==='plate')return 'Left click: taste · Right click: lift '+(e.food?.assembly?.length?'burger':'patty');
       if(e?.food?.assembly?.length&&!h?.payload&&(!h||['spatula','tongs','spoon'].includes(h.kind)))return (e.trayCarrier?'':'E: lift the top layer · ')+'Right click: lift the burger';
       const plate=h?.kind==='plate'?h:e?.kind==='plate'?e:null;
       if(plate)return plate.cargo?.length?'Left click: taste · Right click: '+(h?'place plate':'pick up plate'):h?'Right click: place plate · Scroll: rotate':'Place a burger here to taste it';
       if(!h?.payload){
         if(h?.kind==='probe'&&e?.food&&e.kind!=='pan')return 'Hold left click: insert probe · Scroll: depth';
         if(h?.kind==='knife'&&e?.kind==='patty')return 'Left click: inspect the centre';
-        if(h?.kind==='spatula'&&['patty','bun','egg'].includes(e?.kind))return 'Left click: flip · Right click: lift';
-        if(h?.kind==='tongs'&&e?.kind==='bacon')return 'Left click: flip · Right click: lift';
-        if(h?.kind==='spoon'&&e?.kind==='onions')return 'Left click: stir · Right click: lift';
+        if(h?.kind==='spatula'&&['patty','bun','egg'].includes(e?.kind))return (e.food.where==='pan'?'Left click: flip · ':'')+'Right click: lift';
+        if(h?.kind==='tongs'&&e?.kind==='bacon')return (e.food.where==='pan'?'Left click: flip · ':'')+'Right click: lift';
+        if(h?.kind==='spoon'&&e?.kind==='onions')return (e.food.where==='pan'?'Left click: stir · ':'')+'Right click: lift';
         if(h?.kind==='cheese'&&e?.kind==='patty')return 'Left click: add cheese';
         if(h?.kind==='press'&&e?.kind==='patty')return 'Left click: smash';
         if(['ketchup','mayo','mustard'].includes(h?.kind)&&e?.food?.assembly?.length)return 'Left click: add sauce';

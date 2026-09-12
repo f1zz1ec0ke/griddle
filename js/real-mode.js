@@ -192,7 +192,7 @@
       if(layers[0]?.item?.half==='bottom'&&layers.at(-1)?.item?.half==='top')return Math.max(itemHeat(layers[0].item),itemHeat(layers.at(-1).item))>55;
       return Math.max(P.centerT(p),P.layerMean(p,p.T,0),P.layerMean(p,p.T,p.Nz-1))>55;
     }
-    blocked(e){if(e?.station==='oven'&&!this.world.doors.oven)return 'Open the oven first.';if(e?.food&&(e.station||e.panCarrier)&&this.world.owner(e).lid)return 'Lift the lid first.';return null;}
+    blocked(e){if(e?.station==='oven'&&!this.world.doors.oven)return 'Open the oven first.';if(e?.kind!=='pan'&&e?.food&&(e.station||e.panCarrier)&&this.world.owner(e).lid)return 'Lift the lid first.';return null;}
     toggleGrab(){
       if(this.action)return;this.interaction.probe=null;const h=this.heldEntity(),t=this.hover;
       if(h){if(!t){this.toast('Look at a counter, tool rest or cooking surface.');return;}
@@ -233,8 +233,7 @@
     }
     foodAt(t){if(!t)return null;if(t.data.entity){const e=this.world.get(t.data.entity);return e?.stackRoot?this.world.get(e.stackRoot):e;}if(t.data.type==='station')return this.world.entities.find(e=>e.station===t.data.id&&e.kind!=='pan'&&e.food&&!e.discarded);return null;}
     use(){
-      if(this.interaction.use())return;
-      if(this.action)return;const t=this.hover,h=this.heldEntity();if(!t)return;const d=t.data,e=this.foodAt(t);
+      if(this.action)return;const t=this.hover,h=this.heldEntity();if(!t){this.interaction.use();return;}const d=t.data,e=this.foodAt(t);
       if(d.type==='sink'){const washing=h?.payload?this.world.get(h.payload):h;if(washing?.kind==='pan'){if(!this.world.doors.tap){this.toast('Turn on the tap first.');return;}this.animate('wash',()=>this.toast(P.washPan(washing.parked||this.world.owner(washing))?'Pan washed.':'Empty the pan before washing it.'));return;}}
       if(['knob','ovenKnob','vent'].includes(d.type)){this.grabControl=d;this.ovenDrag=null;return;}
       if(d.type==='button'){const s=this.world.station(d.id).state;P.setKnob(s,d.action==='power'?(s.stove.knob?0:5):clamp(s.stove.knob+(d.action==='up'?1:-1),0,10));this.animate('press',()=>{},.25);return;}
@@ -244,6 +243,7 @@
       if(d.type==='panLid'){if(!h){const lid=this.world.entities.find(e=>e.kind==='lid'&&e.station===d.id);if(lid)this.pick(lid);}else this.toast('Put the tool down and lift the lid.');return;}
       if(this.blocked(e)){this.toast(this.blocked(e));return;}
       if(h?.payload){this.toast('Place the carried food or cookware first.');return;}
+      if(this.interaction.use())return;
       if(d.type==='bowl'){
         if(h?.kind==='spoon'||h?.kind==='salt'||!h)return;
         this.toast('Add mince and salt, mix with the spoon, or hold left click with an empty hand to portion.');return;
@@ -259,15 +259,15 @@
         if(s.lid&&e.station){this.toast('Lift the lid first.');return;}
         if(h.kind==='spatula'&&['patty','egg','bun'].includes(e.kind)||h.kind==='tongs'&&e.kind==='bacon'||h.kind==='spoon'&&e.kind==='onions'){
           if(e.station==='oven'){this.toast('Right click to lift it from the rack.');return;}
+          if(e.food.where!=='pan'){this.toast(e.food.assembly?.length?'Use E to lift a burger layer.':'Put it on a cooking surface first.');return;}
           this.animate(e.kind==='onions'?'stir':'flip',()=>{if(e.kind==='patty')P.flipPatty(s,e.food);else P.flipItem(s,e.food);});return;
         }
-        if(h.kind==='press'&&e.kind==='patty'){this.animate('smash',()=>P.pressPatty(s,true,e.food),1.0);return;}
+        if(h.kind==='press'&&e.kind==='patty'){if(e.food.where!=='pan'){this.toast('Put the patty on a cooking surface first.');return;}this.animate('smash',()=>P.pressPatty(s,true,e.food),1.0);return;}
         if(h.kind==='cheese'&&e.kind==='patty'){if(this.world.addCheese(h,e)){this.held=null;}else this.toast('Cheese goes on a patty on the heat (up to four slices).');return;}
         if(h.kind==='salt')return;
       }
       if(d.type==='station'){
         const st=this.world.station(d.id),s=st.state;
-        if(h?.kind==='egg'){this.animate('crack',()=>{h.kind='egg';this.world.makeFood(h,'egg');const error=this.world.placeFood(h,d.id,this.interaction.panPoint(t,d.id));if(error)this.toast(error);else this.held=null;},.9);return;}
         if(h?.kind==='lighter'&&s.grill){s.grill.lit=true;s.grill.Tfire=Math.max(s.grill.Tfire,400);P.setKnob(s,5);this.animate('press',()=>{},.35);return;}
         if(h?.kind==='coal'&&s.grill){P.addCoals(s,.25);this.animate('pour',()=>{});return;}
         if(h?.kind==='wood'&&s.grill){P.addWood(s,'hickory');this.animate('grab',()=>{});return;}
@@ -282,7 +282,7 @@
     }
     continuous(dt){
       if(this.interaction.continuous(dt))return;
-      const h=this.heldEntity(),t=this.hover;if(!this.left||!t||this.action||this.grabControl)return;const d=t.data;
+      const h=this.heldEntity(),t=this.hover;if(!this.left||!t||this.action||this.grabControl||h?.payload)return;const d=t.data;
       if(d.type==='bowl'){
         if(!h)this.world.scoop(dt,this.keys.has('ControlLeft')||this.keys.has('ControlRight'));
         else if(h.kind==='spoon')this.world.bowl.work=clamp(this.world.bowl.work+dt*.025,0,1);
@@ -451,7 +451,7 @@
         const s=this.world.station(d.id||'oven').state;title+=' · '+(d.type==='ovenKnob'?Math.round(s.oven.target)+' °C':d.type==='vent'?Math.round(s.grill.topVent*100)+'%':s.stove.knob.toFixed(1)+'/10');detail='Hold left click + drag to turn';
       }else if(d?.type==='bowl'){
         title='Mixing bowl · '+Math.round(this.world.bowl.mass)+' g · '+this.world.bowl.salt.toFixed(1)+' g salt';
-        detail=!h?(this.world.bowl.mass?'Hold left click: take mince':'Add a mince pack')+(this.world.portion.mass?' · Right click: return 25 g':''):h.kind==='spoon'?'Hold left click: mix':h.kind==='salt'?'Hold left click: season':['meat','meatLean','meatRich'].includes(h.kind)?'Left click: add mince':'Put your tool down to take mince';
+        detail=payload?'Place the carried food first':!h?(this.world.bowl.mass?'Hold left click: take mince':'Add a mince pack')+(this.world.portion.mass?' · Right click: return 25 g':''):h.kind==='spoon'?'Hold left click: mix':h.kind==='salt'?'Hold left click: season':['meat','meatLean','meatRich'].includes(h.kind)?'Left click: add mince':'Put your tool down to take mince';
       }else if(d?.type==='supply')detail=h?'Put down '+name(h)+' to take an ingredient':'Right click: take one';
       else if(d?.type==='rest')detail=(payload||h)?.id===d.entity?'Right click: return to its rest':'A rest for '+name(this.world.get(d.entity));
       else if(d&&['fridge','ovenDoor','window','tap','button','grillLid','exit'].includes(d.type))detail='Left click: '+({fridge:'open / close',ovenDoor:'open / close',window:'open / close',tap:'water on / off',button:'press',grillLid:'open / close',exit:'pause'}[d.type]);

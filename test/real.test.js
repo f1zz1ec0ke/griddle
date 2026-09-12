@@ -1,6 +1,31 @@
 const test=require('node:test'),assert=require('node:assert/strict'),{Kitchen}=require('../js/real-model'),P=require('../js/physics');
 const A=require('../js/assembly');
 function patty(k){k.bowl={mass:500,salt:5,work:.2};k.scoop(2);return k.form([0,.96,-.9]);}
+test('eggs lost through the grill retain debris but cannot break kitchen saves',()=>{
+ const k=new Kitchen(),e=k.addIngredient('egg',[0,.95,0]);assert.equal(k.crackEgg(e,'charcoal'),null);k.step(.05);
+ assert.equal(k.get(e.id),undefined);assert.equal(k.station('charcoal').state.grill.droppedEggs.length,1);
+ const restored=Kitchen.restore(k.snapshot());assert.equal(restored.get(e.id),undefined);assert.equal(restored.station('charcoal').state.grill.droppedEggs.length,1);restored.step(.05);
+ // Repair a save from before empty egg inventory shells were retired.
+ e.discarded=false;e.station='charcoal';assert.equal(Kitchen.restore(k.snapshot()).get(e.id),undefined);
+});
+test('a rejected egg crack leaves the egg whole and the cooking state unchanged',()=>{
+ const k=new Kitchen(),e=k.addIngredient('egg',[0,.95,0]),p=patty(k);k.placeFood(p,'gas');p.food.D=k.station('gas').state.pan.floorR*2;
+ assert.match(k.crackEgg(e,'gas'),/space/);assert.equal(e.food,null);assert.equal(k.loose.items.length,0);assert.equal(k.station('gas').state.items.length,0);
+ k.detach(p);assert.equal(k.crackEgg(e,'gas',null,true),null);assert.equal(e.food,null);assert.equal(k.crackEgg(e,'gas'),null);assert.equal(e.station,'gas');assert.equal(k.station('gas').state.items.length,1);
+});
+test('oversized patties cannot be placed through the pan wall',()=>{
+ const k=new Kitchen(),p=patty(k);p.food.D=k.station('gas').state.pan.floorR*2+.01;
+ assert.match(k.placeFood(p,'gas'),/space/);assert.equal(p.station,null);assert.ok(k.loose.patties.includes(p.food));
+});
+test('splitting a bun makes room for both halves without overlap or duplication',()=>{
+ const k=new Kitchen(),whole=k.addIngredient('bunWhole',[0,.95,0]),obstacle=k.addIngredient('bacon',[.05,.95,0]),b=k.slice(whole);
+ assert.equal(b.length,2);assert.ok(Math.hypot(b[0].pos[0]-b[1].pos[0],b[0].pos[2]-b[1].pos[2])>=(b[0].food.D+b[1].food.D)/2);
+ for(const q of b)assert.ok(Math.hypot(q.pos[0]-obstacle.pos[0],q.pos[2]-obstacle.pos[2])>=(q.food.D+obstacle.food.Dcov)/2);
+ assert.equal(b[0].food.pair,b[1].food.pair);assert.deepEqual(k.slice(whole),[]);
+});
+test('parked cookware history is bounded during endless practice',()=>{
+ const k=new Kitchen(),pan=k.get(k.station('gas').panId);k.liftPan(pan);pan.parked.events=Array(200).fill({});pan.parked.trace=Array(400).fill({});k.step(.05);assert.ok(pan.parked.events.length<=80);assert.ok(pan.parked.trace.length<=180);
+});
 test('failed assembly leaves cooked food on its original surface',()=>{
  const k=new Kitchen(),p=patty(k),b=k.slice(k.addIngredient('bunWhole',[0,.95,0]));k.assemble(p,b[0]);k.assemble(b[1],p);const fresh=k.slice(k.addIngredient('bunWhole',[.3,.95,0]))[0];k.placeFood(fresh,'gas');
  assert.equal(k.assemble(p,fresh),false);assert.equal(fresh.station,'gas');assert.ok(k.station('gas').state.items.includes(fresh.food));assert.equal(p.food.assembly.length,3);

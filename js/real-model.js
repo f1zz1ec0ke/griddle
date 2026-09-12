@@ -39,10 +39,16 @@
     }
     makeFood(e,kind,opts={}){if(e.food)return;e.food=P.makeItem(kind,{...opts,id:e.id});e.food.where='rest';e.food.stuck=false;this.loose.items.push(e.food);}
     slice(e){
-      if(!['tomato','pickles','onion','bunWhole','cheeseBlock'].includes(e.kind))return [];
+      if(e.discarded||!['tomato','pickles','onion','bunWhole','cheeseBlock'].includes(e.kind))return [];
       const kinds={tomato:'tomatoSlice',pickles:'pickleSlice',onion:'onions',bunWhole:'bun',cheeseBlock:'cheese'};
       const out=[],count=e.kind==='bunWhole'?2:e.kind==='onion'?1:4;
-      for(let i=0;i<count;i++){const q=this.entity(kinds[e.kind],kinds[e.kind],[e.pos[0]+(i-(count-1)/2)*.065,e.pos[1],e.pos[2]]);if(q.kind==='bun'||q.kind==='onions'){this.makeFood(q,q.kind,{half:i?'top':'bottom'});if(q.kind==='bun')q.food.pair=e.id;}out.push(q);}
+      const positions=[];
+      if(e.kind==='bunWhole'){
+        const radius=P.makeItem('bun').D/2,footprint={minX:-radius,maxX:radius,minZ:-radius,maxZ:radius};
+        const obstacles=this.entities.filter(q=>q!==e&&!q.discarded&&!q.held&&!q.station&&!q.stackRoot&&!q.panCarrier&&!q.trayCarrier&&Math.abs(q.pos[1]-e.pos[1])<.05).map(q=>{const r=(q.food?.Dcov||q.food?.D||.1)/2;return {minX:q.pos[0]-r,maxX:q.pos[0]+r,minZ:q.pos[2]-r,maxZ:q.pos[2]+r};});
+        for(let i=0;i<2;i++){const pos=clearPlacement([e.pos[0]+(i-.5)*(radius*2+.01),e.pos[1],e.pos[2]],footprint,{x:e.pos[0],z:e.pos[2],w:.7,d:.7},obstacles);if(!pos)return [];positions.push(pos);obstacles.push({minX:pos[0]-radius,maxX:pos[0]+radius,minZ:pos[2]-radius,maxZ:pos[2]+radius});}
+      }
+      for(let i=0;i<count;i++){const q=this.entity(kinds[e.kind],kinds[e.kind],positions[i]||[e.pos[0]+(i-(count-1)/2)*.065,e.pos[1],e.pos[2]]);if(q.kind==='bun'||q.kind==='onions'){this.makeFood(q,q.kind,{half:i?'top':'bottom'});if(q.kind==='bun')q.food.pair=e.id;}out.push(q);}
       e.discarded=true;return out;
     }
     cut(e,mm=6){
@@ -136,7 +142,18 @@
     placement(e,stationId,point){
       const st=this.station(stationId);if(!st||!e.food||e.kind==='pan')return {ok:false};
       const radius=(e.food.Dcov||e.food.D)/2;
+      if(radius>st.state.pan.floorR)return {ok:false};
       return P.slideTo(st.state,e.food,radius,point||P.freeSpot(st.state,radius).pos);
+    }
+    crackEgg(e,stationId,point,preview=false){
+      const st=this.station(stationId);
+      if(e.kind!=='egg'||e.food||e.discarded)return 'Use a whole egg.';
+      if(!st||stationId==='oven')return 'Crack eggs into a pan or over the grill.';
+      if(st.state.lid||(!st.panId&&stationId!=='charcoal'))return 'Open a cooking surface first.';
+      const food=P.makeItem('egg',{id:e.id}),candidate={kind:'egg',food};
+      if(!this.placement(candidate,stationId,point).ok)return 'Make space before cracking the egg.';
+      if(preview)return null;
+      this.makeFood(e,'egg');return this.placeFood(e,stationId,point);
     }
     placeFood(e,stationId,point){
       if(e.stackRoot||e.food?.assembly?.length)return 'Keep assembled burgers on the pass.';
@@ -217,16 +234,20 @@
     step(dt){
       this.time+=dt;
       for(const st of this.stations){P.roomAir(st.state).windowOpen=this.doors.window;P.step(st.state,dt);}
+      // The grill solver owns fallen egg debris; retire its empty inventory shell.
+      for(const e of this.entities)if(e.kind==='egg'&&e.food?.where==='coals'){e.discarded=true;e.station=null;}
       P.step(this.loose,dt);
       for(const e of this.entities)if(e.kind==='pan'&&e.parked)P.step(e.parked,dt);
       for(const e of this.entities)if(e.kind==='tray')e.trayT=(e.trayT||21)+((e.station==='oven'?this.station('oven').state.oven.T:21)-(e.trayT||21))*(-Math.expm1(-dt/45));
       for(const e of this.entities)if(e.coldState&&!e.stackRoot){e.coldState.T+=(21-e.coldState.T)*(-Math.expm1(-dt/120));e.coldState.age=(e.coldState.age||0)+dt;}
       // Keep endless practice bounded in history, while retaining every live ingredient.
-      for(const s of [...this.stations.map(s=>s.state),this.loose]){if(s.events.length>80)s.events.splice(0,s.events.length-80);if(s.trace.length>180)s.trace.splice(0,s.trace.length-180);}
+      for(const s of [...this.stations.map(s=>s.state),this.loose,...this.entities.filter(e=>e.parked).map(e=>e.parked)]){if(s.events.length>80)s.events.splice(0,s.events.length-80);if(s.trace.length>180)s.trace.splice(0,s.trace.length-180);}
     }
     snapshot(){return S.encode({version:1,nextId:this.nextId,heldId:this.heldId,entities:this.entities.filter(e=>!e.discarded),time:this.time,bowl:this.bowl,portion:this.portion,player:this.player,doors:this.doors,stations:this.stations,loose:this.loose,settings:this.settings,lastTasting:this.lastTasting});}
     static restore(data){
       const d=S.decode(data);if(d.version!==1||!Array.isArray(d.stations)||d.stations.length!==5||!Array.isArray(d.entities)||d.entities.length>3000)throw Error('Invalid Real kitchen save');
+      // Older kitchens kept empty inventory eggs after the grill took ownership.
+      d.entities=d.entities.filter(e=>!(e.kind==='egg'&&e.station==='charcoal'&&e.food?.where==='coals'&&!d.stations.find(s=>s.id==='charcoal')?.state?.items?.includes(e.food)));
       if(!Number.isFinite(d.time)||!d.player||![d.player.x,d.player.y,d.player.z,d.player.yaw,d.player.pitch].every(Number.isFinite))throw Error('Invalid chef position or time');
       for(let i=0;i<5;i++)if(d.stations[i].id!==stationDefs[i][0]||!d.stations[i].state?.pan)throw Error('Invalid station');
       const states=[...d.stations.map(s=>s.state),d.loose,...d.entities.filter(e=>e.parked).map(e=>e.parked)];

@@ -16,4 +16,6 @@ Place a patty onto a bottom bun to begin assembly, then add prepared toppings an
 
 The oven finishes up to four patties in fixed rack positions, or takes one tray. Tray placement checks the food footprint; toppings cook on hobs. Tray temperature is a simple handling cue, separate from the food heat solver. Real mode has no orders, scoring UI or multiplayer yet.
 
+Covered pans travel with their lids. Put carried food down before reusing its utensil. Egg cracking and bun splitting check for space first; eggs lost through the grill leave cooking debris, not inventory items.
+
 Validation: model tests cover independent heat, exact food/pan transfer, portion and salt conservation, preparation, assembly, tray ownership and save continuation. Browser checks exercise actual pointer input from fridge to heated pan, plus tool actions, hot handling, cutaways and restoration. The audit also covers discarded-target cleanup, hot surfaces, failed transfers, loaded saves and slow-frame timing. Cooking uses fixed 50 ms steps with up to 250 ms of catch-up per rendered frame. Software WebGL checks do not establish hardware frame rates.
