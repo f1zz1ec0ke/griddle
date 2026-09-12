@@ -78,8 +78,8 @@
     buildStations(){
       for(const st of this.world.stations){
         const vp=new root.BurgerRender.Viewport(this.canvas,{renderer:this.renderer,textures:this.game.vp});vp.setStove(st.id==='oven'?'gas':st.id);vp.setMode('stove');vp.scene.background=null;vp.scene.fog=null;vp.scene.position.set(st.x,.94,st.z);this.scene.add(vp.scene);this.stations.set(st.id,vp);
-        if(st.id==='oven'){vp.scene.position.set(-2.6,1.01,-.98);vp.stove.visible=false;vp.board.visible=false;vp.setPan('nonstick');const template=vp.panGroup.clone(true);template.position.y=-vp.PAN_Y;template.traverse(o=>{if(o.geometry)o.geometry=o.geometry.clone();if(o.material)o.material=o.material.clone();});this.panTemplates.set('nonstick',template);continue;}
-        if(st.panId){vp.setPan(st.state.pan.id);const template=vp.panGroup.clone(true);template.position.y=-vp.PAN_Y;template.traverse(o=>{if(o.geometry)o.geometry=o.geometry.clone();if(o.material)o.material=o.material.clone();});this.panTemplates.set(st.state.pan.id,template);}
+        if(st.id==='oven'){vp.scene.position.set(-2.6,1.01,-.98);vp.stove.visible=false;vp.board.visible=false;vp.setPan('nonstick');const template=vp.panMesh.clone(true);template.position.y=0;template.traverse(o=>{if(o.geometry)o.geometry=o.geometry.clone();if(o.material)o.material=o.material.clone();});this.panTemplates.set('nonstick',template);continue;}
+        if(st.panId){vp.setPan(st.state.pan.id);const template=vp.panMesh.clone(true);template.position.y=0;template.traverse(o=>{if(o.geometry)o.geometry=o.geometry.clone();if(o.material)o.material=o.material.clone();});this.panTemplates.set(st.state.pan.id,template);}
         if(st.id==='charcoal'){vp.scene.position.y=.55;this.box(.75,.51,.75,st.x,.255,st.z,0x536c5d);this.colliders.push({x:st.x,z:st.z,w:.8,d:.8,y:0,top:1.1});}
         this.target(vp.panMesh,{type:'station',id:st.id,name:st.id==='charcoal'?'grill grate':st.id+' pan'});
         if(vp.lid)vp.lid.traverse(o=>{if(o.isMesh)this.target(o,{type:'panLid',id:st.id,name:'pan lid'});});
@@ -140,8 +140,8 @@
         const cuff=new T.Mesh(new T.CylinderGeometry(.048,.044,.037,24,1,true),upper.material);cuff.rotation.x=Math.PI/2;cuff.position.z=.108;upper.add(cuff);
         this.arms.push({side,upper,fore,hand,position:new T.Vector3(side*.22,-.23,-.44)});
       }
-      this.heldAnchor=new T.Group();this.arms[1].hand.add(this.heldAnchor);this.heldAnchor.position.set(0,-.016,-.043);this.heldAnchor.rotation.x=-.15;
-      this.portionMesh=this.ball(.045,0,.025,-.04,0xa65349,this.heldAnchor);this.portionMesh.material.bumpMap=VA.texture('mince').relief;this.portionMesh.material.bumpScale=.001;
+      this.heldAnchor=new T.Group();this.camera.add(this.heldAnchor);
+      this.portionMesh=this.ball(.045,0,.037,0,0xa65349,this.heldAnchor);this.portionMesh.material.bumpMap=VA.texture('mince').relief;this.portionMesh.material.bumpScale=.001;
       this.body.traverse(o=>{if(o.material){o.material.roughness=.9;o.material.clearcoat=0;}});
     }
     bind(){
@@ -166,7 +166,7 @@
     pause(){this.paused=true;this.left=false;this.grabControl=null;this.jumpQueued=false;this.keys.clear();this.game.audio.stop();if(document.pointerLockElement===this.canvas)document.exitPointerLock();if(this.active)$('real-pause').hidden=false;this.save();}
     save(){try{this.world.heldId=this.held;localStorage.setItem('griddle.real.v1',JSON.stringify(this.world.snapshot()));$('real-save-status').textContent='Kitchen saved.';}catch(e){$('real-save-status').textContent='Save unavailable—keep this tab open.';}}
     load(data){
-      const next=root.RealKitchen.Kitchen.restore(data);for(const r of this.meshes.values()){if(r.view){r.mesh.parent?.remove(r.mesh);r.view.dispose();}else this.dispose(r.mesh);}this.meshes.clear();this.world=next;this.held=next.heldId||null;this.ground=0;this.velocityY=0;this.action=null;this.left=false;this.grabControl=null;this.keys.clear();this.acc=0;
+      const next=root.RealKitchen.Kitchen.restore(data);for(const r of this.meshes.values()){r.oilView?.oilTexture.dispose();if(r.view){r.mesh.parent?.remove(r.mesh);r.view.dispose();}else this.dispose(r.mesh);}this.meshes.clear();this.world=next;this.held=next.heldId||null;this.ground=0;this.velocityY=0;this.action=null;this.left=false;this.grabControl=null;this.keys.clear();this.acc=0;
     }
     leave(){this.pause();this.active=false;document.body.dataset.experience='choose';$('real-pause').hidden=true;$('real-hud').hidden=true;$('mode-choice').hidden=false;}
     dispose(mesh){mesh.parent?.remove(mesh);mesh.traverse(o=>{o.geometry?.dispose();for(const m of Array.isArray(o.material)?o.material:o.material?[o.material]:[]){for(const k of ['map','bumpMap','roughnessMap'])if(m[k]&&!VA.shared.has(m[k]))m[k].dispose();m.dispose();}});}
@@ -301,35 +301,45 @@
       const lean=.14+Math.max(0,-p.pitch-.4)*.20;
       this.camera.position.set(p.x-Math.sin(p.yaw)*lean,p.y+this.eyeHeight,p.z-Math.cos(p.yaw)*lean);this.camera.rotation.set(p.pitch,p.yaw,0,'YXZ');this.body.position.set(p.x,p.y,p.z);this.body.rotation.y=p.yaw;this.body.scale.y=crouch?.72:1;
     }
+    grip(e){return root.RealGrips.profile(e,this.meshes.get(e.id)?.height);}
+    gripPoint(profile,point){return new T.Vector3(...point).sub(new T.Vector3(...profile.grip)).applyEuler(new T.Euler(...profile.rotation));}
     heldPose(e,mesh){
-      const tool=this.heldEntity();mesh.rotation.set(e.food&&e.kind!=='pan'?mesh.rotation.x:0,0,0);mesh.scale.setScalar(1);
-      if(e.kind==='pan'){mesh.rotation.y=Math.PI/2;mesh.position.set(0,-.038,-.28);return;}
-      if(tool?.payload===e.id){mesh.position.set(0,-.019,-.125);return;}
-      if(e.kind==='spatula'){mesh.position.set(0,-.022,-.105);return;}
-      if(['knife','tongs','spoon','probe'].includes(e.kind)){mesh.position.set(0,-.013,e.kind==='probe'?.117:-.08);return;}
-      if(['salt','oil','water','ketchup','mayo','mustard','lighter'].includes(e.kind)){mesh.rotation.x=-Math.PI/2;mesh.position.set(0,-.008,.045);return;}
+      const tool=this.heldEntity(),profile=this.grip(e);mesh.scale.setScalar(1);
       if(e.kind==='glove'){mesh.visible=false;return;}
-      mesh.position.set(0,e.kind==='lid'?-.10:-.025,e.kind==='tray'?-.16:-.09);
+      if(tool?.payload===e.id&&tool.kind!=='glove'){
+        const grip=this.grip(tool);mesh.position.copy(this.gripPoint(grip,grip.tip));
+        // Gather the existing slivers onto the spoon without shrinking the food.
+        const onions=this.meshes.get(e.id)?.view?.onionInst;
+        if(tool.kind==='spoon'&&onions){const matrix=new T.Matrix4();for(let i=0;i<onions.count;i++){onions.getMatrixAt(i,matrix);matrix.elements[12]*=.24;matrix.elements[14]*=.24;matrix.elements[13]+=Math.floor(i/10)*.0015;onions.setMatrixAt(i,matrix);}onions.instanceMatrix.needsUpdate=true;}
+        if(!e.food)mesh.rotation.set(0,0,0);return;
+      }
+      const foodX=e.food&&e.kind!=='pan'?mesh.rotation.x:0;
+      mesh.rotation.set(profile.rotation[0]+foodX,profile.rotation[1],profile.rotation[2]);
+      mesh.position.copy(new T.Vector3(...profile.grip).applyEuler(new T.Euler(...profile.rotation)).negate());
     }
     renderEntities(dt){
       for(const e of this.world.entities){
         if(['pan','lid'].includes(e.kind)&&e.station){const r=this.meshes.get(e.id);if(r)r.mesh.visible=false;continue;}
         let rec=this.meshes.get(e.id);
-        if(e.discarded){if(rec){if(rec.view){rec.mesh.parent?.remove(rec.mesh);rec.view.dispose();}else this.dispose(rec.mesh);this.meshes.delete(e.id);}continue;}
+        if(e.discarded){if(rec){rec.oilView?.oilTexture.dispose();if(rec.view){rec.mesh.parent?.remove(rec.mesh);rec.view.dispose();}else this.dispose(rec.mesh);this.meshes.delete(e.id);}continue;}
         if(e.food&&e.station){if(rec){rec.mesh.visible=false;}continue;}
-        if(rec&&rec.food!==e.food){if(rec.view){rec.mesh.parent?.remove(rec.mesh);rec.view.dispose();}else this.dispose(rec.mesh);this.meshes.delete(e.id);rec=null;}
+        if(rec&&rec.food!==e.food){rec.oilView?.oilTexture.dispose();if(rec.view){rec.mesh.parent?.remove(rec.mesh);rec.view.dispose();}else this.dispose(rec.mesh);this.meshes.delete(e.id);rec=null;}
         if(!rec){let mesh,view;
           if(e.food&&e.kind!=='pan'){view=e.kind==='patty'?new root.BurgerRender.PattyView(this.looseView,e.food):new root.BurgerRender.ItemView(this.looseView,e.food);mesh=view.group;}
           else if(e.kind==='pan'){const pan=this.panTemplates.get(e.panType).clone(true);mesh=new T.Group();mesh.add(pan);mesh.traverse(o=>{if(o.geometry)o.geometry=o.geometry.clone();if(o.material)o.material=o.material.clone();});this.scene.add(mesh);}
         else{mesh=e.stackRoot&&['mayo','ketchup','mustard'].includes(e.kind)?root.BurgerRender.coldLayer(e.kind,.048):this.prop(e.kind);this.scene.add(mesh);}
-          const bounds=new T.Box3().setFromObject(mesh);rec={mesh,view,food:e.food,footprint:{minX:bounds.min.x-mesh.position.x,maxX:bounds.max.x-mesh.position.x,minZ:bounds.min.z-mesh.position.z,maxZ:bounds.max.z-mesh.position.z}};this.meshes.set(e.id,rec);mesh.traverse(o=>{if(o.isMesh)this.target(o,{type:'entity',entity:e.id,name:LABELS[e.kind]||e.label});});
+          const bounds=new T.Box3().setFromObject(mesh);rec={mesh,view,food:e.food,height:bounds.max.y-bounds.min.y,footprint:{minX:bounds.min.x-mesh.position.x,maxX:bounds.max.x-mesh.position.x,minZ:bounds.min.z-mesh.position.z,maxZ:bounds.max.z-mesh.position.z}};this.meshes.set(e.id,rec);mesh.traverse(o=>{if(o.isMesh)this.target(o,{type:'entity',entity:e.id,name:LABELS[e.kind]||e.label});});
+        }
+        if(e.kind==='pan'){
+          if(!rec.oilView){rec.oilView={panGroup:rec.mesh,panFloorY:.004,stoveType:'gas'};root.BurgerRender.Viewport.prototype._buildOil.call(rec.oilView);}
+          root.BurgerRender.Viewport.prototype._updateOil.call(rec.oilView,{pan:e.pan,t:this.world.time});
         }
         const m=rec.mesh;m.visible=true;
         if(e.fall&&!e.held){if(e.slide){e.pos[0]+=e.slide[0]*dt*.9;e.pos[2]+=e.slide[1]*dt*.9;}e.fall+=9.8*dt;e.pos[1]-=e.fall*dt;m.rotation.z=Math.min(.7,m.rotation.z+dt*2);if(e.pos[1]<.035){e.pos[1]=.035;e.fall=0;e.slide=null;}}
-        if(rec.view){const where=e.panCarrier?'pan':'rest';if(e.kind==='patty'){if(rec.view.cutaway!==!!e.cut)rec.view.setCutaway(!!e.cut,0);rec.view.update(this.world.owner(e),dt,where,{x:e.pos[0],y:e.pos[1],z:e.pos[2]},'stove');}else rec.view.update(this.world.owner(e),dt,where,{x:e.pos[0],y:e.pos[1],z:e.pos[2]},'stove');}
+        if(rec.view){const where=e.panCarrier?'pan':'rest';if(e.kind==='patty'){if(rec.view.cutaway!==!!e.cut)rec.view.setCutaway(!!e.cut,0);rec.view.update(this.world.owner(e),dt,where,{x:e.pos[0],y:e.pos[1],z:e.pos[2],lift:e.panCarrier?e.pos[1]-this.looseView.panFloorY:0},'stove');}else rec.view.update(this.world.owner(e),dt,where,{x:e.pos[0],y:e.pos[1],z:e.pos[2]},'stove');}
         rec.lift=rec.view?m.position.y-e.pos[1]:0;
         if(e.panCarrier){const panMesh=this.meshes.get(e.panCarrier)?.mesh;if(panMesh){panMesh.add(m);if(e.kind==='lid')m.position.set(0,.035,0);else m.position.set(e.food.pos.x,.004+rec.lift,e.food.pos.y);}continue;}
-        if(e.trayCarrier&&!e.station){const tray=this.world.get(e.trayCarrier),trayMesh=this.meshes.get(tray.id)?.mesh;if(trayMesh){const n=tray.cargo.indexOf(e.id);trayMesh.add(m);m.position.set(n%2?.06:-.06,.024+rec.lift,n<2?-.075:.075);}continue;}
+        if(e.trayCarrier&&!e.station){const tray=this.world.get(e.trayCarrier),trayMesh=this.meshes.get(tray.id)?.mesh;if(trayMesh){const n=tray.cargo.indexOf(e.id);trayMesh.add(m);m.position.set(n%2?.06:-.06,.0152+rec.lift,n<2?-.075:.075);}continue;}
         if(e.held){if(m.parent!==this.heldAnchor)this.heldAnchor.add(m);this.heldPose(e,m);m.position.y+=rec.lift;}
         else {if(m.parent!==this.scene)this.scene.add(m);m.position.set(e.pos[0],e.pos[1]+rec.lift,e.pos[2]);m.scale.setScalar(1);if(!rec.view&&!e.fall)m.rotation.set(0,0,0);}
       }
@@ -348,9 +358,9 @@
         const layout=window.BurgerAssembly.stackLayout(root.food,P,heights);let y=0;
         for(let i=0;i<parts.length;i++){const part=parts[i],rec=this.meshes.get(part?.id);if(rec){
           let lift=(rec.lift||0)*layout[i].scale;if(part.kind==='bun'){rec.mesh.rotation.x=part.food.half==='top'?0:Math.PI;lift=part.food.half==='top'?0:heights[i]*layout[i].scale;}
-          if(root.held){this.heldAnchor.add(rec.mesh);rec.mesh.position.set(0,-.04+y+lift,-.11);}else{this.scene.add(rec.mesh);rec.mesh.position.set(root.pos[0],root.pos[1]+y+lift,root.pos[2]);}
+          if(root.held){this.heldAnchor.add(rec.mesh);const tool=this.heldEntity(),grip=this.grip(tool?.payload===root.id?tool:root);rec.mesh.position.copy(tool?.payload===root.id?this.gripPoint(grip,grip.tip).add(new T.Vector3(0,y+lift,0)):this.gripPoint(grip,[0,y+lift,0]));}else{this.scene.add(rec.mesh);rec.mesh.position.set(root.pos[0],root.pos[1]+y+lift,root.pos[2]);}
           rec.mesh.scale.y=layout[i].scale;if(part!==root)part.pos=[root.pos[0],root.pos[1]+y,root.pos[2]];
-          if(root.cut&&part!==root){if(!rec.clip){rec.clip=new T.Plane(new T.Vector3(0,0,1),-root.pos[2]);rec.mesh.traverse(o=>{if(o.material){o.material.clippingPlanes=[rec.clip];o.material.needsUpdate=true;}});}rec.clip.constant=-root.pos[2];}
+          if(root.cut&&part!==root){if(!rec.clip){rec.clip=new T.Plane(new T.Vector3(0,0,1),-root.pos[2]);rec.mesh.traverse(o=>{if(o.material){o.material.clippingPlanes=[rec.clip];o.material.needsUpdate=true;}});}const meat=this.meshes.get(root.id).mesh;rec.clip.setFromNormalAndCoplanarPoint(new T.Vector3(0,0,1).applyQuaternion(meat.getWorldQuaternion(new T.Quaternion())),meat.getWorldPosition(new T.Vector3()));}
         }y+=heights[i]*layout[i].scale;}
       }
       this.targets=this.targets.filter(o=>o.parent);
@@ -361,18 +371,60 @@
       if(this.airView){const rooms=this.world.stations.map(s=>P.roomAir(s.state));root.BurgerRender.Viewport.prototype._updateRoomAir.call(this.airView,{t:this.world.time,room:{upper:rooms.reduce((v,r)=>v+r.upper,0),lower:rooms.reduce((v,r)=>v+r.lower,0),opening:rooms[0].opening}});}
     }
     animateHands(dt){
-      this.portionMesh.visible=this.world.portion.mass>0;this.portionMesh.scale.setScalar(Math.cbrt(Math.max(1,this.world.portion.mass)/150));
-      let reach=this.left?.65:0;if(this.action){this.action.time+=dt;const u=this.action.time/this.action.duration;reach=Math.sin(Math.PI*u);if(u>=.55&&!this.action.done){this.action.done=true;this.action.fn();}if(u>=1)this.action=null;}
-      for(const a of this.arms){const assisting=this.action&&['crack','form','smash','slice','grab'].includes(this.action.kind);const r=a.side===1?reach:assisting?reach*.8:0;
-        const end=new T.Vector3(a.side*(.23-.09*r),-.23+.09*r,-.44-.20*r);
-        if(r>0&&this.hover){const contact=this.camera.worldToLocal(this.hover.point.clone());if(contact.length()>1.1)contact.setLength(1.1);contact.y+=.035;contact.z+=.08;contact.x+=a.side===1?.025:-.07;end.lerp(contact,r);}
-        if(this.action?.kind==='stir')end.x+=Math.sin(this.action.time*14)*.045;
-        a.position.lerp(end,Math.min(1,dt*18));a.hand.position.copy(a.position);a.hand.rotation.x=this.action?.kind==='flip'?-Math.sin(this.action.time/this.action.duration*Math.PI)*1.3:this.action?.kind==='slice'?Math.sin(this.action.time*22)*.45:0;
-        root.ChefRig.pose(a.hand,a.side===1&&this.heldEntity()?.75:r*.4,!!this.grabControl,a.side===1&&this.heldEntity()?.kind==='glove');
-        const shoulder=new T.Vector3(a.side*.25,-.20,.015),elbow=new T.Vector3(a.side*.31,-.37,-.18),wrist=new T.Vector3(0,0,.029).applyQuaternion(a.hand.quaternion).add(a.position);
+      const portion=this.world.portion.mass>0;
+      this.portionMesh.visible=portion;this.portionMesh.scale.setScalar(Math.cbrt(Math.max(1,this.world.portion.mass)/150));
+      this.portionMesh.position.y=.037*this.portionMesh.scale.x;
+      let reach=this.left?.85:0;if(this.action){this.action.time+=dt;const u=this.action.time/this.action.duration;reach=Math.sin(Math.PI*Math.min(1,u));if(u>=.55&&!this.action.done){this.action.done=true;this.action.fn();}if(u>=1)this.action=null;}
+      const held=this.heldEntity(),item=held?.kind==='glove'&&held.payload?this.world.get(held.payload):held;
+      const profile=item?this.grip(item):portion?root.RealGrips.profile({kind:'portion'}):null;
+      const action=this.action?.kind,d=this.hover?.data,food=this.foodAt(this.hover);
+      if(profile&&item?.kind==='press'&&action==='smash'){profile.support=[-.02,.09,0];profile.supportPose='flat';}
+      const freeHand=held&&(this.grabControl||action==='reach'||action==='press'&&held.kind!=='lighter');
+      const seasoning=held?.kind==='salt'&&(d?.type==='bowl'||food?.kind==='patty');
+      const pouring=profile?.pour&&(action==='pour'||this.left&&(seasoning||['oil','water'].includes(held?.kind)&&(d?.type==='station'||food?.station)));
+      this.pourBlend=(this.pourBlend||0)+((pouring?1:0)-(this.pourBlend||0))*Math.min(1,dt*10);
+      const stroke=action?Math.sin(this.action.time/this.action.duration*Math.PI):0;
+      const tilt=action==='flip'?-stroke*1.3:action==='slice'?Math.sin(this.action.time*22)*.22:0;
+      this.heldAnchor.rotation.set((profile?.level?-this.camera.rotation.x:0)+tilt-this.pourBlend*1.95,0,0);
+      const anchor=new T.Vector3(profile?.support?.12:.20,-.27,-.48);
+      if(profile&&reach>0&&this.hover&&!freeHand){
+        const target=this.camera.worldToLocal(this.hover.point.clone());if(target.length()>1.1)target.setLength(1.1);
+        // Reach with the working end; the handle stays behind it.
+        const working=this.gripPoint(profile,pouring&&profile.spout?profile.spout:profile.tip||[0,0,0]);
+        target.sub(working.applyQuaternion(this.heldAnchor.quaternion));target.y+=pouring?.09:.012;
+        anchor.lerp(target,reach);
+      }
+      if(action==='stir'||this.left&&held?.kind==='spoon'&&d?.type==='bowl'){anchor.x+=Math.sin(this.clock*14)*.035;anchor.z+=Math.cos(this.clock*14)*.025;}
+      if(action==='wipe')anchor.x+=Math.sin(this.action.time*16)*.08;
+      if(seasoning&&pouring)anchor.y+=Math.sin(this.clock*24)*.008;
+      // Resolve the gripping hand first, then attach the assisting hand to the same object.
+      for(const a of [this.arms[1],this.arms[0]]){
+        const right=a.side===1,support=!right&&profile?.support&&!freeHand;
+        const assisting=!right&&(freeHand||this.action&&['crack','form','smash','slice'].includes(action));
+        const pose=right?profile:support?root.RealGrips.poses[profile.supportPose||'cup']:null;
+        let end=new T.Vector3(a.side*.23,-.23,-.44),rotation=new T.Quaternion();
+        if(pose){
+          rotation.copy(this.heldAnchor.quaternion).multiply(new T.Quaternion().setFromEuler(new T.Euler(...pose.wrist)));
+          a.hand.quaternion.slerp(rotation,Math.min(1,dt*18));
+          const contact=new T.Vector3(...pose.contact).applyQuaternion(a.hand.quaternion);
+          end.copy(right?anchor:this.gripPoint(profile,profile.support).applyQuaternion(this.heldAnchor.quaternion).add(this.heldAnchor.position)).sub(contact);
+        }else{
+          const r=right?reach:assisting?reach*.8:0;
+          if(r>0&&this.hover){const target=this.camera.worldToLocal(this.hover.point.clone());if(target.length()>1.1)target.setLength(1.1);target.y+=.035;target.z+=.08;target.x+=right?.025:-.07;end.lerp(target,r);}
+          a.hand.quaternion.slerp(rotation,Math.min(1,dt*18));
+        }
+        const shoulder=new T.Vector3(a.side*.25,-.20,.015),wristOffset=new T.Vector3(0,0,.029).applyQuaternion(a.hand.quaternion);
+        const extension=end.clone().add(wristOffset).sub(shoulder);if(extension.length()>.65)end.copy(shoulder).add(extension.setLength(.65)).sub(wristOffset);
+        a.position.lerp(end,Math.min(1,dt*18));a.hand.position.copy(a.position);
+        if(right)this.heldAnchor.position.copy(a.position).add(new T.Vector3(...(profile?.contact||[0,-.017,-.042])).applyQuaternion(a.hand.quaternion));
+        root.ChefRig.pose(a.hand,pose||((!right&&freeHand||!held)&&this.grabControl?.6:reach*.3),!pose&&action==='press',right&&held?.kind==='glove');
+        const wrist=wristOffset.add(a.position),axis=wrist.clone().sub(shoulder),length=axis.length();axis.normalize();
+        const bend=new T.Vector3(a.side*.5,-1,.15);bend.addScaledVector(axis,-bend.dot(axis)).normalize();
+        const elbow=shoulder.clone().addScaledVector(axis,length/2).addScaledVector(bend,Math.sqrt(Math.max(0,.33*.33-length*length/4)));
         for(const [mesh,start,finish] of [[a.upper,shoulder,elbow],[a.fore,elbow,wrist]]){mesh.position.copy(start).add(finish).multiplyScalar(.5);mesh.quaternion.setFromUnitVectors(new T.Vector3(0,0,1),finish.clone().sub(start).normalize());mesh.scale.z=start.distanceTo(finish)/.25;}
       }
     }
+
     hint(){
       const t=this.hover,h=this.heldEntity();let text='';if(t){const d=t.data;text=d.name||'Counter';if(['knob','ovenKnob','vent'].includes(d.type)){const s=this.world.station(d.id||'oven').state;const value=d.type==='ovenKnob'?Math.round(s.oven.target)+' °C':d.type==='vent'?Math.round(s.grill.topVent*100)+'%':s.stove.knob.toFixed(1)+'/10';text+=' · '+value+'\nHold left click + move mouse to turn';}
         else if(d.type==='bowl')text+=' · '+Math.round(this.world.bowl.mass)+' g · '+this.world.bowl.salt.toFixed(1)+' g salt\n'+(h?'Hold left click to mix / season':'Hold left click to take mince · Right click returns 25 g');

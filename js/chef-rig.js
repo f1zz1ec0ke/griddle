@@ -35,12 +35,13 @@
     for(let i=0;i<4;i++){const d=digit((i-1.5)*.018*side,-.035+Math.abs(i-1.1)*.002,lengths[i],i===3?.007:.008);d.base.rotation.y=(1.5-i)*side*.05;}
     const thumb=digit(-side*.031,.007,.050,.009,true);thumb.base.rotation.y=side*.75;thumb.base.rotation.z=side*.45;
     const glove=A.material('paint',0xb96043);glove.roughness=.95;glove.clearcoat=0;
-    group.userData.rig={fingers,skin,glove};pose(group,0,false);return group;
+    group.userData.rig={fingers,skin,glove,side};pose(group,0,false);return group;
   }
   function pose(group,grip,point,gloved=false){
     const rig=group.userData.rig;if(rig.gloved!==gloved){group.traverse(o=>{if(o.userData.skin)o.material=gloved?rig.glove:rig.skin;if(o.userData.nail)o.visible=!gloved;});rig.gloved=gloved;}
     group.userData.rig.fingers.forEach((d,i)=>{
-      const curl=point&&i===0?.02:grip;
+      const curl=point&&i===0?.02:typeof grip==='number'?grip:d.thumb?grip.thumb:grip.curl[i];
+      if(d.thumb){d.base.rotation.y=rig.side*(.45-curl*1.75);d.base.rotation.z=rig.side*(.35-curl*.22);}
       d.joints.forEach((j,k)=>j.rotation.x=-(d.thumb?[.18,.28,.15][k]+curl*[.28,.5,.35][k]:[.10,.18,.12][k]+curl*[.80,1.02,.65][k]));
     });
   }
