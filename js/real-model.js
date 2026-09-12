@@ -112,12 +112,13 @@
       const p=e?.food;if(e?.kind!=='patty'||!p)return null;
       const report=P.evaluate(this.owner(e),P.donenessOf(p.peakCenter).id,p),meats=[p,...(p.assembly||[]).filter(l=>l.meat).map(l=>l.meat)];
       const mass=meats.reduce((n,p)=>n+p.massKg0*1000,0),salt=meats.reduce((n,p)=>n+(p.saltGrams?.mixed||0)+(p.saltGrams?.surface||0),0),pct=salt/mass*100;
+      const water=meats.reduce((out,p)=>{for(let i=0;i<p.w.length;i++){out.now+=p.w[i];out.start+=p.w0c[i];}return out;},{now:0,start:0}),retained=water.now/water.start;
       const temperature=Math.min(...meats.map(P.centerT));
       const notes=[temperature<35?'Cold at the centre.':temperature<48?'The centre is still raw.':P.donenessOf(temperature).label+' at the centre.',
-        Math.max(p.faceDown.char,p.faceUp.char)>.3?'Bitter, burnt crust.':Math.min(p.faceDown.brown,p.faceUp.brown)<1?'Needs more sear.':'A good sear on both sides.',
+        meats.some(p=>Math.max(p.faceDown.char,p.faceUp.char)>.3)?'Bitter, burnt crust.':meats.some(p=>Math.min(p.faceDown.brown,p.faceUp.brown)<1)?'Needs more sear.':'A good sear on both sides.',
         pct<.35?'Underseasoned.':pct>1.8?'Far too salty.':pct>1.25?'A little heavy on the salt.':'Nicely seasoned.',
-        report.waterRetained<.55?'Dry inside.':report.waterRetained>.72?'Plenty of juice.':'Some juice left.',
-        p.work>.8?'Overworked and dense.':p.saltStructure>.2?'Springy from salt mixed into the mince.':'A loose, tender texture.'];
+        retained<.55?'Dry inside.':retained>.72?'Plenty of juice.':'Some juice left.',
+        meats.some(p=>p.work>.8)?'Overworked and dense.':meats.some(p=>p.saltStructure>.2)?'Springy from salt mixed into the mince.':'A loose, tender texture.'];
       const layers=p.assembly||[];if(!layers.length)notes.push('Just the patty.');else if(!A.closed(p))notes.push('An open burger.');
       if(layers.some(l=>(l.wilt||0)>.4))notes.push('The fresh toppings have wilted.');
       if(report.bunSoak>.004)notes.push('The bottom bun is getting soggy.');
@@ -143,13 +144,20 @@
       if(st.state.lid)return 'Lift the lid first.';
       if(st.id==='oven'&&(!this.doors.oven||e.kind!=='patty'))return 'Open the oven; its rack takes patties.';
       if(!e.food)return 'Prepare this ingredient at the board first.';
+      let ovenSlot;
+      if(st.id==='oven'){
+        if(this.entities.some(q=>q.kind==='tray'&&q.station==='oven'&&q.id!==e.trayCarrier))return 'Take the tray out before using the bare rack.';
+        const occupied=this.entities.filter(q=>q!==e&&q.kind==='patty'&&q.station==='oven');
+        ovenSlot=[0,1,2,3].find(n=>!occupied.some((q,i)=>(q.ovenSlot??i)===n));
+        if(ovenSlot==null||e.food.D>.24)return 'Make space on the oven rack first.';
+      }
       const spot=st.id==='oven'?{ok:true,pos:{x:0,y:0}}:this.placement(e,stationId,point);if(!spot.ok)return 'Make a little space on the cooking surface first.';
       this.detach(e);const p=e.food,s=st.state;
       this.loose.patties=this.loose.patties.filter(q=>q!==p);this.loose.items=this.loose.items.filter(q=>q!==p);
       p.pos=spot.pos;
       if(e.kind==='patty'){s.patties.push(p);P.placePatty(s,p,p.pos);if(st.id==='oven')P.putInOven(s,p);}
       else{s.items.push(p);p.where='pan';p.rings=P.footprintRings(s.pan,p.pos,p.D/2);p.stuck=true;}
-      e.station=st.id;e.held=false;return null;
+      e.station=st.id;e.ovenSlot=ovenSlot;e.held=false;return null;
     }
     discard(e){
       const root=e.stackRoot?this.get(e.stackRoot):e;
@@ -171,28 +179,35 @@
       if(e.parked){st.state.lid=e.parked.lid;st.state.patties=e.parked.patties;st.state.items=e.parked.items;for(const n of e.food){const q=this.get(n);if(q){q.station=id;q.panCarrier=null;}}if(e.lidId){const lid=this.get(e.lidId);lid.station=id;lid.panCarrier=null;}e.parked=null;}return null;
     }
     putOnTray(e,tray){
-      if(!e.food||e.kind==='pan'||tray.station||(e.food.assembly?.length&&tray.kind!=='plate'))return false;
+      if(!['tray','plate'].includes(tray.kind)||!e.food||e.kind==='pan'||e.stackRoot||tray.station||(e.food.assembly?.length&&tray.kind!=='plate'))return false;
       tray.cargo ||= [];if(tray.cargo.length>=(tray.kind==='plate'?1:4))return false;
-      this.detach(e);tray.cargo.push(e.id);e.trayCarrier=tray.id;e.held=false;return true;
+      const radius=(e.food.Dcov||e.food.D)/2,positions=tray.kind==='plate'?[{x:0,y:0}]:[{x:-.06,y:-.075},{x:.06,y:-.075},{x:-.06,y:.075},{x:.06,y:.075},{x:0,y:0}];
+      const pos=positions.find(p=>Math.abs(p.x)+radius<=(tray.kind==='plate'?.11:.125)&&Math.abs(p.y)+radius<=(tray.kind==='plate'?.11:.16)&&(tray.cargo||[]).every((id,i)=>{const q=this.get(id),at=q.carrierPos||positions[i];return Math.hypot(at.x-p.x,at.y-p.y)>=radius+(q.food.Dcov||q.food.D)/2+.004;}));
+      if(!pos)return false;
+      this.detach(e);tray.cargo.push(e.id);e.trayCarrier=tray.id;e.carrierPos={...pos};e.held=false;return true;
     }
     liftTray(tray){
       const cargo=(tray.cargo||[]).slice();for(const id of cargo){const e=this.get(id);this.detach(e);e.trayCarrier=tray.id;}tray.cargo=cargo;tray.station=null;
     }
     ovenTray(tray){
       if(!this.doors.oven)return 'Open the oven first.';
-      if((tray.cargo||[]).some(id=>this.get(id).kind!=='patty'))return 'Finish patties in the oven; cook toppings on the hobs.';
+      if(tray.kind!=='tray')return 'Use the oven tray.';
+      if((tray.cargo||[]).some(id=>this.get(id)?.kind!=='patty'||this.get(id).food.assembly?.length||this.get(id).food.D>.24))return 'Finish loose patties in the oven; keep burgers on the pass.';
+      if(this.entities.some(e=>e!==tray&&e.station==='oven'&&e.trayCarrier!==tray.id))return 'Clear the oven rack before adding the tray.';
       const cargo=(tray.cargo||[]).slice();for(const id of cargo){const e=this.get(id);this.placeFood(e,'oven');e.trayCarrier=tray.id;}tray.cargo=cargo;tray.station='oven';tray.held=false;tray.pos=[-2.6,.54,-1.32];return null;
     }
     assemble(held,target){
       const base=target.stackRoot?this.get(target.stackRoot):target;
+      if(!base||held.discarded||target.discarded||held.stackRoot||held.station||held.panCarrier||base.station||base.panCarrier)return false;
       if(held.kind==='patty'&&target.kind==='bun'&&target.food.half==='bottom'&&!target.stackRoot){
-        this.detach(held);this.detach(target);if(!A.add(this.loose,held.food,target.id))return false;A.add(this.loose,held.food,'patty');target.stackRoot=held.id;held.pos=target.pos.slice();held.held=false;return true;
+        if(held.food.assembly?.length||target.station||target.panCarrier)return false;
+        if(!A.add(this.loose,held.food,target.id))return false;A.add(this.loose,held.food,'patty');this.detach(held);this.detach(target);target.stackRoot=held.id;held.pos=target.pos.slice();held.held=false;return true;
       }
       if(base.kind!=='patty'||!base.food.assembly?.length||held===base||A.closed(base.food))return false;
-      if(held.food)this.detach(held);
       const cold={tomatoSlice:'tomato',pickleSlice:'pickles',lettuce:'lettuce',ketchup:'ketchup',mayo:'mayo',mustard:'mustard'}[held.kind];
       const key=cold||(held.kind==='patty'?'patty:'+held.id:held.id);
       if(!A.add(this.loose,base.food,key))return false;
+      if(held.food)this.detach(held);
       if(cold&&held.coldState)Object.assign(base.food.assembly.at(-1),held.coldState);
       else if(cold&&held.massG)base.food.assembly.at(-1).mass=held.massG/1000;
       if(cold&&held.sliceMm)base.food.assembly.at(-1).height=held.sliceMm/1000;
@@ -212,11 +227,38 @@
     snapshot(){return S.encode({version:1,nextId:this.nextId,heldId:this.heldId,entities:this.entities.filter(e=>!e.discarded),time:this.time,bowl:this.bowl,portion:this.portion,player:this.player,doors:this.doors,stations:this.stations,loose:this.loose,settings:this.settings,lastTasting:this.lastTasting});}
     static restore(data){
       const d=S.decode(data);if(d.version!==1||!Array.isArray(d.stations)||d.stations.length!==5||!Array.isArray(d.entities)||d.entities.length>3000)throw Error('Invalid Real kitchen save');
-      if(!d.player||![d.player.x,d.player.z,d.player.yaw,d.player.pitch].every(Number.isFinite))throw Error('Invalid chef position');
+      if(!Number.isFinite(d.time)||!d.player||![d.player.x,d.player.y,d.player.z,d.player.yaw,d.player.pitch].every(Number.isFinite))throw Error('Invalid chef position or time');
       for(let i=0;i<5;i++)if(d.stations[i].id!==stationDefs[i][0]||!d.stations[i].state?.pan)throw Error('Invalid station');
       const states=[...d.stations.map(s=>s.state),d.loose,...d.entities.filter(e=>e.parked).map(e=>e.parked)];
-      for(const s of states){if(!P.STOVES[s.stove?.id]||!Array.isArray(s.patties)||!Array.isArray(s.items)||!(s.pan.Tr instanceof Float64Array)||![...s.pan.Tr].every(Number.isFinite))throw Error('Invalid cooking state');s.stove.profile=P.STOVES[s.stove.id].profile;}
+      for(const s of states){if(!P.STOVES[s.stove?.id]||!(P.PANS[s.pan?.id]||s.stove.id==='charcoal'&&s.pan?.id==='grate')||!Array.isArray(s.patties)||!Array.isArray(s.items)||!(s.pan.Tr instanceof Float64Array)||s.pan.Tr.length!==s.pan.Np||![...s.pan.Tr].every(Number.isFinite))throw Error('Invalid cooking state');s.stove.profile=P.STOVES[s.stove.id].profile;}
       const ids=new Set();for(const e of d.entities){if(!Number.isInteger(e.id)||ids.has(e.id)||!Array.isArray(e.pos)||e.pos.length!==3||!e.pos.every(Number.isFinite))throw Error('Invalid inventory');ids.add(e.id);if(e.kind==='patty'&&(!(e.food?.T instanceof Float64Array)||!P.pattyFinite(e.food)))throw Error('Invalid meat');}
+      const byId=new Map(d.entities.map(e=>[e.id,e]));
+      if(!Number.isInteger(d.nextId)||d.nextId<=Math.max(0,...ids)||(d.heldId!=null&&!byId.has(d.heldId)))throw Error('Invalid inventory references');
+      const foodEntities=d.entities.filter(e=>e.food&&e.kind!=='pan'),knownFood=new Set(foodEntities.map(e=>e.food));
+      for(const e of d.entities){
+        if(e.station&&!d.stations.some(s=>s.id===e.station))throw Error('Invalid station reference');
+        if(e.payload!=null&&(!byId.has(e.payload)||e.payload===e.id))throw Error('Invalid tool payload');
+        if(e.panCarrier!=null){const pan=byId.get(e.panCarrier);if(pan?.kind!=='pan'||!pan.parked||e.station||(e.kind!=='lid'&&!pan.food.includes(e.id)))throw Error('Invalid carried pan');}
+        if(e.trayCarrier!=null){const tray=byId.get(e.trayCarrier);if(!['tray','plate'].includes(tray?.kind)||!tray.cargo?.includes(e.id))throw Error('Invalid tray reference');}
+        if(e.cargo&&(!['tray','plate'].includes(e.kind)||!Array.isArray(e.cargo)||e.cargo.length>(e.kind==='plate'?1:4)||new Set(e.cargo).size!==e.cargo.length||e.cargo.some(id=>{const q=byId.get(id);return q?.trayCarrier!==e.id||!q.food||q.kind==='pan'||q===e;})))throw Error('Invalid tray contents');
+        if(e.stackRoot!=null){const base=byId.get(e.stackRoot);if(base?.kind!=='patty'||base===e||!base.food.assembly?.some((l,i)=>l.item===e.food||l.meat===e.food||l.cold&&i===e.layer))throw Error('Invalid burger layer');}
+        if(e.food&&e.kind!=='pan'){
+          const owners=states.filter(s=>(e.kind==='patty'?s.patties:s.items).includes(e.food));
+          const owner=e.panCarrier?byId.get(e.panCarrier).parked:e.station?d.stations.find(s=>s.id===e.station).state:d.loose;
+          if(owners.length!==1||owners[0]!==owner)throw Error('Invalid food ownership');
+          if(e.kind==='patty'&&e.food.assembly?.length){
+            if(e.station||e.panCarrier||e.stackRoot||e.food.assembly.length>40)throw Error('Invalid burger');
+            for(const [i,l] of e.food.assembly.entries()){
+              if(!l||[!!l.patty,!!l.item,!!l.cold].filter(Boolean).length!==1)throw Error('Invalid burger layer');
+              if(l.meat||l.item){const q=foodEntities.find(q=>q.food===(l.meat||l.item));if(!q||q.stackRoot!==e.id)throw Error('Invalid assembled reference');}
+              if(l.cold&&(!A.cold[l.cold]||!d.entities.some(q=>q.stackRoot===e.id&&q.layer===i)))throw Error('Invalid topping reference');
+            }
+          }
+          if(e.kind!=='patty')for(const item of [e.food,...(e.food.regions||[])])for(const key of ['face','up','body','wBot','wTop','yolk','lace','bot','top']){const n=item[key];if(n&&(!Number.isFinite(n.T)||!['m','w'].every(k=>Number.isFinite(n[k])&&n[k]>=0)))throw Error('Invalid ingredient');}
+        }
+      }
+      for(const s of states)if([...s.patties,...s.items].some(p=>!knownFood.has(p))||new Set(s.patties).size!==s.patties.length||new Set(s.items).size!==s.items.length)throw Error('Invalid food references');
+      for(const st of d.stations)if(st.panId!=null){const pan=byId.get(st.panId);if(pan?.kind!=='pan'||pan.station!==st.id||pan.pan!==st.state.pan)throw Error('Invalid cookware reference');}
       for(const q of [d.bowl,d.portion])if(!q||!['mass','salt','work'].every(k=>Number.isFinite(q[k])&&q[k]>=0)||(q.fatFrac!=null&&(!Number.isFinite(q.fatFrac)||q.fatFrac<0||q.fatFrac>1)))throw Error('Invalid mince');
       for(const e of d.entities)if(e.home&&e.kind!=='pan'){const atHome=e.pos.every((v,i)=>Math.abs(v-e.home[i])<.001);e.home[1]=.936;if(e.kind==='probe')e.home[0]=1.80;if(atHome)e.pos=e.home.slice();}
       const k=Object.create(Kitchen.prototype);Object.assign(k,d);k.settings={thicknessMm:P.clamp(d.settings?.thicknessMm||20,8,35),sliceMm:P.clamp(d.settings?.sliceMm||6,2,12)};

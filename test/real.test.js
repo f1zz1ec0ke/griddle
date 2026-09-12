@@ -1,6 +1,29 @@
 const test=require('node:test'),assert=require('node:assert/strict'),{Kitchen}=require('../js/real-model'),P=require('../js/physics');
 const A=require('../js/assembly');
 function patty(k){k.bowl={mass:500,salt:5,work:.2};k.scoop(2);return k.form([0,.96,-.9]);}
+test('failed assembly leaves cooked food on its original surface',()=>{
+ const k=new Kitchen(),p=patty(k),b=k.slice(k.addIngredient('bunWhole',[0,.95,0]));k.assemble(p,b[0]);k.assemble(b[1],p);const fresh=k.slice(k.addIngredient('bunWhole',[.3,.95,0]))[0];k.placeFood(fresh,'gas');
+ assert.equal(k.assemble(p,fresh),false);assert.equal(fresh.station,'gas');assert.ok(k.station('gas').state.items.includes(fresh.food));assert.equal(p.food.assembly.length,3);
+});
+test('oven rack rejects overflow atomically and reuses the freed slot',()=>{
+ const k=new Kitchen();k.doors.oven=true;const food=Array.from({length:5},()=>patty(k));for(const p of food.slice(0,4))assert.equal(k.placeFood(p,'oven'),null);
+ assert.match(k.placeFood(food[4],'oven'),/space/);assert.equal(food[4].station,null);assert.ok(k.loose.patties.includes(food[4].food));const slot=food[1].ovenSlot;k.detach(food[1]);assert.equal(k.placeFood(food[4],'oven'),null);assert.equal(food[4].ovenSlot,slot);
+});
+test('tray placement respects food size and loading the oven cannot merge with occupied rack space',()=>{
+ const k=new Kitchen(),tray=k.entities.find(e=>e.kind==='tray');k.portion={mass:340,salt:0,work:0};k.settings.thicknessMm=8;const wide=k.form([0,.95,0]);
+ if(wide.food.D>.25)assert.equal(k.putOnTray(wide,tray),false);else{assert.equal(k.putOnTray(wide,tray),true);assert.equal(k.putOnTray(patty(k),tray),false);k.detach(wide);}
+ k.settings.thicknessMm=20;const p=patty(k);assert.ok(k.putOnTray(p,tray));k.doors.oven=true;const q=patty(k);k.placeFood(q,'oven');assert.match(k.ovenTray(tray),/Clear/);assert.equal(tray.station,null);assert.equal(p.trayCarrier,tray.id);assert.equal(p.station,null);
+ k.detach(q);assert.equal(k.ovenTray(tray),null);assert.match(k.placeFood(q,'oven'),/tray/);
+});
+test('broken ownership and save references are rejected before loading',()=>{
+ const S=require('../js/session'),k=new Kitchen(),p=patty(k),good=k.snapshot();
+ for(const mutate of [d=>d.heldId=999999,d=>d.nextId=1,d=>d.entities.find(e=>e.id===p.id).panCarrier=999999,d=>d.loose.patties.push(d.loose.patties[0]),d=>d.stations[0].panId=999999]){const d=S.decode(good);mutate(d);assert.throws(()=>Kitchen.restore(S.encode(d)),/Invalid/);}
+ assert.ok(Kitchen.restore(good).get(p.id));
+});
+test('tasting a double burger accounts for the second patty crust and texture',()=>{
+ const k=new Kitchen(),p=patty(k),q=patty(k),b=k.slice(k.addIngredient('bunWhole',[0,.95,0]));k.assemble(p,b[0]);k.assemble(q,p);p.food.faceDown.brown=p.food.faceUp.brown=1.5;q.food.faceUp.char=.5;q.food.work=.9;
+ const notes=k.taste(p).notes;assert.ok(notes.includes('Bitter, burnt crust.'));assert.ok(notes.includes('Overworked and dense.'));assert.ok(!notes.includes('A good sear on both sides.'));
+});
 test('successive cuts conserve ingredient mass, and cheese carries its slice mass into cooking',()=>{
  const k=new Kitchen(),block=k.addIngredient('cheeseBlock',[0,.95,0]);let total=0,count=0;
  while(!block.discarded&&count<30){const [slice]=k.cut(block,3);assert.ok(slice);total+=slice.massG;count++;slice.pos[0]=2+count*.1;}
