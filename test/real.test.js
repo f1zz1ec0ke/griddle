@@ -1,6 +1,13 @@
 const test=require('node:test'),assert=require('node:assert/strict'),{Kitchen}=require('../js/real-model'),P=require('../js/physics');
 const A=require('../js/assembly');
 function patty(k){k.bowl={mass:500,salt:5,work:.2};k.scoop(2);return k.form([0,.96,-.9]);}
+test('a bottom bun can be placed under a resting patty without moving the burger to the hand',()=>{
+ const k=new Kitchen(),p=patty(k),position=p.pos.slice(),b=k.slice(k.addIngredient('bunWhole',[.4,.96,-.9]));b[0].held=true;b[0].pos=[8,8,8];
+ assert.ok(k.assemble(b[0],p));assert.deepEqual(p.pos,position);assert.equal(b[0].held,false);assert.equal(b[0].stackRoot,p.id);assert.equal(p.food.assembly.length,2);assert.ok(k.assemble(b[1],p));assert.ok(Kitchen.restore(k.snapshot()));
+});
+test('building on a plated bottom bun keeps the complete burger on that plate',()=>{
+ const k=new Kitchen(),p=patty(k),b=k.slice(k.addIngredient('bunWhole',[.4,.96,-.9])),plate=k.entities.find(e=>e.kind==='plate');assert.ok(k.putOnTray(b[0],plate));assert.ok(k.assemble(p,b[0]));assert.deepEqual(plate.cargo,[p.id]);assert.equal(p.trayCarrier,plate.id);assert.equal(b[0].trayCarrier,null);assert.ok(Kitchen.restore(k.snapshot()));
+});
 test('older layouts migrate fixtures and counter items once without losing cooking state',()=>{
  const S=require('../js/session'),{fixturePoint}=require('../js/real-model'),k=new Kitchen(),p=patty(k);k.doors.oven=true;k.placeFood(p,'oven');const tomato=k.addIngredient('tomato',[-2.6,1.062,-1.3]);
  const d=S.decode(k.snapshot());delete d.layoutVersion;d.stations.find(s=>s.id==='oven').x=-2.4;d.stations.find(s=>s.id==='charcoal').x=2.5;

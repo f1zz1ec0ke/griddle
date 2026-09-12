@@ -21,6 +21,7 @@ const SCENARIOS = [
   require('./scenario-real-audit.js'),
   require('./scenario-real-transitions.js'),
   require('./scenario-real-layout.js'),
+  require('./scenario-real-usability.js'),
   require('./scenario-medium-rare.js'),
   require('./scenario-ticket-of-three.js'),
   require('./scenario-charcoal.js'),

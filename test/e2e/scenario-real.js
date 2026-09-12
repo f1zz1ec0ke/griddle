@@ -19,7 +19,7 @@ module.exports={name:'real',experience:'real',description:'physical prep, contro
  await page.evaluate(()=>{const r=realMode;Object.assign(r.world.player,{x:0,z:-2.7,y:0,yaw:Math.PI,pitch:0});r.move(0);});
  await page.keyboard.down('w');await page.waitForTimeout(700);await page.keyboard.up('w');k.ok(await page.evaluate(()=>realMode.world.player.z>-2.7),'W walks forward');
  await page.keyboard.press('Space');await page.waitForFunction(()=>realMode.world.player.y>0);k.ok(await page.evaluate(()=>realMode.world.player.y>0),'jump leaves the floor');
- await page.keyboard.down('Control');await page.waitForFunction(()=>realMode.eyeHeight<1.3);await page.keyboard.up('Control');
+ await page.keyboard.down('c');await page.waitForFunction(()=>realMode.eyeHeight<1.3);await page.keyboard.up('c');
  await page.keyboard.press('Escape');await page.waitForFunction(()=>realMode.paused);const t=await page.evaluate(()=>realMode.world.time);await page.waitForTimeout(300);k.near(await page.evaluate(()=>realMode.world.time),t,0,'pause freezes all stations');
  k.ok(await page.evaluate(()=>!!localStorage.getItem('griddle.real.v1')),'Real has its own saved kitchen');
  await page.locator('#real-leave').click();await page.locator('#choose-legacy').click();await page.locator('#btn-practice').click();k.ok(await page.evaluate(()=>game.mode==='practice'&&document.body.dataset.experience==='legacy'),'Legacy practice remains separately playable');

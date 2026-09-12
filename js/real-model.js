@@ -215,12 +215,25 @@
       if(this.entities.some(e=>e!==tray&&e.station==='oven'&&e.trayCarrier!==tray.id))return 'Clear the oven rack before adding the tray.';
       const cargo=(tray.cargo||[]).slice();for(const id of cargo){const e=this.get(id);this.placeFood(e,'oven');e.trayCarrier=tray.id;}tray.cargo=cargo;tray.station='oven';tray.held=false;tray.pos=fixturePoint('oven',[0,.54,-.02]);return null;
     }
+    assemblyProblem(held,target){
+      const base=target.stackRoot?this.get(target.stackRoot):target;
+      if(base?.station||base?.panCarrier)return 'Take the food off the heat before building.';
+      if(base?.food&&A.closed(base.food))return 'Put this down, then lift the top bun with E.';
+      if(held.kind==='bun'&&held.food?.half==='top'&&base?.food?.assembly?.length)return 'Use the top from the same bun pair.';
+      if(!base?.food?.assembly?.length)return 'Start with a patty and a bottom bun, then add toppings.';
+      return 'That layer cannot go here. Prepare it first, or lift a layer with E.';
+    }
     assemble(held,target){
       const base=target.stackRoot?this.get(target.stackRoot):target;
       if(!base||held.discarded||target.discarded||held.stackRoot||held.station||held.panCarrier||base.station||base.panCarrier)return false;
+      if(held.kind==='bun'&&held.food.half==='bottom'&&base.kind==='patty'&&!base.food.assembly?.length){
+        if(base.trayCarrier)return false;
+        const pos=base.pos.slice();if(!this.assemble(base,held))return false;base.pos=pos;held.held=false;return true;
+      }
       if(held.kind==='patty'&&target.kind==='bun'&&target.food.half==='bottom'&&!target.stackRoot){
         if(held.food.assembly?.length||target.station||target.panCarrier)return false;
-        if(!A.add(this.loose,held.food,target.id))return false;A.add(this.loose,held.food,'patty');this.detach(held);this.detach(target);target.stackRoot=held.id;held.pos=target.pos.slice();held.held=false;return true;
+        const plate=this.get(target.trayCarrier);if(plate&&(plate.kind!=='plate'||held.food.D>.22))return false;
+        if(!A.add(this.loose,held.food,target.id))return false;A.add(this.loose,held.food,'patty');this.detach(held);this.detach(target);target.stackRoot=held.id;held.pos=target.pos.slice();held.held=false;if(plate)this.putOnTray(held,plate);return true;
       }
       if(base.kind!=='patty'||!base.food.assembly?.length||held===base||A.closed(base.food))return false;
       const cold={tomatoSlice:'tomato',pickleSlice:'pickles',lettuce:'lettuce',ketchup:'ketchup',mayo:'mayo',mustard:'mustard'}[held.kind];

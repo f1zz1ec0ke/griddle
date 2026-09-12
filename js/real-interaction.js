@@ -123,17 +123,22 @@
       }
       const station=t?.data.type==='station'?t.data.id:t?.data.entity?r.world.get(t.data.entity)?.station:null;
       if(!e||!t||r.action||this.probe||(!['board','surface'].includes(t.data.type)&&!station)){if(this.ghost)this.ghost.visible=false;return;}
-      const source=r.meshes.get(e.id)?.mesh;if(!source)return;
+      const source=r.meshes.get(e.id)?.mesh;if(!source){if(this.ghost)this.ghost.visible=false;return;}
       const key=[e.id,e.food?.assembly?.length||0,(e.cargo||[]).join('/'),e.cutFraction,e.sliceMm].join(':');
       if(this.ghostId!==key){this.makeGhost(e,source);this.ghostId=key;}
       const g=this.ghost;g.visible=true;g.rotation.set(0,this.yaw,0);g.position.copy(t.point);g.position.y+=.002;let valid=true;
       if(station&&e.food&&e.kind!=='pan'){const st=r.world.station(station),to=r.world.placement(e,station,this.panPoint(t,station));valid=to.ok&&!st.state.lid&&(st.panId||station==='charcoal')&&!e.stackRoot&&!e.food.assembly?.length;if(valid){g.position.x=st.x+to.pos.x;g.position.z=st.z+to.pos.y;g.position.y=this.r.stations.get(station).scene.position.y+this.r.stations.get(station).panFloorY;}}
       else if(station)valid=e.kind==='pan'&&!['charcoal','oven'].includes(station)&&!r.world.station(station).panId;
       else {const point=this.counterPlacement(e,t.point);valid=!!point;if(point)g.position.set(...point);}
-      g.traverse(o=>{if(o.material)o.material.color.setHex(valid?0x6ec7a0:0xe78069);});
+      g.visible=!!valid;
     }
     hint(target=this.r.hover){
       const r=this.r,w=r.world,h=r.heldEntity(),e=r.foodAt(target);
+      const carried=h?.payload?w.get(h.payload):h;
+      if(carried&&e&&!e.station&&(carried.food||['tomatoSlice','pickleSlice','lettuce'].includes(carried.kind))){
+        if(carried.kind==='patty'&&e.kind==='bun'&&e.food.half==='bottom'||carried.kind==='bun'&&carried.food.half==='bottom'&&e.kind==='patty'&&!e.food.assembly?.length)return 'Right click: start burger';
+        if(e.food?.assembly?.length)return root.BurgerAssembly.closed(e.food)?'Put this down, then lift the top bun with E':'Right click: add '+(carried.kind==='bun'?'top bun':carried.label);
+      }
       if(this.probe)return this.probe.valid?`${this.probe.temperature?.toFixed(1)||'…'} °C · ${(this.probe.depth*1000).toFixed(1)} mm deep\nMove mouse up/down or scroll to probe · Release to withdraw`:'Move closer to insert the probe. Release to withdraw.';
       if(w.portion.mass>0)return `Scroll: patty thickness ${w.settings.thicknessMm} mm · ${Math.round((w.portion.fatFrac??.2)*100)}% fat\nHold left click on the board to shape`;
       if(h?.kind==='knife'&&e&&!e.food&&['tomato','pickles','onion','bunWhole','cheeseBlock'].includes(e.kind))return e.kind==='bunWhole'?'Left click: split the bun':`Left click: one cut · Scroll: ${w.settings.sliceMm} mm slices`;

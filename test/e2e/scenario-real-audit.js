@@ -27,7 +27,7 @@ module.exports={name:'real-audit',experience:'real',description:'long-session cl
   r.save();check('audited kitchen still restores with valid ownership',!!RealKitchen.Kitchen.restore(w.snapshot()));
   const raf=window.requestAnimationFrame,start=w.time;window.requestAnimationFrame=()=>0;
   try{r.action=null;r.paused=false;r.acc=0;r.last=1000;r.frame(1100);check('a 100 ms frame advances two stable cooking steps',Math.abs(w.time-start-.1)<1e-8);}finally{window.requestAnimationFrame=raf;}
-  r.action=null;r.paused=true;hold(null);Object.assign(w.player,{x:-2.18,z:-1.3,y:0,yaw:Math.PI/2,pitch:-.82});r.move(0);for(let i=0;i<25;i++){r.animateHands(.05);r.renderEntities(.05);}r.keys.add('ControlLeft');w.player.pitch=-.42;for(let i=0;i<30;i++)r.move(.05);r.keys.clear();r.hover=r.focus();document.getElementById('real-pause').hidden=true;r.hint();return out;
+  r.action=null;r.paused=true;hold(null);Object.assign(w.player,{x:-2.18,z:-1.3,y:0,yaw:Math.PI/2,pitch:-.82});r.move(0);for(let i=0;i<25;i++){r.animateHands(.05);r.renderEntities(.05);}r.keys.add('KeyC');w.player.pitch=-.42;for(let i=0;i<30;i++)r.move(.05);r.keys.clear();r.hover=r.focus();document.getElementById('real-pause').hidden=true;r.hint();return out;
  });
  for(const c of checks)k.ok(c.value,c.name);await k.shot('kitchen');
 }};
