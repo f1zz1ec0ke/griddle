@@ -6,7 +6,8 @@
  * dragging the sliders. Nothing reaches into the model to change it; the only test-only hooks are
  * the ones the game already exposes for headless runs — `game.fastForward(seconds)` to advance the
  * physics without waiting for wall-clock time, and `game.newOrder(ticket)` to force a ticket
- * instead of taking a random one.
+ * instead of taking a random one. Real mode also positions the chef for interaction fixtures;
+ * cooking actions and movement checks use pointer and keyboard input.
  *
  * Playwright is not a dependency of this project (there is no build step and no node_modules); it
  * is expected to be installed globally. Run the suite as
@@ -23,7 +24,7 @@ const OUT = process.env.E2E_OUT || path.join(__dirname, 'out');
 
 // Chromium in a container has no GPU: SwiftShader is the software rasteriser that gives us a real
 // WebGL context, which the whole viewport depends on.
-const CHROME_ARGS = ['--use-gl=swiftshader', '--enable-webgl', '--ignore-gpu-blocklist', '--enable-unsafe-swiftshader'];
+const CHROME_ARGS = ['--use-angle=swiftshader', '--enable-webgl', '--ignore-gpu-blocklist', '--enable-unsafe-swiftshader'];
 const VIEWPORT = { width: 1400, height: 860 };
 
 function loadPlaywright() {

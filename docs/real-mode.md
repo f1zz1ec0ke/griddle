@@ -4,6 +4,8 @@ Separate first-person practice mode. Legacy service, practice and saves retain t
 
 `real-model.js` owns five independent station states, inventory, portioning, transfers, assembly and the versioned `griddle.real.v1` save. `real-mode.js` owns the scene, movement, ray targets, hands and controlled interaction animations. Embedded legacy viewports share one renderer and food textures; they do not create orbit controls or draw independently.
 
+Room fixtures come from `kitchen-room.js` asset references. Both modes use the same food, cold-topping, pan, spatula, probe and material builders. Real captures reflections from its own room once. `chef-rig.js` supplies articulated hands; tools without a Legacy equivalent retain their Real models. Counter placement checks occupied footprints, and saved tool rests migrate with the layout.
+
 Food grids travel with food. Pan transfers move the pan's heat, oil, residue and attached food together. Off-stove pans continue cooling and cooking their contents. A separate loose-food state handles resting ingredients. Stove profiles are restored from installed code rather than save data.
 
 Controls: WASD, Shift jog, Space jump, Ctrl crouch. Left-hold reaches/turns/pours/seasons, right-click picks up and places. With a spatula, tongs or spoon, right-click lifts compatible food. The glove carries hot pans and trays. At the bowl, left-hold takes mince and right-click returns 25 g. Left-click the board with a portion to shape it.

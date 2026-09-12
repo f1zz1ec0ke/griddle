@@ -63,6 +63,38 @@
     g.computeVertexNormals();return g;
   }
 
+  // One cold-topping asset builder for both game modes.
+  function coldLayer(kind,R,index=0) {
+  const spec = root.BurgerAssembly.cold[kind], layer = new T.Group();
+  const material = new T.MeshPhysicalMaterial({color:kind==='lettuce'?0xffffff:spec.color,vertexColors:kind==='lettuce',roughness:spec.sauce?.27:.48,clearcoat:spec.sauce?.65:.25,side:T.DoubleSide});
+  if(kind!=='lettuce')material.color.convertSRGBToLinear();
+  const count = kind==='pickles'?5:kind==='lettuce'?7:1;
+  for(let j=0;j<count;j++) {
+    const r = count>1 ? R*.40 : R*.94;
+    const geometry=kind==='lettuce'?lettuceGeometry(r,j*1.7):spec.sauce?sauceGeometry(r,spec.height,index*2.4):new T.CylinderGeometry(r,r,spec.height,40);
+    const mesh = new T.Mesh(geometry,material);
+    mesh.position.set(count>1?Math.cos(j*2.4)*R*.57:0,spec.height/2,count>1?Math.sin(j*2.4)*R*.57:0);
+    if(kind==='lettuce') { mesh.rotation.y=j*2.4; mesh.rotation.x=(j%2?1:-1)*.15; }
+    mesh.castShadow=true; mesh.receiveShadow=true; layer.add(mesh);
+    if(kind==='pickles'){
+      const flesh=new T.MeshPhysicalMaterial({map:VA.texture('pickle').map,roughness:.3,clearcoat:.45});
+      for(const side of [-1,1]){const cut=new T.Mesh(new T.CircleGeometry(r*.995,48),flesh);cut.rotation.x=-side*Math.PI/2;cut.position.y=side*(spec.height/2+.00002);mesh.add(cut);}
+    }
+    if(kind==='tomato') {
+      const seedMat=new T.MeshStandardMaterial({color:0xcab15f,roughness:.45});seedMat.color.convertSRGBToLinear();
+      const gelMat=new T.MeshPhysicalMaterial({color:0xa95a29,roughness:.21,clearcoat:.8});gelMat.color.convertSRGBToLinear();
+      const skinMat=new T.MeshStandardMaterial({color:0x9f281b,roughness:.4});skinMat.color.convertSRGBToLinear();
+      const skin=new T.Mesh(new T.RingGeometry(R*.86,R*.94,64),skinMat);skin.rotation.x=-Math.PI/2;skin.position.y=spec.height+.00008;layer.add(skin);
+      for(let k=0;k<5;k++) {
+        const a=k*Math.PI*2/5,cx=Math.cos(a)*R*.53,cz=Math.sin(a)*R*.53;
+        const gel=new T.Mesh(new T.CircleGeometry(R*.23,20),gelMat);gel.rotation.x=-Math.PI/2;gel.rotation.z=-a;gel.scale.y=.68;gel.position.set(cx,spec.height+.00013,cz);layer.add(gel);
+        for(let n=0;n<3;n++) {const seed=new T.Mesh(new T.SphereGeometry(.0018,6,4),seedMat);seed.scale.set(1,.22,.55);seed.rotation.y=a;seed.position.set(cx+Math.cos(a+n*2.1)*R*.12,spec.height+.00035,cz+Math.sin(a+n*2.1)*R*.12);layer.add(seed);}
+      }
+    }
+  }
+    return layer;
+  }
+
   // ------------------------------------------------------------ colour model
   const COL = {
     frozen: [190, 120, 130], raw: [177, 53, 61], rawWarm: [184, 65, 70], pink: [205, 118, 118],
@@ -1610,33 +1642,7 @@
               cap.userData.cutCap=true; group.add(cap); group.userData.caps.set(i,cap);
             }
             if (!l.cold) return;
-            const spec = A.cold[l.cold], layer = new T.Group(), R = Math.max(.048,p.D/2);
-            const material = new T.MeshPhysicalMaterial({color:l.cold==='lettuce'?0xffffff:spec.color,vertexColors:l.cold==='lettuce',roughness:spec.sauce?.27:.48,clearcoat:spec.sauce?.65:.25,side:T.DoubleSide});
-            if(l.cold!=='lettuce')material.color.convertSRGBToLinear();
-            const count = l.cold==='pickles'?5:l.cold==='lettuce'?7:1;
-            for(let j=0;j<count;j++) {
-              const r = count>1 ? R*.40 : R*.94;
-              const geometry=l.cold==='lettuce'?lettuceGeometry(r,j*1.7):spec.sauce?sauceGeometry(r,spec.height,i*2.4):new T.CylinderGeometry(r,r,spec.height,40);
-              const mesh = new T.Mesh(geometry,material);
-              mesh.position.set(count>1?Math.cos(j*2.4)*R*.57:0,spec.height/2,count>1?Math.sin(j*2.4)*R*.57:0);
-              if(l.cold==='lettuce') { mesh.rotation.y=j*2.4; mesh.rotation.x=(j%2?1:-1)*.15; }
-              mesh.castShadow=true; mesh.receiveShadow=true; layer.add(mesh);
-              if(l.cold==='pickles'){
-                const flesh=new T.MeshPhysicalMaterial({map:VA.texture('pickle').map,roughness:.3,clearcoat:.45});
-                for(const side of [-1,1]){const cut=new T.Mesh(new T.CircleGeometry(r*.995,48),flesh);cut.rotation.x=-side*Math.PI/2;cut.position.y=side*(spec.height/2+.00002);mesh.add(cut);}
-              }
-              if(l.cold==='tomato') {
-                const seedMat=new T.MeshStandardMaterial({color:0xcab15f,roughness:.45});seedMat.color.convertSRGBToLinear();
-                const gelMat=new T.MeshPhysicalMaterial({color:0xa95a29,roughness:.21,clearcoat:.8});gelMat.color.convertSRGBToLinear();
-                const skinMat=new T.MeshStandardMaterial({color:0x9f281b,roughness:.4});skinMat.color.convertSRGBToLinear();
-                const skin=new T.Mesh(new T.RingGeometry(R*.86,R*.94,64),skinMat);skin.rotation.x=-Math.PI/2;skin.position.y=spec.height+.00008;layer.add(skin);
-                for(let k=0;k<5;k++) {
-                  const a=k*Math.PI*2/5,cx=Math.cos(a)*R*.53,cz=Math.sin(a)*R*.53;
-                  const gel=new T.Mesh(new T.CircleGeometry(R*.23,20),gelMat);gel.rotation.x=-Math.PI/2;gel.rotation.z=-a;gel.scale.y=.68;gel.position.set(cx,spec.height+.00013,cz);layer.add(gel);
-                  for(let n=0;n<3;n++) {const seed=new T.Mesh(new T.SphereGeometry(.0018,6,4),seedMat);seed.scale.set(1,.22,.55);seed.rotation.y=a;seed.position.set(cx+Math.cos(a+n*2.1)*R*.12,spec.height+.00035,cz+Math.sin(a+n*2.1)*R*.12);layer.add(seed);}
-                }
-              }
-            }
+            const layer=coldLayer(l.cold,Math.max(.048,p.D/2),i);
             group.add(layer); group.userData.layers.set(i,layer);
           });
         }
@@ -2291,5 +2297,5 @@
     }
   }
 
-  root.BurgerRender = { Viewport, PattyView, ItemView, nodeColour, faceColour, COL, ICOL };
+  root.BurgerRender = { coldLayer, Viewport, PattyView, ItemView, nodeColour, faceColour, COL, ICOL };
 })(window);

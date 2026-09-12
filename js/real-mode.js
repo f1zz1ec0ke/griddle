@@ -8,64 +8,71 @@
       this.game=game;this.canvas=$('view');this.renderer=game.vp.renderer;this.world=new root.RealKitchen.Kitchen();this.scene=new T.Scene();this.scene.background=new T.Color(0xc5dce0);this.scene.fog=new T.Fog(0xc5dce0,12,30);
       this.camera=new T.PerspectiveCamera(72,innerWidth/innerHeight,.025,40);this.scene.add(this.camera);
       this.keys=new Set();this.ray=new T.Raycaster();this.meshes=new Map();this.panTemplates=new Map();this.targets=[];this.surfaces=[];this.colliders=[];this.stations=new Map();this.held=null;this.left=false;this.active=false;this.paused=true;this.action=null;this.acc=0;this.clock=0;this.savedAt=0;this.velocityY=0;this.ground=0;this.look=new T.Vector2();
-      this.buildRoom();this.buildStations();this.buildChef();this.bind();this.resize();
+      this.buildRoom();this.buildStations();this.buildReflections();this.buildChef();this.bind();this.resize();
       this.airView={scene:this.scene,room:{userData:{windows:[]}}};root.BurgerRender.Viewport.prototype._buildRoomSmoke.call(this.airView);
       for(const cloud of this.airView.roomClouds){cloud.userData.y+=1.3;cloud.userData.x*=1.4;cloud.userData.z*=1.4;}
       this.renderEntities(0);
     }
-    material(color,kind='paint'){return VA.material(kind,color);}
+    material(color,kind='paint'){const m=VA.material(kind,color);if([0xe8deca,0xf3ead9].includes(color)){m.roughness=.94;m.clearcoat=0;}return m;}
     box(w,h,d,x,y,z,color,kind='paint',parent=this.scene){const m=new T.Mesh(VA.roundedBox(w,h,d,Math.min(.018,Math.min(w,h,d)*.15),3),this.material(color,kind));m.position.set(x,y,z);m.castShadow=m.receiveShadow=true;parent.add(m);return m;}
     ball(r,x,y,z,color,parent=this.scene){const m=new T.Mesh(new T.SphereGeometry(r,24,16),this.material(color));m.position.set(x,y,z);m.castShadow=true;parent.add(m);return m;}
     tube(points,r,color,parent=this.scene,kind='steel'){const m=new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(points.map(p=>new T.Vector3(...p))),32,r,10,false),this.material(color,kind));m.castShadow=true;parent.add(m);return m;}
     label(text,x,y,z,size=.2,parent=this.scene){const c=document.createElement('canvas');c.width=512;c.height=128;const cx=c.getContext('2d');cx.fillStyle='#f7eed8';cx.fillRect(0,0,512,128);cx.fillStyle='#405749';cx.textAlign='center';cx.font='bold 42px Georgia';cx.fillText(text,256,81);const tx=new T.CanvasTexture(c);tx.encoding=T.sRGBEncoding;const m=new T.Mesh(new T.PlaneGeometry(size*4,size),new T.MeshBasicMaterial({map:tx}));m.position.set(x,y,z);parent.add(m);return m;}
     target(mesh,data){mesh.userData.realTarget=data;this.targets.push(mesh);return mesh;}
+    reuse(name,pos=[0,0,0],scale=[1,1,1]){
+      const source=this.game.vp.room.userData.assets[name],group=new T.Group();group.name='Shared '+name;
+      if(!source)throw Error('Missing kitchen asset: '+name);
+      for(const node of source.nodes){const copy=node.clone(true);copy.position.sub(new T.Vector3(...source.origin));copy.traverse(o=>{if(o.geometry)o.geometry=o.geometry.clone();if(o.material){o.material=o.material.clone();for(const key of ['map','bumpMap','roughnessMap'])if(o.material[key])VA.shared.add(o.material[key]);}});group.add(copy);}
+      group.position.set(...pos);group.scale.set(...scale);this.scene.add(group);return group;
+    }
+    targetGroup(group,data){group.traverse(o=>{if(o.isMesh)this.target(o,data);});return group;}
+    copyModel(source){const copy=source.clone(true);copy.traverse(o=>{if(o.geometry)o.geometry=o.geometry.clone();if(o.material){o.material=o.material.clone();for(const key of ['map','bumpMap','roughnessMap'])if(o.material[key])VA.shared.add(o.material[key]);}});return copy;}
+    buildReflections(){
+      const target=new T.WebGLCubeRenderTarget(128,{generateMipmaps:true,minFilter:T.LinearMipmapLinearFilter}),capture=new T.CubeCamera(.05,25,target);capture.position.set(0,1.25,.1);capture.update(this.renderer,this.scene);
+      const pmrem=new T.PMREMGenerator(this.renderer);this.roomReflection=pmrem.fromCubemap(target.texture);this.scene.environment=this.roomReflection.texture;target.dispose();pmrem.dispose();
+    }
     surface(w,d,x,y,z,name){const m=this.box(w,.018,d,x,y-.009,z,0xe0ccb0,'stone');this.target(m,{type:'surface',name});this.surfaces.push({x,z,w,d,y});return m;}
-    cabinet(w,d,x,z){this.box(w,.84,d,x,.46,z,0x709482);this.colliders.push({x,z,w,d,y:0,top:.92});this.surface(w+.04,d+.04,x,.93,z,'counter');for(let i=0;i<Math.ceil(w/.6);i++){const xx=x-w/2+(i+.5)*w/Math.ceil(w/.6);this.box(w/Math.ceil(w/.6)-.035,.69,.024,xx,.48,z-d/2-.02,0x648572);this.box(.15,.012,.025,xx,.75,z-d/2-.045,0xb89955,'steel');}}
+    cabinet(w,d,x,z){this.colliders.push({x,z,w,d,y:0,top:.93});this.surface(w+.04,d+.04,x,.93,z,'counter');const count=Math.ceil(w/.6);for(let i=0;i<count;i++){const xx=x-w/2+(i+.5)*w/count;this.reuse('cabinet0',[xx,.035,z],[w/count/.60,1.096,(d-.10)/.52]);}this.box(w-.12,.10,d-.10,x,.05,z,0x56645a);}
     buildRoom(){
-      this.scene.add(new T.HemisphereLight(0xfff6dc,0x587166,.6));const sun=new T.DirectionalLight(0xffedd1,1.2);sun.position.set(-3,7,4);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);Object.assign(sun.shadow.camera,{left:-6,right:6,top:6,bottom:-6,near:.1,far:20});sun.shadow.normalBias=.01;this.scene.add(sun);
+      this.scene.add(new T.HemisphereLight(0xe9f2ff,0x645446,.38));const sun=new T.DirectionalLight(0xfff3db,1.0);sun.position.set(-1.2,3.0,3.5);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);Object.assign(sun.shadow.camera,{left:-4.2,right:4.2,top:4.2,bottom:-4.2,near:.1,far:14});sun.shadow.bias=-.00015;sun.shadow.normalBias=.003;this.scene.add(sun);
+      const key=new T.SpotLight(0xfff0d8,.8,8,Math.PI/3,.8,1);key.position.set(.3,2.8,-.6);key.target.position.set(0,.9,0);key.castShadow=true;key.shadow.mapSize.set(1024,1024);key.shadow.bias=-.0004;key.shadow.radius=4;this.scene.add(key,key.target);
       this.scene.environment=this.game.vp.scene.environment;
       this.target(this.box(8,.1,8,0,-.06,0,0xd4c5aa,'stone'),{type:'surface',name:'floor'});
       const tileGeo=new T.BoxGeometry(.497,.009,.497),tiles=new T.InstancedMesh(tileGeo,this.material(0xffffff,'stone'),256),dummy=new T.Object3D();let n=0;
       for(let x=0;x<16;x++)for(let z=0;z<16;z++){dummy.position.set(-3.75+x*.5,0,-3.75+z*.5);dummy.updateMatrix();tiles.setMatrixAt(n,dummy.matrix);tiles.setColorAt(n++,new T.Color((x+z)%2?0xaebba3:0xf0e4ce).convertSRGBToLinear());}tiles.receiveShadow=true;this.scene.add(tiles);
       for(const x of [-4,4])this.box(.1,3.2,8,x,1.6,0,0xe8deca);this.box(8,3.2,.1,0,1.6,-4,0xe8deca);
       for(const x of [-2.65,2.65])this.box(2.7,3.2,.1,x,1.6,4,0xe8deca);this.box(2.6,.9,.1,0,.45,4,0xe8deca);this.box(2.6,.65,.1,0,2.875,4,0xe8deca);
-      this.box(8,.06,8,0,3.22,0,0xf3ead9);this.box(10,.04,8,0,-.04,8,0x729263);
-      for(let i=0;i<9;i++){const b=this.ball(.5,-4+i, .6,7+(i%2),0x719456);b.scale.y=1.4;this.box(.11,1.8,.11,-4+i,.8,7+(i%2),0x88704a,'wood');}
-      for(const x of [-1.3,1.3])this.box(.07,1.75,.13,x,1.75,4,0xfaf0d9);for(const y of [.9,2.6])this.box(2.7,.07,.13,0,y,4,0xfaf0d9);
-      this.windowHinge=new T.Group();this.windowHinge.position.set(-1.25,.95,3.94);this.scene.add(this.windowHinge);
-      const glass=new T.Mesh(new T.PlaneGeometry(2.5,1.6),new T.MeshPhysicalMaterial({color:0xc5e2df,transparent:true,opacity:.16,side:T.DoubleSide}));glass.position.set(1.25,.8,0);this.windowHinge.add(glass);this.target(glass,{type:'window',name:'garden window'});
-      const handle=this.box(.035,.15,.05,2.36,.72,-.03,0xc3a668,'steel',this.windowHinge);this.target(handle,{type:'window',name:'window handle'});
+      this.box(8,.06,8,0,3.22,0,0xf3ead9);
+      this.reuse('garden',[0,0,4]);
+      const windowFrame=this.targetGroup(this.reuse('window',[0,1.75,3.96],[1.47,1.33,1]),{type:'window',name:'garden window'});this.windowHinges=[];windowFrame.traverse(o=>{if(o.name==='Window leaf hinge')this.windowHinges.push(o);});
+      this.reuse('herb',[-.95,.94,3.83]);this.reuse('herb',[.98,.94,3.83],[.8,.8,.8]);
+      for(const x of [-3.94,3.94])this.box(.025,.12,7.9,x,.06,0,0xf8efd9);for(const z of [-3.94,3.94])this.box(7.9,.12,.025,0,.06,z,0xf8efd9);
+      this.reuse('print-warm',[-3.94,1.70,-1.2],[1.25,1.25,1.25]);this.reuse('print-green',[-3.94,1.70,-.25],[1.25,1.25,1.25]);
       this.cabinet(4.65,.80,0,.95);this.cabinet(3.9,1.15,0,-.86);
-      this.surface(.62,.46,0,.957,-.88,'chopping board').material=this.material(0xb58b57,'wood');
-      this.boardTarget=this.target(this.box(.62,.025,.46,0,.946,-.88,0xb58b57,'wood'),{type:'board',name:'chopping board'});
+      const board=this.game.vp.board.clone(true);board.visible=true;board.position.set(0,.96,-.88);this.scene.add(board);this.boardTarget=this.targetGroup(board,{type:'board',name:'chopping board'});this.surfaces.push({x:0,z:-.88,w:.42,d:.30,y:.96});
       // A real open mixing bowl, placed beside the board.
       const profile=[[0,0],[.10,0],[.15,.025],[.185,.13],[.19,.15],[.18,.15],[.17,.12],[.14,.03],[.09,.013],[0,.013]].map(a=>new T.Vector2(...a));
       const bowl=new T.Mesh(new T.LatheGeometry(profile,64),this.material(0xbdc9c7,'steel'));bowl.position.set(-.72,.94,-.88);bowl.castShadow=true;this.scene.add(bowl);this.target(bowl,{type:'bowl',name:'mixing bowl'});
       this.mince=this.ball(.14,-.72,.985,-.88,0xa95048);this.mince.scale.y=.2;this.target(this.mince,{type:'bowl',name:'mixed mince'});
-      this.label('PREP',0,1.05,-1.48,.09).rotation.y=Math.PI;
-      // Separate rim, walls and bottom leave an actual opening in the worktop.
-      this.box(1.2,.70,.7,2.6,.36,2.7,0x709482);this.colliders.push({x:2.6,z:2.7,w:1.2,d:.7,y:0,top:.93});
-      for(const x of [2.135,3.065])this.surface(.31,.74,x,.93,2.7,'sink counter');for(const z of [2.425,2.975])this.surface(.62,.19,2.6,.93,z,'sink counter');
-      const cavity=this.box(.58,.025,.37,2.6,.755,2.7,0x829590,'steel');this.target(cavity,{type:'sink',name:'sink'});
-      for(const x of [2.3,2.9])this.target(this.box(.022,.18,.40,x,.835,2.7,0x9eaeaa,'steel'),{type:'sink',name:'sink'});
-      for(const z of [2.5,2.9])this.target(this.box(.62,.18,.022,2.6,.835,z,0x9eaeaa,'steel'),{type:'sink',name:'sink'});
-      const drain=new T.Mesh(new T.CylinderGeometry(.027,.027,.004,32),this.material(0x354b48,'steel'));drain.position.set(2.6,.77,2.7);this.scene.add(drain);
-      this.tube([[2.84,.94,2.88],[2.84,1.22,2.88],[2.73,1.3,2.84],[2.6,1.23,2.76]],.016,0xbba064);this.target(this.box(.07,.025,.06,2.89,.99,2.87,0xbba064,'steel'),{type:'tap',name:'tap'});
-      this.waterStream=this.box(.009,.44,.009,2.6,.998,2.76,0xb0d5d6);this.waterStream.visible=false;
-      for(const x of [-3.73,-2.87])this.box(.05,1.95,.8,x,.98,1.7,0xefead6);for(const y of [.03,1.93])this.box(.85,.05,.8,-3.3,y,1.7,0xefead6);this.box(.85,1.9,.045,-3.3,.98,2.08,0xe1e8da);this.colliders.push({x:-3.30,z:1.7,w:.90,d:.8,y:0,top:2});
+      this.reuse('cabinet3',[2.6,.035,2.7],[1.8,1.096,1.15]);this.colliders.push({x:2.6,z:2.7,w:1.2,d:.7,y:0,top:.93});
+      for(const x of [2.176,3.024])this.surface(.332,.74,x,.93,2.7,'sink counter');for(const z of [2.431,2.969])this.surface(.516,.202,2.6,.93,z,'sink counter');
+      const sink=this.reuse('sink',[2.6,.932,2.7]);sink.traverse(o=>{if(o.isMesh)this.target(o,{type:o.name==='Tap lever'?'tap':'sink',name:o.name==='Tap lever'?'tap':'sink'});});
+      this.waterStream=this.box(.006,.31,.006,2.535,.951,2.74,0xb0d5d6);this.waterStream.visible=false;
+      this.reuse('fridge-shell',[-3.3,0,1.7],[1.36,1.36,1.36]);this.reuse('fridge-trim',[-3.3,0,1.7],[1.36,1.36,1.36]);this.colliders.push({x:-3.30,z:1.7,w:.84,d:.8,y:0,top:1.95});
       for(const y of [.45,.85,1.25,1.65])this.box(.79,.02,.64,-3.30,y,1.67,0xffffff);
-      this.fridgeDoor=new T.Group();this.fridgeDoor.position.set(-3.77,0,1.28);this.scene.add(this.fridgeDoor);this.target(this.box(.91,1.92,.055,.455,.98,0,0xf7f0dc,'paint',this.fridgeDoor),{type:'fridge',name:'fridge door'});this.target(this.box(.022,.45,.045,.82,1.2,-.04,0xbba064,'steel',this.fridgeDoor),{type:'fridge',name:'fridge handle'});
+      this.fridgeDoor=new T.Group();this.fridgeDoor.position.set(-3.7,0,1.275);this.scene.add(this.fridgeDoor);const fridgeDoors=this.targetGroup(this.reuse('fridge-doors',[-3.3,0,1.7],[1.36,1.36,1.36]),{type:'fridge',name:'fridge handle'});this.fridgeDoor.attach(fridgeDoors);this.fridgeDoor.attach(this.reuse('fridge-badge',[-3.3,0,1.7],[1.36,1.36,1.36]));
       const supplies=['meat','egg','bacon','bunWhole','tomato','pickles','onion','cheeseBlock','lettuce'];
-      supplies.forEach((kind,i)=>{const m=this.prop(kind);m.position.set(-3.52+(i%3)*.23,.49+Math.floor(i/3)*.4,1.45);this.scene.add(m);m.traverse(o=>{if(o.isMesh)this.target(o,{type:'supply',kind,name:LABELS[kind]||kind});});});
-      for(const x of [-2.9,-2.3])this.box(.04,1.1,.82,x,.55,-1.3,0x445951);this.box(.60,.14,.82,-2.6,.07,-1.3,0x445951);this.box(.60,.30,.82,-2.6,.95,-1.3,0x445951);this.box(.60,.66,.035,-2.6,.47,-.90,0x273430);this.colliders.push({x:-2.6,z:-1.3,w:.64,d:.82,y:0,top:1.1});
-      this.ovenDoor=new T.Group();this.ovenDoor.position.set(-2.6,.14,-1.73);this.scene.add(this.ovenDoor);const ovenGlass=this.box(.59,.65,.028,0,.325,0,0x273430,'paint',this.ovenDoor);ovenGlass.material.transparent=true;ovenGlass.material.opacity=.45;this.target(ovenGlass,{type:'ovenDoor',name:'oven door'});this.target(this.box(.4,.026,.04,0,.59,-.04,0xc1a464,'steel',this.ovenDoor),{type:'ovenDoor',name:'oven handle'});
-      this.target(this.box(.045,.045,.04,-2.78,.96,-1.746,0xbfa775,'steel'),{type:'ovenKnob',name:'oven temperature'});
-      this.target(this.box(.48,.016,.65,-2.6,.53,-1.32,0xa4b1ab,'steel'),{type:'ovenRack',name:'oven rack'});
+      supplies.forEach((kind,i)=>{const m=this.prop(kind);m.position.set(-3.52+(i%3)*.23,.46+Math.floor(i/3)*.4,1.45);this.scene.add(m);m.traverse(o=>{if(o.isMesh)this.target(o,{type:'supply',kind,name:LABELS[kind]||kind});});});
+      const oven=this.reuse('oven-shell',[-2.6,0,-1.29],[1.25,1.2,.85]);oven.traverse(o=>{if(o.name.includes('knob'))this.target(o,{type:'ovenKnob',name:'oven temperature'});});this.colliders.push({x:-2.6,z:-1.3,w:.64,d:.82,y:0,top:1.1});
+      this.box(.64,.25,.80,-2.6,.125,-1.3,0x496f59);this.surface(.68,.84,-2.6,1.06,-1.3,'oven counter');
+      this.ovenDoor=new T.Group();this.ovenDoor.position.set(-2.6,.276,-1.7235);this.scene.add(this.ovenDoor);const ovenDoor=this.targetGroup(this.reuse('oven-door',[-2.6,0,-1.29],[1.25,1.2,.85]),{type:'ovenDoor',name:'oven handle'});this.ovenDoor.attach(ovenDoor);
+      this.targetGroup(this.reuse('oven-rack',[-2.6,0,-1.29],[1.25,1.2,.85]),{type:'ovenRack',name:'oven rack'});
+      const rackTarget=this.box(.48,.01,.65,-2.6,.541,-1.32,0xa4b1ab,'steel');rackTarget.material.visible=false;this.target(rackTarget,{type:'ovenRack',name:'oven rack'});
       this.label('OVEN',-2.52,.96,-1.757,.04);
       this.box(.50,.6,.5,2.75,.3,-2.8,0x64796b);this.target(this.box(.52,.025,.52,2.75,.61,-2.8,0x31483e),{type:'bin',name:'compost & waste'});
-      this.target(this.box(.95,2.4,.055,2.7,1.2,-3.94,0xaf8759,'wood'),{type:'exit',name:'kitchen door'});this.label('TAKE A BREATHER',2.7,1.8,-3.9,.11);
-      for(const x of [-1.5,0,1.5]){this.tube([[x,3.2,0],[x,2.65,0]],.006,0x403e35);const shade=new T.Mesh(new T.ConeGeometry(.22,.23,48,1,true),this.material(0xc5a469));shade.material.side=T.DoubleSide;shade.position.set(x,2.56,0);this.scene.add(shade);this.ball(.04,x,2.46,0,0xfff2cc);}
-      for(const e of this.world.entities.filter(e=>e.home)){const pan=e.kind==='pan',rest=this.box(pan?.66:.19,.006,pan?.46:.21,e.home[0],e.home[1]-.009,e.home[2],pan?0x9eaea5:0x637e6b,pan?'steel':'paint');this.target(rest,{type:'rest',entity:e.id,name:(pan?e.label:LABELS[e.kind]||e.kind)+' rest'});}
+      this.targetGroup(this.reuse('door',[2.7,0,-3.94],[1.08,1.08,1]),{type:'exit',name:'kitchen door'});
+      for(const x of [-1.5,0,1.5])this.reuse('pendant',[x,2.68,0],[1.2,1.2,1.2]);
+      for(const e of this.world.entities.filter(e=>e.home)){const pan=e.kind==='pan',rest=this.box(pan?.66:.19,.006,pan?.46:.21,e.home[0],e.home[1]-.003,e.home[2],pan?0x9eaea5:0x637e6b,pan?'steel':'paint');this.target(rest,{type:'rest',entity:e.id,name:(pan?e.label:LABELS[e.kind]||e.kind)+' rest'});}
       for(const x of [-2.77,-2.13])this.box(.022,1.8,.035,x,.9,3.34,0x819289,'steel');
     }
     buildStations(){
@@ -91,50 +98,55 @@
       // A render adapter for loose food uses the same established cooking meshes.
       this.looseView={scene:this.scene,panFloorY:.94,clock:0,claimTexBudget:()=>true,tinted:this.game.vp.tinted.bind(this.game.vp)};for(const k of ['noise','noiseFine','marble','marbleCut','spots','blotch'])this.looseView[k]=this.game.vp[k];
     }
-    prop(kind){
+    prop(kind){const model=this.propAsset(kind),group=new T.Group();group.add(model);const bounds=new T.Box3().setFromObject(model);model.position.y-=bounds.min.y;return group;}
+    propAsset(kind){
+      // Use the original model builders, including their textures and dimensions.
+      if(kind==='spatula')return this.game.vp._buildSpatula();
+      if(kind==='probe'){const group=new T.Group(),probe=this.copyModel(this.game.vp.probeGroup);probe.visible=true;probe.position.set(0,0,0);probe.rotation.set(0,Math.PI/2,0);group.add(probe);return group;}
+      if(kind==='lid'){const lid=this.copyModel(this.game.vp.lid);lid.visible=true;lid.position.set(0,0,0);return lid;}
+      if(kind==='salt'){const mill=this.reuse('salt-mill');this.scene.remove(mill);return mill;}
+      const cold={tomatoSlice:'tomato',pickleSlice:'pickles',lettuce:'lettuce'}[kind];if(cold)return root.BurgerRender.coldLayer(cold,.048);
+      if(['bunWhole','bacon'].includes(kind)){
+        const group=new T.Group(),state=P.createState({});for(const half of kind==='bunWhole'?['bottom','top']:[null]){const item=P.makeItem(half?'bun':'bacon',{id:701,half}),view=new root.BurgerRender.ItemView(this.game.vp,item);view.update(state,0,half==='top'?'pan':'rest',{x:0,y:half==='top'?.022:0,z:0},'stove');group.add(view.group);}return group;
+      }
+      if(kind==='cheese'||kind==='cheeseBlock'){const geometry=root.CheeseMesh.create();root.CheeseMesh.update(geometry,{mass:.02,melt:0},{height:0,radius:.08,fried:true});const mesh=new T.Mesh(geometry,this.material(0xf3b73d));mesh.castShadow=mesh.receiveShadow=true;const group=new T.Group();group.add(mesh);if(kind==='cheeseBlock')mesh.scale.y=20;return group;}
       const g=new T.Group();const box=(w,h,d,x,y,z,c,k)=>this.box(w,h,d,x,y,z,c,k,g),ball=(r,x,y,z,c)=>this.ball(r,x,y,z,c,g);
-      if(['spatula','tongs','spoon','knife','probe','press','cloth','glove','lid','tray'].includes(kind)){
+      // These tools and whole ingredients have no Legacy counterpart.
+      if(['tongs','spoon','knife','press','cloth','glove','tray'].includes(kind)){
         if(kind==='press'){box(.14,.012,.14,0,.008,0,0x788582,'steel');this.tube([[-.04,.02,0],[-.04,.07,0],[.04,.07,0],[.04,.02,0]],.009,0x9a754d,g,'wood');}
-        else if(kind==='lid'){const m=ball(.14,0,0,0,0xa0b5b0);m.scale.y=.22;ball(.018,0,.046,0,0x493d31);}
         else if(kind==='tray'){box(.25,.015,.32,0,.01,0,0xbcc6bf,'steel');}
         else if(kind==='cloth'||kind==='glove'){box(.12,.018,.16,0,.01,0,kind==='glove'?0xb96043:0xead7b8);if(kind==='glove')ball(.028,-.055,.017,.025,0xb96043);}
         else {box(.025,.018,.14,0,.013,.08,0x9b704a,'wood');box(kind==='knife'?.026:kind==='probe'?.004:.065,.004,.12,0,.012,-.05,0xc5ceca,'steel');if(kind==='tongs')box(.012,.008,.22,.032,.017,0,0xb9c4bf,'steel');if(kind==='spoon'){const m=ball(.031,0,.012,-.09,0xb39160);m.scale.y=.20;}}
-      }else if(['salt','oil','water','ketchup','mayo','mustard','lighter'].includes(kind)){
+      }else if(['oil','water','ketchup','mayo','mustard','lighter'].includes(kind)){
         const c={salt:0xeee0c2,oil:0xc4a53b,water:0x84b6c5,ketchup:0xb8482e,mayo:0xf2e5bc,mustard:0xcba42f,lighter:0xc87b45}[kind];box(.045,.11,.045,0,.055,0,c);box(.036,.017,.036,0,.116,0,0x685640);
       }else if(kind==='meat'){box(.16,.025,.12,0,.015,0,0xf0dec4);const m=ball(.07,0,.04,0,0xa95349);m.scale.set(1,.35,.7);}
       else if(kind==='egg'){const m=ball(.03,0,.033,0,0xe4c69d);m.scale.y=1.25;}
       else if(kind==='tomato'){const m=ball(.045,0,.036,0,0xbe4430);m.scale.y=.8;ball(.01,0,.075,0,0x527045);}
       else if(kind==='pickles'){const m=ball(.025,0,.028,0,0x718445);m.scale.z=2.4;}
       else if(kind==='onion'){ball(.043,0,.04,0,0xb69771);}
-      else if(kind==='bunWhole'){const m=ball(.055,0,.028,0,0xc99a50);m.scale.y=.55;}
-      else if(kind==='cheeseBlock'||kind==='cheese')box(.095,kind==='cheeseBlock'?.045:.003,.085,0,.01,0,0xeac759);
-      else if(kind==='tomatoSlice'||kind==='pickleSlice'){const m=new T.Mesh(new T.CylinderGeometry(kind==='tomatoSlice'?.04:.025,kind==='tomatoSlice'?.04:.025,.005,40),this.material(kind==='tomatoSlice'?0xc3472f:0x87a15a));m.position.y=.004;g.add(m);for(let i=0;i<5;i++){const a=i*1.26;const seed=ball(.004,Math.cos(a)*.015,.008,Math.sin(a)*.015,0xd4c888);seed.scale.y=.15;}}
-      else if(kind==='lettuce'){const m=ball(.045,0,.008,0,0x7b9f53);m.scale.set(1.2,.15,1);}
       else if(kind==='coal'||kind==='wood')box(.12,.17,.07,0,.085,0,kind==='coal'?0x49554c:0xa0764b,'wood');
       else box(.065,.025,.08,0,.012,0,0xd5ad74);
       return g;
     }
     buildChef(){
-      this.body=new T.Group();this.scene.add(this.body);const torso=this.ball(.28,0,1.12,.035,0xece0c8,this.body);torso.scale.set(.78,1.05,.53);const belly=this.ball(.24,0,.94,-.08,0xf0e5ce,this.body);belly.scale.set(1,.9,.85);const apron=this.ball(.235,0,.94,-.09,0x547b67,this.body);apron.scale.set(.92,.87,.86);
+      this.body=new T.Group();this.scene.add(this.body);const torso=this.ball(.28,0,1.12,.035,0xece0c8,this.body);torso.scale.set(.78,1.05,.53);const belly=this.ball(.24,0,.94,-.08,0xf0e5ce,this.body);belly.scale.set(1,.9,.85);const apron=root.ChefRig.apron();apron.castShadow=apron.receiveShadow=true;this.body.add(apron);
       for(const x of [-.12,.12]){this.box(.14,.61,.16,x,.43,0,0x424c43,'paint',this.body);this.box(.15,.10,.27,x,.055,-.065,0x343b34,'rubber',this.body);}
       this.arms=[];
       for(const side of [-1,1]){
         const arm=new T.Group();this.camera.add(arm);
         const limb=(r1,r2,color)=>{const geo=new T.CylinderGeometry(r1,r2,.25,24);geo.rotateX(Math.PI/2);const m=new T.Mesh(geo,this.material(color));arm.add(m);return m;};
-        const upper=limb(.059,.052,0xeee2c9),fore=limb(.042,.030,0xbd886b),hand=new T.Group();arm.add(hand);const palm=this.ball(.041,0,0,0,0xc48f72,hand);palm.scale.set(1,.45,1.15);
-        const fingers=[];
-        for(let i=0;i<4;i++){const f=this.ball(.010,(i-1.5)*.019,-.002,-.045,0xc48f72,hand);f.scale.set(.85,.85,2.8-Math.abs(i-1.5)*.35);f.rotation.x=.2;fingers.push(f);const nail=this.ball(.0065,(i-1.5)*.019,.005,-.061,0xdab39a,hand);nail.scale.set(.9,.18,1.3);}
-        const thumb=this.ball(.014,side*-.037,-.002,-.015,0xc48f72,hand);thumb.scale.set(.9,.8,1.9);thumb.rotation.y=side*.6;
-        const cuff=this.box(.116,.12,.05,0,0,.10,0xe9ddc4,'paint',upper);
-        this.arms.push({side,upper,fore,hand,fingers,position:new T.Vector3(side*.22,-.23,-.44)});
+        const upper=limb(.043,.050,0xeee2c9),fore=limb(.021,.033,0xbe8d73),hand=root.ChefRig.hand(side);arm.add(hand);
+        fore.material.roughness=.76;fore.material.clearcoat=0;upper.material.roughness=.92;upper.material.clearcoat=0;
+        const cuff=new T.Mesh(new T.CylinderGeometry(.048,.044,.037,24,1,true),upper.material);cuff.rotation.x=Math.PI/2;cuff.position.z=.108;upper.add(cuff);
+        this.arms.push({side,upper,fore,hand,position:new T.Vector3(side*.22,-.23,-.44)});
       }
-      this.heldAnchor=new T.Group();this.arms[1].hand.add(this.heldAnchor);this.heldAnchor.position.set(0,.02,-.04);this.heldAnchor.rotation.x=-.45;
+      this.heldAnchor=new T.Group();this.arms[1].hand.add(this.heldAnchor);this.heldAnchor.position.set(0,-.016,-.043);this.heldAnchor.rotation.x=-.15;
       this.portionMesh=this.ball(.045,0,.025,-.04,0xa65349,this.heldAnchor);this.portionMesh.material.bumpMap=VA.texture('mince').relief;this.portionMesh.material.bumpScale=.001;
-      for(const g of [this.body,...this.arms.map(a=>a.hand)])g.traverse(o=>{if(o.material){o.material.roughness=.9;o.material.clearcoat=0;}});
+      this.body.traverse(o=>{if(o.material){o.material.roughness=.9;o.material.clearcoat=0;}});
     }
     bind(){
       const gate=e=>this.active&&document.body.dataset.experience==='real';
-      window.addEventListener('keydown',e=>{if(!gate(e))return;e.stopImmediatePropagation();if(['KeyW','KeyA','KeyS','KeyD','Space','ControlLeft','ControlRight','ShiftLeft','ShiftRight'].includes(e.code))e.preventDefault();if(e.code==='Escape'){this.pause();return;}if(!this.paused)this.keys.add(e.code);},true);
+      window.addEventListener('keydown',e=>{if(!gate(e))return;e.stopImmediatePropagation();if(['KeyW','KeyA','KeyS','KeyD','Space','ControlLeft','ControlRight','ShiftLeft','ShiftRight'].includes(e.code))e.preventDefault();if(e.code==='Escape'){this.pause();return;}if(!this.paused){this.keys.add(e.code);if(e.code==='Space'&&!e.repeat)this.jumpQueued=true;}},true);
       window.addEventListener('keyup',e=>{if(gate(e)){e.stopImmediatePropagation();this.keys.delete(e.code);}},true);
       window.addEventListener('blur',()=>{if(this.active)this.pause();});document.addEventListener('visibilitychange',()=>{if(document.hidden&&this.active)this.pause();});
       document.addEventListener('pointerlockchange',()=>{if(this.active&&document.pointerLockElement!==this.canvas)this.pause();});
@@ -151,7 +163,7 @@
       this.active=true;document.body.dataset.experience='real';$('mode-choice').hidden=true;$('real-hud').hidden=false;this.resize();this.move(0);this.pause();this.last=performance.now();if(!this.running){this.running=true;requestAnimationFrame(t=>this.frame(t));}
     }
     resume(){this.canvas.requestPointerLock()?.catch(()=>{this.pause();this.toast('Click Resume again to let the mouse control your view.');});this.game.audio.start();this.paused=false;$('real-pause').hidden=true;}
-    pause(){this.paused=true;this.left=false;this.grabControl=null;this.keys.clear();this.game.audio.stop();if(document.pointerLockElement===this.canvas)document.exitPointerLock();if(this.active)$('real-pause').hidden=false;this.save();}
+    pause(){this.paused=true;this.left=false;this.grabControl=null;this.jumpQueued=false;this.keys.clear();this.game.audio.stop();if(document.pointerLockElement===this.canvas)document.exitPointerLock();if(this.active)$('real-pause').hidden=false;this.save();}
     save(){try{this.world.heldId=this.held;localStorage.setItem('griddle.real.v1',JSON.stringify(this.world.snapshot()));$('real-save-status').textContent='Kitchen saved.';}catch(e){$('real-save-status').textContent='Save unavailable—keep this tab open.';}}
     load(data){
       const next=root.RealKitchen.Kitchen.restore(data);for(const r of this.meshes.values()){if(r.view){r.mesh.parent?.remove(r.mesh);r.view.dispose();}else this.dispose(r.mesh);}this.meshes.clear();this.world=next;this.held=next.heldId||null;this.ground=0;this.velocityY=0;this.action=null;this.left=false;this.grabControl=null;this.keys.clear();this.acc=0;
@@ -162,7 +174,7 @@
     heldEntity(){return this.world.get(this.held);}
     focus(){
       this.scene.updateMatrixWorld(true);this.ray.setFromCamera(new T.Vector2(0,0),this.camera);this.ray.far=1.75;
-      const candidates=this.targets.filter(o=>{let q=o;while(q){if(!q.visible)return false;if(q===this.scene)return true;q=q.parent;}return false;});
+      const candidates=this.targets.filter(o=>{let q=o;while(q){if(!q.visible||q===this.heldAnchor)return false;if(q===this.scene)return true;q=q.parent;}return false;});
       const hits=this.ray.intersectObjects(candidates,false);
       for(const hit of hits){const d=hit.object.userData.realTarget;if(!d)continue;if(d.entity===this.held)continue;if(d.type==='supply'&&!this.world.doors.fridge)continue;return {data:d,point:hit.point,object:hit.object};}return null;
     }
@@ -204,7 +216,11 @@
         release();return;
       }
       if(!['surface','board','sink'].includes(d.type)){this.toast('Place it on a counter or its tool rest.');return;}
-      e.pos=[t.point.x,t.point.y+.008,t.point.z];release();
+      const desired=[t.point.x,t.point.y+.002,t.point.z],surface=this.surfaces.filter(s=>Math.abs(desired[0]-s.x)<=s.w/2&&Math.abs(desired[2]-s.z)<=s.d/2&&s.y<=desired[1]+.015).sort((a,b)=>b.y-a.y)[0]||{x:0,z:0,w:8,d:8};
+      const footprint=this.meshes.get(e.id)?.footprint||{minX:-.05,maxX:.05,minZ:-.05,maxZ:.05},obstacles=[];
+      for(const other of this.world.entities){if(other===e||other.held||other.discarded||other.station||other.stackRoot||other.panCarrier||other.trayCarrier||Math.abs(other.pos[1]-desired[1])>.10)continue;const f=this.meshes.get(other.id)?.footprint;if(f)obstacles.push({minX:other.pos[0]+f.minX,maxX:other.pos[0]+f.maxX,minZ:other.pos[2]+f.minZ,maxZ:other.pos[2]+f.maxZ});}
+      if(desired[1]>.90&&desired[1]<1.10)obstacles.push({minX:-.91,maxX:-.53,minZ:-1.07,maxZ:-.69});
+      const placement=root.RealKitchen.clearPlacement(desired,footprint,surface,obstacles);if(!placement){this.toast('Make a little space here first.');return;}e.pos=placement;release();
       if(e.home&&Math.hypot(e.pos[0]-e.home[0],e.pos[2]-e.home[2])<.18)e.pos=e.home.slice();
       const support=this.surfaces.find(s=>Math.abs(e.pos[0]-s.x)<=s.w/2&&Math.abs(e.pos[2]-s.z)<=s.d/2);
       if(support){const mx=support.w/2-Math.abs(e.pos[0]-support.x),mz=support.d/2-Math.abs(e.pos[2]-support.z);if(Math.min(mx,mz)<(e.kind==='pan'?.07:.012)){e.fall=.03;e.slide=mx<mz?[Math.sign(e.pos[0]-support.x),0]:[0,Math.sign(e.pos[2]-support.z)];}}
@@ -275,7 +291,7 @@
       const p=this.world.player,crouch=this.keys.has('ControlLeft')||this.keys.has('ControlRight'),height=crouch?1.06:1.72,speed=(this.keys.has('ShiftLeft')||this.keys.has('ShiftRight')?2.7:1.55)*(crouch?.55:1);
       let x=(this.keys.has('KeyD')?1:0)-(this.keys.has('KeyA')?1:0),z=(this.keys.has('KeyS')?1:0)-(this.keys.has('KeyW')?1:0),length=Math.hypot(x,z)||1;x/=length;z/=length;if(this.grabControl)x=z=0;
       const dx=(x*Math.cos(p.yaw)+z*Math.sin(p.yaw))*speed*dt,dz=(-x*Math.sin(p.yaw)+z*Math.cos(p.yaw))*speed*dt;
-      if(this.keys.has('Space')&&p.y<=this.ground+.001){this.velocityY=3.4;this.keys.delete('Space');}
+      if(this.jumpQueued){if(p.y<=this.ground+.001)this.velocityY=3.4;this.jumpQueued=false;this.keys.delete('Space');}
       this.velocityY-=9.8*dt;const oldY=p.y;p.y+=this.velocityY*dt;this.ground=0;
       for(const c of this.colliders)if(Math.abs(p.x-c.x)<c.w/2+.15&&Math.abs(p.z-c.z)<c.d/2+.15&&oldY>=c.top-.01&&p.y<=c.top&&this.velocityY<0)this.ground=Math.max(this.ground,c.top);
       if(p.y<this.ground){p.y=this.ground;this.velocityY=0;}
@@ -284,6 +300,16 @@
       this.eyeHeight=(this.eyeHeight??1.72)+(height-(this.eyeHeight??1.72))*Math.min(1,dt*12);
       const lean=.14+Math.max(0,-p.pitch-.4)*.20;
       this.camera.position.set(p.x-Math.sin(p.yaw)*lean,p.y+this.eyeHeight,p.z-Math.cos(p.yaw)*lean);this.camera.rotation.set(p.pitch,p.yaw,0,'YXZ');this.body.position.set(p.x,p.y,p.z);this.body.rotation.y=p.yaw;this.body.scale.y=crouch?.72:1;
+    }
+    heldPose(e,mesh){
+      const tool=this.heldEntity();mesh.rotation.set(e.food&&e.kind!=='pan'?mesh.rotation.x:0,0,0);mesh.scale.setScalar(1);
+      if(e.kind==='pan'){mesh.rotation.y=Math.PI/2;mesh.position.set(0,-.038,-.28);return;}
+      if(tool?.payload===e.id){mesh.position.set(0,-.019,-.125);return;}
+      if(e.kind==='spatula'){mesh.position.set(0,-.022,-.105);return;}
+      if(['knife','tongs','spoon','probe'].includes(e.kind)){mesh.position.set(0,-.013,e.kind==='probe'?.117:-.08);return;}
+      if(['salt','oil','water','ketchup','mayo','mustard','lighter'].includes(e.kind)){mesh.rotation.x=-Math.PI/2;mesh.position.set(0,-.008,.045);return;}
+      if(e.kind==='glove'){mesh.visible=false;return;}
+      mesh.position.set(0,e.kind==='lid'?-.10:-.025,e.kind==='tray'?-.16:-.09);
     }
     renderEntities(dt){
       for(const e of this.world.entities){
@@ -295,16 +321,17 @@
         if(!rec){let mesh,view;
           if(e.food&&e.kind!=='pan'){view=e.kind==='patty'?new root.BurgerRender.PattyView(this.looseView,e.food):new root.BurgerRender.ItemView(this.looseView,e.food);mesh=view.group;}
           else if(e.kind==='pan'){const pan=this.panTemplates.get(e.panType).clone(true);mesh=new T.Group();mesh.add(pan);mesh.traverse(o=>{if(o.geometry)o.geometry=o.geometry.clone();if(o.material)o.material=o.material.clone();});this.scene.add(mesh);}
-        else{mesh=this.prop(e.stackRoot&&['mayo','ketchup','mustard'].includes(e.kind)?'cheese':e.kind);if(e.stackRoot&&['mayo','ketchup','mustard'].includes(e.kind))mesh.traverse(o=>{if(o.material)o.material.color.setHex({mayo:0xf1dfb2,ketchup:0xb44227,mustard:0xc9a435}[e.kind]).convertSRGBToLinear();});this.scene.add(mesh);}
-          rec={mesh,view,food:e.food};this.meshes.set(e.id,rec);mesh.traverse(o=>{if(o.isMesh)this.target(o,{type:'entity',entity:e.id,name:LABELS[e.kind]||e.label});});
+        else{mesh=e.stackRoot&&['mayo','ketchup','mustard'].includes(e.kind)?root.BurgerRender.coldLayer(e.kind,.048):this.prop(e.kind);this.scene.add(mesh);}
+          const bounds=new T.Box3().setFromObject(mesh);rec={mesh,view,food:e.food,footprint:{minX:bounds.min.x-mesh.position.x,maxX:bounds.max.x-mesh.position.x,minZ:bounds.min.z-mesh.position.z,maxZ:bounds.max.z-mesh.position.z}};this.meshes.set(e.id,rec);mesh.traverse(o=>{if(o.isMesh)this.target(o,{type:'entity',entity:e.id,name:LABELS[e.kind]||e.label});});
         }
         const m=rec.mesh;m.visible=true;
         if(e.fall&&!e.held){if(e.slide){e.pos[0]+=e.slide[0]*dt*.9;e.pos[2]+=e.slide[1]*dt*.9;}e.fall+=9.8*dt;e.pos[1]-=e.fall*dt;m.rotation.z=Math.min(.7,m.rotation.z+dt*2);if(e.pos[1]<.035){e.pos[1]=.035;e.fall=0;e.slide=null;}}
-        if(rec.view){if(e.kind==='patty'){if(rec.view.cutaway!==!!e.cut)rec.view.setCutaway(!!e.cut,0);rec.view.update(this.world.owner(e),dt,'rest',{x:e.pos[0],y:e.pos[1],z:e.pos[2]},'stove');}else rec.view.update(this.world.owner(e),dt,'rest',{x:e.pos[0],y:e.pos[1],z:e.pos[2]},'stove');}
-        if(e.panCarrier){const panMesh=this.meshes.get(e.panCarrier)?.mesh;if(panMesh){panMesh.add(m);if(e.kind==='lid')m.position.set(0,.035,0);else m.position.set(e.food.pos.x,.012,e.food.pos.y);}continue;}
-        if(e.trayCarrier&&!e.station){const tray=this.world.get(e.trayCarrier),trayMesh=this.meshes.get(tray.id)?.mesh;if(trayMesh){const n=tray.cargo.indexOf(e.id);trayMesh.add(m);m.position.set(n%2?.06:-.06,.024,n<2?-.075:.075);}continue;}
-        if(e.held){if(m.parent!==this.heldAnchor)this.heldAnchor.add(m);m.position.set(0,this.heldEntity()?.payload===e.id?.04:0,-.04);m.scale.setScalar(e.kind==='pan'?.85:1);}
-        else {if(m.parent!==this.scene)this.scene.add(m);m.position.set(...e.pos);m.scale.setScalar(1);}
+        if(rec.view){const where=e.panCarrier?'pan':'rest';if(e.kind==='patty'){if(rec.view.cutaway!==!!e.cut)rec.view.setCutaway(!!e.cut,0);rec.view.update(this.world.owner(e),dt,where,{x:e.pos[0],y:e.pos[1],z:e.pos[2]},'stove');}else rec.view.update(this.world.owner(e),dt,where,{x:e.pos[0],y:e.pos[1],z:e.pos[2]},'stove');}
+        rec.lift=rec.view?m.position.y-e.pos[1]:0;
+        if(e.panCarrier){const panMesh=this.meshes.get(e.panCarrier)?.mesh;if(panMesh){panMesh.add(m);if(e.kind==='lid')m.position.set(0,.035,0);else m.position.set(e.food.pos.x,.004+rec.lift,e.food.pos.y);}continue;}
+        if(e.trayCarrier&&!e.station){const tray=this.world.get(e.trayCarrier),trayMesh=this.meshes.get(tray.id)?.mesh;if(trayMesh){const n=tray.cargo.indexOf(e.id);trayMesh.add(m);m.position.set(n%2?.06:-.06,.024+rec.lift,n<2?-.075:.075);}continue;}
+        if(e.held){if(m.parent!==this.heldAnchor)this.heldAnchor.add(m);this.heldPose(e,m);m.position.y+=rec.lift;}
+        else {if(m.parent!==this.scene)this.scene.add(m);m.position.set(e.pos[0],e.pos[1]+rec.lift,e.pos[2]);m.scale.setScalar(1);if(!rec.view&&!e.fall)m.rotation.set(0,0,0);}
       }
       for(const st of this.world.stations){const vp=this.stations.get(st.id);
         if(st.panId&&vp.panSpec.id!==st.state.pan.id)vp.setPan(st.state.pan.id);
@@ -312,7 +339,7 @@
         vp.update(st.state,dt,0);if(st.id==='oven')vp.stove.visible=false;
         if(st.id!=='charcoal')vp.panGroup.visible=!!st.panId;
         for(const e of this.world.entities.filter(e=>e.station===st.id&&e.food&&e.kind!=='pan')){
-          const v=e.kind==='patty'?vp.views.get(e.food):vp.itemViews.get(e.food);if(v){v.group.traverse(o=>{if(o.isMesh&&!o.userData.realTarget)this.target(o,{type:'entity',entity:e.id,name:e.label});});const w=v.group.getWorldPosition(new T.Vector3());e.pos=[w.x,w.y,w.z];}
+          const v=e.kind==='patty'?vp.views.get(e.food):vp.itemViews.get(e.food);if(v){if(st.id==='oven'){const tray=this.world.get(e.trayCarrier),n=tray?tray.cargo.indexOf(e.id):st.state.patties.indexOf(e.food);v.group.position.set((n%2?1:-1)*(tray?.06:.12),(tray?.565:.544)-vp.scene.position.y,(tray?-1.32:-1.30)+(n<2?-.075:.075)-vp.scene.position.z);}v.group.traverse(o=>{if(o.isMesh&&!o.userData.realTarget)this.target(o,{type:'entity',entity:e.id,name:e.label});});const w=v.group.getWorldPosition(new T.Vector3());e.pos=[w.x,w.y,w.z];}
         }
       }
       for(const root of this.world.entities.filter(e=>!e.discarded&&e.kind==='patty'&&e.food.assembly?.length)){
@@ -320,15 +347,16 @@
         const heights=layers.map((l,i)=>l.patty?(l.meat||root.food).h+(l.meat||root.food).cheeses.length*.0015:l.item?this.meshes.get(parts[i]?.id)?.view?.layerH()||.01:window.BurgerAssembly.cold[l.cold].height||.004);
         const layout=window.BurgerAssembly.stackLayout(root.food,P,heights);let y=0;
         for(let i=0;i<parts.length;i++){const part=parts[i],rec=this.meshes.get(part?.id);if(rec){
-          if(root.held){this.heldAnchor.add(rec.mesh);rec.mesh.position.set(0,.04+y,-.04);}else{this.scene.add(rec.mesh);rec.mesh.position.set(root.pos[0],root.pos[1]+y,root.pos[2]);}
+          let lift=(rec.lift||0)*layout[i].scale;if(part.kind==='bun'){rec.mesh.rotation.x=part.food.half==='top'?0:Math.PI;lift=part.food.half==='top'?0:heights[i]*layout[i].scale;}
+          if(root.held){this.heldAnchor.add(rec.mesh);rec.mesh.position.set(0,-.04+y+lift,-.11);}else{this.scene.add(rec.mesh);rec.mesh.position.set(root.pos[0],root.pos[1]+y+lift,root.pos[2]);}
           rec.mesh.scale.y=layout[i].scale;if(part!==root)part.pos=[root.pos[0],root.pos[1]+y,root.pos[2]];
           if(root.cut&&part!==root){if(!rec.clip){rec.clip=new T.Plane(new T.Vector3(0,0,1),-root.pos[2]);rec.mesh.traverse(o=>{if(o.material){o.material.clippingPlanes=[rec.clip];o.material.needsUpdate=true;}});}rec.clip.constant=-root.pos[2];}
         }y+=heights[i]*layout[i].scale;}
       }
       this.targets=this.targets.filter(o=>o.parent);
-      this.fridgeDoor.rotation.y+=((this.world.doors.fridge?-1.7:0)-this.fridgeDoor.rotation.y)*Math.min(1,dt*7);
+      this.fridgeDoor.rotation.y+=((this.world.doors.fridge?1.7:0)-this.fridgeDoor.rotation.y)*Math.min(1,dt*7);
       this.ovenDoor.rotation.x+=((this.world.doors.oven?-1.45:0)-this.ovenDoor.rotation.x)*Math.min(1,dt*7);
-      this.windowHinge.rotation.y+=((this.world.doors.window?-.8:0)-this.windowHinge.rotation.y)*Math.min(1,dt*5);this.waterStream.visible=this.world.doors.tap;
+      for(const hinge of this.windowHinges)hinge.rotation.y+=((this.world.doors.window?hinge.userData.side*.8:0)-hinge.rotation.y)*Math.min(1,dt*5);this.waterStream.visible=this.world.doors.tap;
       this.mince.visible=this.world.bowl.mass>0;this.mince.scale.y=.1+Math.min(.5,this.world.bowl.mass/2000);
       if(this.airView){const rooms=this.world.stations.map(s=>P.roomAir(s.state));root.BurgerRender.Viewport.prototype._updateRoomAir.call(this.airView,{t:this.world.time,room:{upper:rooms.reduce((v,r)=>v+r.upper,0),lower:rooms.reduce((v,r)=>v+r.lower,0),opening:rooms[0].opening}});}
     }
@@ -337,12 +365,12 @@
       let reach=this.left?.65:0;if(this.action){this.action.time+=dt;const u=this.action.time/this.action.duration;reach=Math.sin(Math.PI*u);if(u>=.55&&!this.action.done){this.action.done=true;this.action.fn();}if(u>=1)this.action=null;}
       for(const a of this.arms){const assisting=this.action&&['crack','form','smash','slice','grab'].includes(this.action.kind);const r=a.side===1?reach:assisting?reach*.8:0;
         const end=new T.Vector3(a.side*(.23-.09*r),-.23+.09*r,-.44-.20*r);
-        if(r>0&&this.hover){const contact=this.camera.worldToLocal(this.hover.point.clone());if(contact.length()>1.1)contact.setLength(1.1);contact.y+=.05;contact.x+=a.side*.04;end.lerp(contact,r);}
+        if(r>0&&this.hover){const contact=this.camera.worldToLocal(this.hover.point.clone());if(contact.length()>1.1)contact.setLength(1.1);contact.y+=.035;contact.z+=.08;contact.x+=a.side===1?.025:-.07;end.lerp(contact,r);}
         if(this.action?.kind==='stir')end.x+=Math.sin(this.action.time*14)*.045;
         a.position.lerp(end,Math.min(1,dt*18));a.hand.position.copy(a.position);a.hand.rotation.x=this.action?.kind==='flip'?-Math.sin(this.action.time/this.action.duration*Math.PI)*1.3:this.action?.kind==='slice'?Math.sin(this.action.time*22)*.45:0;
-        for(const finger of a.fingers)finger.rotation.x=(a.side===1&&this.heldEntity()?1.1:.2)+r*.35;
-        const shoulder=new T.Vector3(a.side*.25,-.20,.015),elbow=new T.Vector3(a.side*.31,-.37,-.18);
-        for(const [mesh,start,finish] of [[a.upper,shoulder,elbow],[a.fore,elbow,a.position]]){mesh.position.copy(start).add(finish).multiplyScalar(.5);mesh.quaternion.setFromUnitVectors(new T.Vector3(0,0,1),finish.clone().sub(start).normalize());mesh.scale.z=start.distanceTo(finish)/.25;}
+        root.ChefRig.pose(a.hand,a.side===1&&this.heldEntity()?.75:r*.4,!!this.grabControl,a.side===1&&this.heldEntity()?.kind==='glove');
+        const shoulder=new T.Vector3(a.side*.25,-.20,.015),elbow=new T.Vector3(a.side*.31,-.37,-.18),wrist=new T.Vector3(0,0,.029).applyQuaternion(a.hand.quaternion).add(a.position);
+        for(const [mesh,start,finish] of [[a.upper,shoulder,elbow],[a.fore,elbow,wrist]]){mesh.position.copy(start).add(finish).multiplyScalar(.5);mesh.quaternion.setFromUnitVectors(new T.Vector3(0,0,1),finish.clone().sub(start).normalize());mesh.scale.z=start.distanceTo(finish)/.25;}
       }
     }
     hint(){

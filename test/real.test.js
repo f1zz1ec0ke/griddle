@@ -40,3 +40,18 @@ test('a closed lid rejects placement without detaching food and cracking is idem
  const k=new Kitchen(),p=patty(k);k.station('gas').state.lid=true;assert.match(k.placeFood(p,'gas'),/lid/);assert.equal(k.loose.patties[0],p.food);assert.equal(p.station,null);
  const egg=k.addIngredient('egg',[0,.95,0]);k.makeFood(egg,'egg');const food=egg.food;k.makeFood(egg,'egg');assert.equal(egg.food,food);assert.equal(k.loose.items.length,1);
 });
+test('free placement keeps an unobstructed choice and finds nearby space instead of intersecting food',()=>{
+ const {clearPlacement}=require('../js/real-model'),f={minX:-.05,maxX:.05,minZ:-.05,maxZ:.05},surface={x:0,z:0,w:1,d:1};
+ assert.deepEqual(clearPlacement([.48,.94,0],f,surface,[]),[.48,.94,0]);
+ const blocker={minX:-.06,maxX:.06,minZ:-.06,maxZ:.06},pos=clearPlacement([0,.94,0],f,surface,[blocker]);assert.ok(pos);assert.ok(Math.abs(pos[0])>=.116||Math.abs(pos[2])>=.116);assert.equal(pos[1],.94);
+ assert.equal(clearPlacement([0,.94,0],f,surface,[{minX:-1,maxX:1,minZ:-1,maxZ:1}]),null);
+});
+test('chef palms have finite outward-facing surfaces rather than inside-out faces',()=>{
+ const previous=global.window;try{
+  const T=require('../js/vendor/three.min.js');global.window={THREE:T};require('../js/visual-assets');require('../js/chef-rig');
+  for(const side of [-1,1]){const hand=window.ChefRig.hand(side),g=hand.children[0].geometry,p=g.attributes.position,n=g.attributes.normal;let checked=0;
+   for(let i=0;i<p.count;i++){assert.ok(Number.isFinite(n.getX(i)+n.getY(i)+n.getZ(i)));if(Math.hypot(p.getX(i),p.getY(i))>.005){assert.ok(p.getX(i)*n.getX(i)+p.getY(i)*n.getY(i)>0);checked++;}}
+   assert.ok(checked>100);
+  }
+ }finally{if(previous===undefined)delete global.window;else global.window=previous;}
+});

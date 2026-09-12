@@ -5,6 +5,15 @@
   const S=typeof module==='object'?require('./session'):root.GriddleSession;
   const A=typeof module==='object'?require('./assembly'):root.BurgerAssembly;
   const stationDefs=[['gas',-1.5,.95,'castiron'],['electric',0,.95,'carbonsteel'],['induction',1.5,.95,'stainless'],['charcoal',2.5,-1.5,'castiron'],['oven',-2.4,-1.4,'castiron']];
+  function clearPlacement(point,footprint,surface,obstacles){
+    const free=(x,z)=>obstacles.every(b=>x+footprint.maxX+.006<=b.minX||x+footprint.minX-.006>=b.maxX||z+footprint.maxZ+.006<=b.minZ||z+footprint.minZ-.006>=b.maxZ);
+    if(free(point[0],point[2]))return point.slice();
+    for(let ring=1;ring<=12;ring++)for(let i=0;i<24;i++){
+      const a=i*Math.PI/12,x=point[0]+Math.cos(a)*ring*.025,z=point[2]+Math.sin(a)*ring*.025;
+      if(x+footprint.minX<surface.x-surface.w/2||x+footprint.maxX>surface.x+surface.w/2||z+footprint.minZ<surface.z-surface.d/2||z+footprint.maxZ>surface.z+surface.d/2)continue;
+      if(free(x,z))return [x,point[1],z];
+    }return null;
+  }
   class Kitchen {
     constructor(){
       this.version=1;this.nextId=1;this.entities=[];this.time=0;this.bowl={mass:0,salt:0,work:0};this.portion={mass:0,salt:0,work:0};
@@ -17,7 +26,7 @@
       this.entities.filter(e=>e.kind==='pan').forEach((e,i)=>e.home=[-2.45,1.06+i*.20,3.15]);
       spare.pos=spare.home.slice();
       for(const [i,kind] of ['spatula','tongs','spoon','press','knife','salt','oil','water','glove','probe','cloth','lighter','coal','wood','ketchup','mayo','mustard','lid','tray'].entries()){
-        const e=this.entity(kind,kind==='press'?'smash plate':kind,[[-1.62,-1.28,.96,1.30,1.64][i%5],.95,-1.23+Math.floor(i/5)*.25]);e.home=e.pos.slice();
+        const e=this.entity(kind,kind==='press'?'smash plate':kind,[kind==='probe'?1.80:[-1.62,-1.28,.96,1.30,1.64][i%5],.936,-1.23+Math.floor(i/5)*.25]);e.home=e.pos.slice();
       }
     }
     entity(kind,label,pos){const e={id:this.nextId++,kind,label,pos:pos.slice(),station:null,food:null,held:false,fall:0,discarded:false};this.entities.push(e);return e;}
@@ -130,8 +139,9 @@
       for(const s of states){if(!P.STOVES[s.stove?.id]||!Array.isArray(s.patties)||!Array.isArray(s.items)||!(s.pan.Tr instanceof Float64Array)||![...s.pan.Tr].every(Number.isFinite))throw Error('Invalid cooking state');s.stove.profile=P.STOVES[s.stove.id].profile;}
       const ids=new Set();for(const e of d.entities){if(!Number.isInteger(e.id)||ids.has(e.id)||!Array.isArray(e.pos)||e.pos.length!==3||!e.pos.every(Number.isFinite))throw Error('Invalid inventory');ids.add(e.id);if(e.kind==='patty'&&(!(e.food?.T instanceof Float64Array)||!P.pattyFinite(e.food)))throw Error('Invalid meat');}
       for(const q of [d.bowl,d.portion])if(!q||!['mass','salt','work'].every(k=>Number.isFinite(q[k])&&q[k]>=0))throw Error('Invalid mince');
+      for(const e of d.entities)if(e.home&&e.kind!=='pan'){const atHome=e.pos.every((v,i)=>Math.abs(v-e.home[i])<.001);e.home[1]=.936;if(e.kind==='probe')e.home[0]=1.80;if(atHome)e.pos=e.home.slice();}
       const k=Object.create(Kitchen.prototype);Object.assign(k,d);return k;
     }
   }
-  const api={Kitchen,stationDefs};if(typeof module==='object')module.exports=api;else root.RealKitchen=api;
+  const api={Kitchen,stationDefs,clearPlacement};if(typeof module==='object')module.exports=api;else root.RealKitchen=api;
 })(typeof window!=='undefined'?window:globalThis);

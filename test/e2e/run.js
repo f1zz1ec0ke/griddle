@@ -14,6 +14,7 @@ const { runScenario, OUT } = require('./helper');
 
 const SCENARIOS = [
   require('./scenario-real.js'),
+  require('./scenario-real-visuals.js'),
   require('./scenario-medium-rare.js'),
   require('./scenario-ticket-of-three.js'),
   require('./scenario-charcoal.js'),
@@ -38,6 +39,7 @@ const SCENARIOS = [
     if (r.error) console.log(`✖ ${sc.name} failed after ${r.seconds.toFixed(1)} s: ${r.error.message}`);
     else console.log(`✔ ${sc.name} passed in ${r.seconds.toFixed(1)} s (${r.shots.length} screenshots, 0 page errors)`);
     if (r.consoleErrors.length) console.log(`  console errors: ${r.consoleErrors.length}\n    ${r.consoleErrors.slice(0, 5).join('\n    ')}`);
+    if (r.pageErrors.length) console.log(`  page errors:\n    ${r.pageErrors.join('\n    ')}`);
     console.log('');
   }
   const failed = results.filter((r) => r.error);
