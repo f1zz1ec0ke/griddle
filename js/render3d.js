@@ -64,13 +64,13 @@
   }
 
   // One cold-topping asset builder for both game modes.
-  function coldLayer(kind,R,index=0) {
+  function coldLayer(kind,R,index=0,single=false) {
   const spec = root.BurgerAssembly.cold[kind], layer = new T.Group();
   const material = new T.MeshPhysicalMaterial({color:kind==='lettuce'?0xffffff:spec.color,vertexColors:kind==='lettuce',roughness:spec.sauce?.27:.48,clearcoat:spec.sauce?.65:.25,side:T.DoubleSide});
   if(kind!=='lettuce')material.color.convertSRGBToLinear();
-  const count = kind==='pickles'?5:kind==='lettuce'?7:1;
+  const count = kind==='pickles'?(single?1:5):kind==='lettuce'?7:1;
   for(let j=0;j<count;j++) {
-    const r = count>1 ? R*.40 : R*.94;
+    const r = count>1||kind==='pickles' ? R*.40 : R*.94;
     const geometry=kind==='lettuce'?lettuceGeometry(r,j*1.7):spec.sauce?sauceGeometry(r,spec.height,index*2.4):new T.CylinderGeometry(r,r,spec.height,40);
     const mesh = new T.Mesh(geometry,material);
     mesh.position.set(count>1?Math.cos(j*2.4)*R*.57:0,spec.height/2,count>1?Math.sin(j*2.4)*R*.57:0);

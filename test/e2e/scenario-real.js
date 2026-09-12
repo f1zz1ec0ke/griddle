@@ -9,7 +9,7 @@ module.exports={name:'real',experience:'real',description:'physical prep, contro
  await aim([-3.52,.485,1.45],[-3.3,.3]);await click('right');k.ok(await page.evaluate(()=>realMode.heldEntity()?.kind==='meat'),'one mince pack picked up');
  await aim([-.72,1.0,-.88],[-.72,-1.9]);await click();k.ok(await page.evaluate(()=>realMode.world.bowl.mass===500),'mince reaches the bowl');
  await page.mouse.down();await page.waitForFunction(()=>realMode.world.portion.mass>120);await page.mouse.up();const before=await page.evaluate(()=>realMode.world.portion.mass);await click('right');k.near(await page.evaluate(()=>realMode.world.portion.mass),before-25,.01,'return exactly 25 g');
- await aim([0,.98,-.88],[0,-1.9]);await click();await click('right');k.ok(await page.evaluate(()=>realMode.heldEntity()?.kind==='patty'),'formed patty can be carried');
+ await aim([0,.98,-.88],[0,-1.9]);await page.mouse.down();await page.waitForFunction(()=>realMode.world.portion.mass===0);await page.mouse.up();await page.waitForFunction(()=>!realMode.action);await click('right');k.ok(await page.evaluate(()=>realMode.heldEntity()?.kind==='patty'),'formed patty can be carried');
  await aim([-1.5,1.0,.95],[-1.5,.1]);await click('right');k.ok(await page.evaluate(()=>realMode.world.entities.some(e=>e.kind==='patty'&&e.station==='gas')),'patty physically placed in gas pan');
  await aim([-1.5,.97,.732],[-1.5,.1]);await page.mouse.down();await page.mouse.move(800,430,{steps:5});await page.mouse.up();k.ok(await page.evaluate(()=>realMode.world.station('gas').state.stove.knob>0),'drag turns the physical gas dial');
  await aim([-1.62,.944,-1.21],[-1.62,-1.95]);await click('right');k.ok(await page.evaluate(()=>realMode.heldEntity()?.kind==='spatula'),'shared spatula can be picked up');

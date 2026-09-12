@@ -23,12 +23,13 @@
       case 'press': Object.assign(p,{pose:'handle',grip:[0,.067,0],wrist:[0,0,0]});break;
       case 'lid': Object.assign(p,{pose:'pinch',grip:[0,height-.009,0]});break;
       case 'tray': Object.assign(p,{pose:'pinch',grip:[.133,.0075,.08],support:(e.trayT||21)<=55?[-.15,0,.08]:null});break;
+      case 'plate': Object.assign(p,{pose:'pinch',grip:[.10,.006,.02],support:[-.12,0,.02]});break;
       case 'salt': case 'oil': case 'water': case 'ketchup': case 'mayo': case 'mustard': case 'lighter':
         Object.assign(p,{pose:'bottle',grip:[0,Math.min(height*.46,.055),0],spout:[0,height,0],pour:e.kind!=='lighter'});break;
       case 'cloth': Object.assign(p,{pose:'flat',grip:[0,height,0]});break;
       case 'glove': Object.assign(p,{pose:'handle',grip:[0,0,0]});break;
       case 'coal': case 'wood': Object.assign(p,{pose:'bottle',grip:[.045,height*.55,0],support:[-.045,.025,0],spout:[0,height,0],pour:true});break;
-      case 'meat': Object.assign(p,{grip:[.055,0,0],support:[-.055,0,0],spout:[0,0,-.06],pour:true});break;
+      case 'meat': case 'meatLean': case 'meatRich': Object.assign(p,{grip:[.055,0,0],support:[-.055,0,0],spout:[0,0,-.06],pour:true});break;
       case 'cheese': case 'tomatoSlice': case 'pickleSlice': case 'lettuce':
         Object.assign(p,{pose:'pinch',grip:[.035,height*.5,0]});break;
       case 'cheeseBlock': Object.assign(p,{grip:[.04,0,0],support:[-.045,0,0]});break;

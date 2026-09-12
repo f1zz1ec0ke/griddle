@@ -23,15 +23,15 @@
   'use strict';
   const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
   class KitchenAudio {
-    constructor() { this.ctx = null; this.enabled = false; this.level = 0; this.crackAcc = 0; this.flareWas = 0; this.lastWhoosh = -9; }
+    constructor(options={}) { this.options=options;this.ctx = null; this.enabled = false; this.level = 0; this.crackAcc = 0; this.flareWas = 0; this.lastWhoosh = -9; }
     start() {
-      if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); this.enabled = true; return; }
+      if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume();this.master.gain.value=.9; this.enabled = true; return; }
       const AC = root.AudioContext || root.webkitAudioContext; if (!AC) return;
-      const ctx = (this.ctx = new AC());
+      const ctx = (this.ctx = this.options.context||new AC());
       // everything goes through the lid before it reaches the room
       const muffle = (this.muffle = ctx.createBiquadFilter()); muffle.type = 'lowpass'; muffle.frequency.value = 20000; muffle.Q.value = 0.7;
       const muffleGain = (this.muffleGain = ctx.createGain()); muffleGain.gain.value = 1;
-      muffle.connect(muffleGain); muffleGain.connect(ctx.destination);
+      muffle.connect(muffleGain); muffleGain.connect(this.options.output||ctx.destination);
       const master = (this.master = ctx.createGain()); master.gain.value = 0.9; master.connect(muffle);
       // noise source
       const len = ctx.sampleRate * 2; const buf = ctx.createBuffer(1, len, ctx.sampleRate); const d = buf.getChannelData(0);
@@ -71,7 +71,7 @@
       this.crackHP = ctx.createBiquadFilter(); this.crackHP.type = 'highpass'; this.crackHP.frequency.value = 2500; this.crackHP.connect(master);
       this.enabled = true;
     }
-    stop() { this.enabled = false; if (this.ctx) this.ctx.suspend(); }
+    stop() { this.enabled = false; if (this.ctx){if(this.options.context)this.master.gain.value=0;else this.ctx.suspend();} }
     toggle() { if (this.enabled) this.stop(); else this.start(); return this.enabled; }
     /** diag from the physics: {boilNoise, hiss, roar, flare, contact, lid, spatter, oilBubble}; knob 0..1; dt */
     update(diag, knob, dt) {
@@ -138,4 +138,23 @@
     click() { if (!this.ctx || !this.enabled) return; this.crack(0.3); }
   }
   root.KitchenAudio = KitchenAudio;
+  class SpatialKitchenAudio {
+    constructor(){this.ctx=null;this.voices=new Map();this.enabled=false;}
+    start(){const AC=root.AudioContext||root.webkitAudioContext;if(!AC)return;this.ctx ||= new AC();this.ctx.resume();this.enabled=true;}
+    stop(){this.enabled=false;for(const {voice} of this.voices.values())voice.stop();this.ctx?.suspend();}
+    update(sources,position,forward,dt){
+      if(!this.enabled||!this.ctx)return;const ctx=this.ctx,t=ctx.currentTime,listener=ctx.listener;
+      if(listener.positionX){for(const [key,v] of Object.entries({positionX:position.x,positionY:position.y,positionZ:position.z,forwardX:forward.x,forwardY:forward.y,forwardZ:forward.z,upX:0,upY:1,upZ:0}))listener[key].setTargetAtTime(v,t,.04);}
+      else {listener.setPosition(position.x,position.y,position.z);listener.setOrientation(forward.x,forward.y,forward.z,0,1,0);}
+      const active=new Set();for(const source of sources){
+        active.add(source.id);let rec=this.voices.get(source.id);
+        if(!rec){const pan=ctx.createPanner();pan.panningModel='HRTF';pan.distanceModel='inverse';pan.refDistance=.75;pan.maxDistance=12;pan.rolloffFactor=1.2;pan.connect(ctx.destination);rec={pan,voice:new KitchenAudio({context:ctx,output:pan})};this.voices.set(source.id,rec);}
+        if(!rec.voice.enabled)rec.voice.start();const p=source.position;
+        if(rec.pan.positionX){rec.pan.positionX.setTargetAtTime(p.x,t,.05);rec.pan.positionY.setTargetAtTime(p.y,t,.05);rec.pan.positionZ.setTargetAtTime(p.z,t,.05);}else rec.pan.setPosition(p.x,p.y,p.z);
+        rec.voice.update(source.state.diag,source.state.stove.knob/10,dt);
+      }
+      for(const [id,rec] of this.voices)if(!active.has(id)&&rec.voice.enabled)rec.voice.stop();
+    }
+  }
+  root.SpatialKitchenAudio=SpatialKitchenAudio;
 })(window);

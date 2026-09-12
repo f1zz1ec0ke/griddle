@@ -52,7 +52,7 @@
   // food solvers still handle conduction within each ingredient and exposed faces.
   function coldNode(l) {
     if(!Number.isFinite(l.T))l.T=6;
-    const mass={lettuce:.010,tomato:.025,pickles:.015}[l.cold]||.008;
+    const mass=l.mass||({lettuce:.010,tomato:.025,pickles:.015}[l.cold]||.008);
     const fraction={lettuce:.95,tomato:.94,pickles:.94,mustard:.70,mayo:.22,ketchup:.70}[l.cold];
     if(l.w==null){l.w=mass*fraction;l.m=mass-l.w;l.w0=l.w;l.lostWater=0;}
     return l;

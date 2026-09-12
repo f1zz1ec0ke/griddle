@@ -22,7 +22,7 @@ Open [localhost:8000](http://localhost:8000). GG
 
 ## Controls
 
-**Real:** WASD to walk, Shift to jog, Space to jump, Ctrl to crouch. Hold left click to interact or use a tool; right click to pick up, lift food with a tool, or place it. Esc pauses. Open the fridge to get started.
+**Real:** WASD to walk, Shift to jog, Space to jump, Ctrl to crouch. Hold left click to interact or use a tool; right click to pick up, lift food with a tool, or place it. Scroll adjusts slice/patty thickness, probe depth or placement rotation. E lifts the top burger layer; the cloth wipes sauce. Put your cook on the plate and left click to taste. Esc pauses. Open the fridge to get started.
 
 **Legacy:**
 
