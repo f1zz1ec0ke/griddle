@@ -1162,6 +1162,38 @@
     /** Build the burner for a stove type. Each has its own pan height: a gas pan sits on a grate
      *  above the flames, an electric pan rests on the coil in its drip bowl, an induction pan sits
      *  flush on the glass. */
+    _buildHobControls(id,g) {
+      this.hobDial=null;this.hobLevels=[];this.hobPower=null;
+      if(id==='charcoal')return; // The kettle already has a state-driven damper wheel.
+      const controls=new T.Group();controls.name=id+' hob controls';controls.position.set(0,.003,-.218);g.add(controls);
+      const ink=new T.MeshBasicMaterial({color:id==='induction'?0xb4b7b1:0x3b4440});
+      const stroke=(x,z,w,d,material=ink)=>{const m=new T.Mesh(new T.PlaneGeometry(w,d),material);m.rotation.x=-Math.PI/2;m.position.set(x,.002,z);controls.add(m);return m;};
+      if(id==='induction'){
+        controls.rotation.y=Math.PI; // Read from the cook's side of the island.
+        // Printed touch controls on the glass, with a ten-step illuminated power strip.
+        const power=new T.Mesh(new T.RingGeometry(.007,.0085,32,1,.3,Math.PI*2-.6),ink);power.rotation.set(-Math.PI/2,0,Math.PI/2);power.position.set(-.11,.002,0);controls.add(power);
+        stroke(-.11,-.006,.0018,.010);stroke(-.068,0,.011,.0018);stroke(.112,0,.011,.0018);stroke(.112,0,.0018,.011);
+        for(let i=0;i<10;i++){
+          const material=new T.MeshBasicMaterial({color:0x34221b});this.hobLevels.push(stroke(-.04+i*.012,0,.007,.013,material));
+        }
+        return;
+      }
+      const panel=new T.Mesh(VA.roundedBox(.43,.023,.084,.006),VA.material('steel',0x9ba7a5));panel.position.y=-.013;panel.receiveShadow=true;controls.add(panel);
+      const bezel=new T.Mesh(new T.CylinderGeometry(.023,.025,.004,48),VA.material('steel',0xc6c5bb));bezel.position.set(0,.003,0);controls.add(bezel);
+      const dial=new T.Group();dial.position.y=.005;controls.add(dial);this.hobDial=dial;
+      const grip=new T.Mesh(new T.CylinderGeometry(.017,.021,.018,48),VA.material('rubber',0x303b38));grip.position.y=.009;grip.castShadow=true;dial.add(grip);
+      const pointer=new T.Mesh(VA.roundedBox(.002,.001,.009,.0002),new T.MeshBasicMaterial({color:0xf5e8ce}));pointer.position.set(0,.0185,-.010);dial.add(pointer);
+      for(let i=0;i<=10;i++){
+        const a=-Math.PI*.75+i*Math.PI*1.5/10;
+        const tick=stroke(Math.sin(a)*.030,-Math.cos(a)*.030,.0012,i%5===0?.005:.0028);tick.rotation.z=-a;
+      }
+      // Separate power lamp and a small engraved burner symbol.
+      const lamp=new T.Mesh(new T.CircleGeometry(.003,24),new T.MeshBasicMaterial({color:0x382519}));lamp.rotation.x=-Math.PI/2;lamp.position.set(.068,.002,0);controls.add(lamp);this.hobPower=lamp.material;
+      const ring=new T.Mesh(new T.RingGeometry(.007,.008,32),ink);ring.rotation.x=-Math.PI/2;ring.position.set(-.068,.002,0);controls.add(ring);
+      if(id==='electric'){
+        const inner=new T.Mesh(new T.RingGeometry(.003,.004,24),ink);inner.rotation.x=-Math.PI/2;inner.position.set(-.068,.002,0);controls.add(inner);
+      }else for(const dx of [-.011,.011])stroke(-.068+dx,0,.004,.001);
+    }
     setStove(id) {
       this.stoveType = id;
       if (this.burnerGroup) { this.stove.remove(this.burnerGroup); disposeTree(this.burnerGroup); } // a swap is a whole new burner: give the old one's meshes back
@@ -1315,6 +1347,7 @@
           g.add(f); this.flames.push(f);
         }
       }
+      this._buildHobControls(id,g);
       this.flameLight.position.y = id === 'charcoal' ? this.coalY + 0.03 : this.PAN_Y - 0.01;
       if (id !== 'charcoal') { this.coals = null; this.coalMat = null; this.kettleLid = null; this.coalSeeds = null; this.woodMeshes = null; this.ashDisc = null; this.ventWheel = null; this.ventPos = null; this.grateBars = null; }
       if (this.panSpec) this.setPan(this.panSpec.id);
@@ -1728,6 +1761,9 @@
       }
       // stove: gas flames, electric coil glow (follows delivered power, so it lags), induction LED
       const knob = state.stove.knob / 10, stv = state.stove;
+      if(this.hobDial)this.hobDial.rotation.y=Math.PI*.75-knob*Math.PI*1.5;
+      if(this.hobPower)this.hobPower.color.setHex(knob>0?0xff823b:0x382519);
+      this.hobLevels.forEach((m,i)=>m.material.color.setHex(i<Math.ceil(knob*10)?0xff823b:0x34221b));
       if (this.stoveType === 'gas') {
         for (let i = 0; i < this.flames.length; i++) {
           const f = this.flames[i]; const fl = 0.6 + 0.4 * Math.sin(this.clock * 37 + i * 1.7) * Math.random();
