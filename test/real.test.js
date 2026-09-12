@@ -97,7 +97,7 @@ test('burger reworking preserves layer state, then a plate carries and saves the
  assert.ok(k.assemble(p,b[0]));assert.ok(k.assemble(tomato,p));const layer=p.food.assembly.at(-1);A.coldNode(layer);layer.T=44;layer.wilt=.7;
  assert.ok(k.assemble(b[1],p));assert.equal(k.peel(p),b[1]);assert.equal(k.peel(p),tomato);assert.equal(tomato.coldState.T,44);assert.equal(tomato.coldState.wilt,.7);
  assert.ok(k.assemble(tomato,p));assert.equal(p.food.assembly.at(-1).height,.009);assert.equal(p.food.assembly.at(-1).T,44);assert.ok(k.assemble(b[1],p));
- const plate=k.entities.find(e=>e.kind==='plate');assert.ok(k.putOnTray(p,plate));assert.equal(k.peel(p),null);const copy=Kitchen.restore(k.snapshot());assert.equal(copy.get(p.id).trayCarrier,plate.id);assert.equal(copy.get(p.id).food.assembly[0].item,copy.get(b[0].id).food);
+ const plate=k.entities.find(e=>e.kind==='plate');assert.ok(k.putOnTray(p,plate));assert.equal(k.peel(p),b[1]);assert.equal(p.trayCarrier,plate.id);assert.ok(k.assemble(b[1],p));const copy=Kitchen.restore(k.snapshot());assert.equal(copy.get(p.id).trayCarrier,plate.id);assert.equal(copy.get(p.id).food.assembly[0].item,copy.get(b[0].id).food);
  p.food.peakCenter=75;p.food.T.fill(20);const report=k.taste(p);assert.ok(report.notes.includes('Cold at the centre.'));assert.ok(report.notes.includes('The fresh toppings have wilted.'));assert.ok(!('score' in report));
 });
 test('peeling a double burger releases each patty and the original bun exactly once',()=>{
@@ -151,6 +151,45 @@ test('free placement keeps an unobstructed choice and finds nearby space instead
  const blocker={minX:-.06,maxX:.06,minZ:-.06,maxZ:.06},pos=clearPlacement([0,.94,0],f,surface,[blocker]);assert.ok(pos);assert.ok(Math.abs(pos[0])>=.116||Math.abs(pos[2])>=.116);assert.equal(pos[1],.94);
  assert.equal(clearPlacement([0,.94,0],f,surface,[{minX:-1,maxX:1,minZ:-1,maxZ:1}]),null);
 });
+
+test('plated burgers can be rebuilt down to their bottom bun without losing ownership',()=>{
+ const k=new Kitchen(),p=patty(k),q=patty(k),b=k.slice(k.addIngredient('bunWhole',[0,.95,0])),plate=k.entities.find(e=>e.kind==='plate');
+ assert.ok(k.assemble(p,b[0]));assert.ok(k.assemble(q,p));assert.ok(k.assemble(b[1],p));assert.ok(k.putOnTray(p,plate));
+ assert.equal(k.peel(p),b[1]);assert.equal(k.peel(p),q);assert.equal(p.trayCarrier,plate.id);Kitchen.restore(k.snapshot());
+ assert.equal(k.peel(p),p);assert.deepEqual(plate.cargo,[b[0].id]);assert.equal(b[0].trayCarrier,plate.id);assert.equal(p.trayCarrier,null);assert.equal(q.stackRoot,null);
+ assert.ok(k.assemble(p,b[0]));assert.deepEqual(plate.cargo,[p.id]);Kitchen.restore(k.snapshot());
+});
+
+test('cheese and surface salt address exposed meat, including the second patty',()=>{
+ const k=new Kitchen(),p=patty(k),q=patty(k),b=k.slice(k.addIngredient('bunWhole',[0,.95,0]));k.assemble(p,b[0]);k.assemble(q,p);
+ assert.equal(k.exposedPatty(p),q);for(let i=0;i<4;i++){const cheese=k.entity('cheese','cheese',[0,.95,0]);cheese.massG=12;assert.ok(k.addCheese(cheese,p));assert.ok(cheese.discarded);}
+ assert.equal(p.food.cheeses.length,0);assert.equal(q.food.cheeses.length,4);assert.equal(q.food.cheeses[0].mass,.012);assert.equal(k.cheeseTarget(p),null);
+ k.assemble(b[1],p);assert.equal(k.exposedPatty(p),null);assert.equal(k.addCheese(k.entity('cheese','cheese',[0,.95,0]),p),false);Kitchen.restore(k.snapshot());
+});
+
+test('placement preflights leave cooking, plate and assembly state unchanged',()=>{
+ const k=new Kitchen(),p=patty(k),plate=k.entities.find(e=>e.kind==='plate'),b=k.slice(k.addIngredient('bunWhole',[0,.95,0]));const before=JSON.stringify(k.snapshot());
+ assert.ok(!k.foodPlacement(p,'gas',{x:0,y:0}).error);assert.ok(k.foodPlacement(p,'oven').error);assert.ok(k.trayPlacement(p,plate));assert.equal(k.assemblyProblem(p,b[0]),null);assert.match(k.assemblyProblem(b[1],p),/bottom bun/);
+ assert.equal(JSON.stringify(k.snapshot()),before);
+});
+
+test('prepared slices stay on a small support and failure retains the whole ingredient',()=>{
+ const k=new Kitchen(),e=k.addIngredient('tomato',[0,.95,0]),area={x:0,z:0,w:.32,d:.22};
+ for(let i=0;i<3;i++){const out=k.cut(e,6,area);for(const q of out){assert.ok(Math.abs(q.pos[0])+.042<=area.w/2+1e-9);assert.ok(Math.abs(q.pos[2])+.042<=area.d/2+1e-9);}}
+ const tiny={x:0,z:0,w:.05,d:.05},before=e.remainingMm;assert.deepEqual(k.cut(e,6,tiny),[]);assert.equal(e.remainingMm,before);
+});
+
+test('tool-home migration preserves moved tools while updating their return slots',()=>{
+ const k=new Kitchen(),spoon=k.entities.find(e=>e.kind==='spoon'),knife=k.entities.find(e=>e.kind==='knife');spoon.pos=[.3,.94,2];knife.home=knife.pos=[1.4,.936,-1];const S=require('../js/session'),old=S.decode(k.snapshot());old.layoutVersion=2;
+ const copy=Kitchen.restore(S.encode(old)),homes=require('../js/real-model').toolHomes;assert.deepEqual(copy.get(spoon.id).pos,[.3,.94,2]);assert.deepEqual(copy.get(spoon.id).home,homes.spoon);assert.deepEqual(copy.get(knife.id).pos,homes.knife);
+});
+test('oven power retains its temperature dial through switching and save continuation',()=>{
+ const k=new Kitchen(),oven=k.station('oven').state.oven;k.setOvenTemperature(205);assert.equal(oven.target,0);k.setOvenPower(true);assert.equal(oven.target,205);
+ k.setOvenTemperature(220);assert.equal(oven.target,220);k.setOvenPower(false);assert.equal(oven.target,0);
+ const copy=Kitchen.restore(k.snapshot());copy.setOvenPower(true);assert.equal(copy.station('oven').state.oven.target,220);
+ const S=require('../js/session'),old=S.decode(copy.snapshot());delete old.settings.ovenSetpoint;assert.equal(Kitchen.restore(S.encode(old)).settings.ovenSetpoint,220);
+});
+
 test('chef palms have finite outward-facing surfaces rather than inside-out faces',()=>{
  const previous=global.window;try{
   const T=require('../js/vendor/three.min.js');global.window={THREE:T};require('../js/visual-assets');require('../js/chef-rig');

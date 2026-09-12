@@ -10,8 +10,8 @@ module.exports={name:'real-layout',experience:'real',description:'wall fixtures,
   const tap=r.targets.find(o=>o.userData.realTarget.type==='tap'),at=new T.Box3().setFromObject(tap).getCenter(new T.Vector3());
   Object.assign(w.player,{x:2.6,z:2.55,y:0});for(let i=0;i<5;i++){r.move(0);const d=at.clone().sub(r.camera.position);w.player.yaw=Math.atan2(-d.x,-d.z);w.player.pitch=Math.atan2(d.y,Math.hypot(d.x,d.z));}r.move(0);r.hover=r.focus();check('tap remains reachable through ray picking',r.hover?.data.type==='tap');
   r.use();check('relocated tap operates',w.doors.tap);r.action=null;
-  const pan=w.station('gas').state.pan,temperature=pan.Tcenter;pan.Tcenter=178;r.hover={data:{type:'station',id:'gas',name:'gas pan'},point:new T.Vector3(-1.5,.96,.95)};r.game.fahrenheit=false;r.hint();check('looking at a pan shows its centre temperature',document.getElementById('real-hint').textContent.includes('178 °C'));
-  r.game.fahrenheit=true;r.hint();check('pan temperature respects Fahrenheit preference',document.getElementById('real-hint').textContent.includes('352 °F'));r.game.fahrenheit=false;pan.Tcenter=temperature;
+  const pan=w.station('gas').state.pan,temperature=pan.Tcenter;pan.Tcenter=178;r.hover={data:{type:'station',id:'gas',name:'gas pan'},point:new T.Vector3(-1.5,.96,.95)};r.game.fahrenheit=false;r.hint();check('looking at a pan shows its centre temperature',document.getElementById('real-heat').textContent.includes('178 °C'));
+  r.game.fahrenheit=true;r.hint();check('pan temperature respects Fahrenheit preference',document.getElementById('real-heat').textContent.includes('352 °F'));r.game.fahrenheit=false;pan.Tcenter=temperature;
   // Exercise actual GPU upload and disposal, after warming the reusable shaders.
   r.hover={data:{type:'button',id:'induction',action:'power'},point:new T.Vector3(1.61,.95,.732)};r.use();r.action=null;
   check('induction starts before ingredient handling',w.station('induction').state.stove.knob>0);

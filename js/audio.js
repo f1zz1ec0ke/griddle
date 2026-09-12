@@ -142,6 +142,14 @@
     constructor(){this.ctx=null;this.voices=new Map();this.enabled=false;}
     start(){const AC=root.AudioContext||root.webkitAudioContext;if(!AC)return;this.ctx ||= new AC();this.ctx.resume();this.enabled=true;}
     stop(){this.enabled=false;for(const {voice} of this.voices.values())voice.stop();this.ctx?.suspend();}
+    effect(kind,point){
+      if(!this.enabled||!this.ctx)return;const ctx=this.ctx,t=ctx.currentTime;
+      const soft=['grab','food','form','pour','taste'].includes(kind),osc=ctx.createOscillator(),gain=ctx.createGain(),pan=ctx.createPanner();
+      pan.panningModel='equalpower';pan.refDistance=.7;pan.rolloffFactor=1;const at=point||{x:0,y:1,z:0};pan.setPosition(at.x,at.y,at.z);
+      osc.type='sine';osc.frequency.setValueAtTime(soft?150:kind==='slice'?480:900,t);osc.frequency.exponentialRampToValueAtTime(soft?65:220,t+.075);
+      gain.gain.setValueAtTime(0,t);gain.gain.linearRampToValueAtTime(soft?.035:.028,t+.004);gain.gain.exponentialRampToValueAtTime(.0001,t+.12);
+      osc.connect(gain);gain.connect(pan);pan.connect(ctx.destination);osc.start(t);osc.stop(t+.14);osc.onended=()=>{osc.disconnect();gain.disconnect();pan.disconnect();};
+    }
     update(sources,position,forward,dt){
       if(!this.enabled||!this.ctx)return;const ctx=this.ctx,t=ctx.currentTime,listener=ctx.listener;
       if(listener.positionX){for(const [key,v] of Object.entries({positionX:position.x,positionY:position.y,positionZ:position.z,forwardX:forward.x,forwardY:forward.y,forwardZ:forward.z,upX:0,upY:1,upZ:0}))listener[key].setTargetAtTime(v,t,.04);}

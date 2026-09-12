@@ -14,7 +14,7 @@ module.exports={name:'real-polish',experience:'real',description:'placement silh
   burger.held=false;r.held=null;burger.yaw=.35;r.renderEntities(0);check('turning a burger turns all its layers together',[burger,...buns].every(e=>Math.abs(r.meshes.get(e.id).mesh.rotation.y-.35)<.001));
   hold(get('probe'));aim(burger,burger.pos);r.left=true;r.use();const meat=r.meshes.get(burger.id).mesh;
   check('probing a built burger uses the visible meat height',r.interaction.probe.baseY>burger.pos[1]&&Math.abs(r.interaction.probe.baseY-meat.getWorldPosition(new T.Vector3()).y)<.001&&Math.abs(r.interaction.probe.height-burger.food.h*meat.scale.y)<.001);
-  const spatula=get('spatula');hold(spatula);burger.yaw=.7;r.carry(spatula,burger);settle();r.hint();check('carried food retains its rotation',r.interaction.yaw===.7);check('hands label names both tool and food',document.getElementById('real-hands').textContent==='spatula · burger');
+  const spatula=get('spatula');hold(spatula);burger.yaw=.7;r.carry(spatula,burger);settle();r.hint();check('carried food retains its rotation',r.interaction.yaw===.7);check('hands label names both tool and food',document.getElementById('real-held-name').textContent==='spatula · burger');
   hold(get('knife'));aim(null,[0,.96,-.88]);r.animate('slice',()=>{},10);const target=r.action.target;r.hover.point.x=.6;r.action.time=4;settle();
   check('reaching stays attached to the original action target',target.point.x===0&&r.hover.point.x===.6);
   r.hint();check('long actions show progress',!document.getElementById('real-action').hidden&&document.getElementById('real-action').textContent==='Slicing');

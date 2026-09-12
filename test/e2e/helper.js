@@ -2,12 +2,10 @@
  * test/e2e/helper.js — the shared machinery behind the end-to-end scenarios.
  *
  * A scenario gets a real browser with a real WebGL context, a real HTTP server on a free port,
- * and a handle that drives the game the way a cook does: by clicking the buttons in the panel and
- * dragging the sliders. Nothing reaches into the model to change it; the only test-only hooks are
- * the ones the game already exposes for headless runs — `game.fastForward(seconds)` to advance the
- * physics without waiting for wall-clock time, and `game.newOrder(ticket)` to force a ticket
- * instead of taking a random one. Real mode also positions the chef for interaction fixtures;
- * cooking actions and movement checks use pointer and keyboard input.
+ * and a handle for UI interaction. Legacy scenarios use buttons, sliders, game.fastForward and
+ * game.newOrder. The main Real scenario drives pointer and keyboard input with positioned camera
+ * fixtures. Focused Real scenarios also set up model state and call interaction handlers directly
+ * to cover transfers, gripping, rendering and restoration without long manual preparation.
  *
  * Playwright is not a dependency of this project (there is no build step and no node_modules); it
  * is expected to be installed globally. Run the suite as

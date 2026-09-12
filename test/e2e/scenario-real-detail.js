@@ -8,7 +8,7 @@ module.exports={name:'real-detail',experience:'real',description:'preparation, p
   function hold(e){for(const q of w.entities){q.held=false;q.payload=null;}r.held=e?.id||null;if(e)e.held=true;r.action=null;r.left=false;r.grabControl=null;r.interaction.probe=null;r.renderEntities(0);}
   function hover(e,point){r.hover={data:e?{type:'entity',entity:e.id}:{type:'board'},point:new T.Vector3(...point)};}
   function finish(){for(let i=0;i<30;i++){if(r.interaction.probe)r.move(.05);r.animateHands(.05);}r.renderEntities(0);}
-  function left(){r.canvas.dispatchEvent(new PointerEvent('pointerdown',{button:0,bubbles:true}));}
+  function left(){r.left=true;r.use();}
   function up(){window.dispatchEvent(new PointerEvent('pointerup',{button:0,bubbles:true}));}
   function wheel(deltaY){r.canvas.dispatchEvent(new WheelEvent('wheel',{deltaY,bubbles:true,cancelable:true}));}
   r.paused=false;
