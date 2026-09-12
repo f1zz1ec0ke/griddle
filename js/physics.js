@@ -26,9 +26,9 @@
  *    where crowding comes from.
  */
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory(require('./assembly'), require('./oil-film'), require('./moisture'), require('./pan-water'));
-  else root.BurgerPhysics = factory(root.BurgerAssembly, root.BurgerOilFilm, root.BurgerMoisture, root.BurgerPanWater);
-})(typeof self !== 'undefined' ? self : this, function (Assembly, Oil, Moisture, PanWater) {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./assembly'), require('./oil-film'), require('./moisture'), require('./pan-water'), require('./cheese'));
+  else root.BurgerPhysics = factory(root.BurgerAssembly, root.BurgerOilFilm, root.BurgerMoisture, root.BurgerPanWater, root.BurgerCheese);
+})(typeof self !== 'undefined' ? self : this, function (Assembly, Oil, Moisture, PanWater, Cheese) {
   'use strict';
 
   // ---------------------------------------------------------------- constants
@@ -572,7 +572,13 @@
     if (s.grill) { logEvent(s, 'There is no pan on a grill. Fat goes on the meat, not the grate, and whatever renders out falls on the coals.', 'info'); return; }
     const m = grams / 1000;
     PanWater.add(s.pan,m*f.water,s.env.Tamb);
-    s.pan.oil += m * (1 - f.water - f.solids);
+    const pan=s.pan,addedOil=m*(1-f.water-f.solids),area=Math.PI*pan.floorR**2;
+    let mean=0;
+    for(let j=0;j<pan.Np;j++){
+      const oldC=pan.ringM[j]*pan.cp+pan.oil*C.cpF*pan.ringA[j]/area,newC=addedOil*C.cpF*pan.ringA[j]/area;
+      pan.Tr[j]=(oldC*pan.Tr[j]+newC*s.env.Tamb)/(oldC+newC);mean+=pan.Tr[j]*pan.ringA[j];
+    }
+    pan.oil+=addedOil;pan.T=mean/area;pan.Tcenter=pan.Tr[0];pan.Tedge=pan.Tr[pan.Np-1];
     s.pan.fond += m * f.solids;
     s.pan.oilKind = s.pan.oil > 0 && s.pan.oilKind !== 'none' && s.pan.oilKind !== kind ? 'mixed' : kind;
     s.pan.oilSmoke = Math.min(s.pan.oilSmoke, f.smoke);
@@ -770,7 +776,7 @@
     p.dome *= 0.6;
     {
       const up = p.cheeses, under = p.cheeseUnder; let welded = 0;
-      for (const ch of under) { const sk = ch.skirt; const lossF = sk ? clamp(0.3 * sk.dry + 0.6 * sk.char, 0, 0.9) : 0; const lost = ch.mass * lossF; ch.mass -= lost; welded += lost; ch.fried = true; }
+      for (const ch of under) { const sk = ch.skirt; const lossF = sk ? clamp(0.3 * sk.dry + 0.6 * sk.char, 0, 0.9) : 0; const lost = ch.mass * lossF; Cheese.remove(ch,lost); welded += lost; ch.fried = true; }
       s.pan.fond += welded * 0.3; s.pan.cheeseBits += welded;
       p.cheeses = under.filter((ch) => ch.mass > 0.003);
       p.cheeseUnder = up;
@@ -1149,7 +1155,7 @@
       // ~1.5 %/s of what is hanging over: a 20 g slice on a 10 cm patty has ~4 g past the rim and
       // loses it over a minute or so, and stops once the slice has pulled back inside the meat.
       const sag = ch.mass * ch.overhang * 0.015 * ch.melt * ch.melt * dt;
-      ch.mass -= sag; ch.pending = (ch.pending || 0) + sag;
+      Cheese.remove(ch,sag); ch.pending = (ch.pending || 0) + sag;
       // it does not run off in a film: surface tension holds the sagging cheese until about a
       // gram has gathered on the low corner and the gob lets go all at once, which is why
       // cheese on a grill flares in bursts rather than smouldering steadily
@@ -1157,18 +1163,16 @@
       ch.contact = 0; // nothing to fry against: no skirt on a grate, it simply leaves
     }
     const sk = ch.skirt || (ch.skirt = { T: ch.T, water: CHEESE_WATER, melt: 0, brown: 0, char: 0, dry: 0, charRate: 0, mass: 0 });
-    const massS = ch.mass * ch.overhang * ch.contact; sk.mass = massS;
-    if (massS < 1e-5) { sk.T += (ch.T - sk.T) * Math.min(1, dt / 2); sk.charRate = 0; return; }
-    const areaS = side * side * ch.overhang * ch.contact;
-    const Cs = massS * (1500 + 4180 * sk.water);
-    const Tpan = bc.bottom.Tedge == null ? bc.bottom.T : bc.bottom.Tedge;
-    const q = inOil ? 2 * C.hOil * areaS * (bc.top.T - sk.T) : 200 * areaS * (Tpan - sk.T) - 12 * areaS * (sk.T - bc.top.T);
-    let Tn = sk.T + (q * dt) / Cs;
-    if (Tn > C.Tboil && sk.water > 0) {
-      const excess = Cs * (Tn - C.Tboil); const m = Math.min(sk.water * massS, excess / C.Lvap);
-      sk.water = Math.max(0, sk.water - m / massS); Tn = C.Tboil + (excess - m * C.Lvap) / Cs;
-    }
-    sk.T = Tn;
+    Cheese.partition(ch,Math.min(.95,ch.overhang*ch.contact));
+    const rim=ch.rim,massS=rim.m+rim.w;sk.mass=massS;
+    if(massS<1e-5){sk.T=ch.T;sk.charRate=0;return;}
+    const areaS=side*side*ch.overhang*ch.contact;
+    const Tpan=bc.bottom.Tedge==null?bc.bottom.T:bc.bottom.Tedge;
+    const panQ=inOil?2*C.hOil*areaS*(bc.top.T-rim.T):200*areaS*(Tpan-rim.T);
+    const airQ=inOil?0:-12*areaS*(rim.T-bc.top.T);
+    p._cheesePanQ+=panQ;p._cheeseAirQ+=airQ;
+    p._cheeseEvap+=Cheese.heat(ch,(panQ+airQ)*dt,true);
+    sk.T=rim.T;sk.water=rim.w/Math.max(1e-12,rim.m+rim.w);
     cheeseChemistry(sk, dt);
   }
   function cheeseChemistry(sk, dt) {
@@ -1198,13 +1202,10 @@
       const ch = cu[k];
       const sk = ch.skirt || (ch.skirt = { T: ch.T, water: CHEESE_WATER, melt: 0, brown: 0, char: 0, dry: 0, charRate: 0, mass: 0 });
       ch.overhang = 1; ch.contact = 1; ch.fried = true; sk.mass = ch.mass;
-      const Cs = ch.mass * (1500 + 4180 * sk.water);
-      let Tn = ch.T + ((flux[k] - flux[k + 1]) * dt) / Cs;
-      if (Tn > C.Tboil && sk.water > 0) {
-        const excess = Cs * (Tn - C.Tboil); const m = Math.min(sk.water * ch.mass, excess / C.Lvap);
-        sk.water = Math.max(0, sk.water - m / ch.mass); Tn = C.Tboil + (excess - m * C.Lvap) / Cs;
-      }
-      ch.T = Tn; sk.T = Tn; ch.melt = clamp(ch.melt + 0.5 * sig(Tn, 52, 5) * dt, 0, 1);
+      Cheese.partition(ch,0);
+      p._cheeseEvap+=Cheese.heat(ch,(flux[k]-flux[k+1])*dt);
+      sk.water=ch.water/Math.max(ch.mass,1e-12);sk.mass=ch.mass;
+      sk.T=ch.T;ch.melt=clamp(ch.melt+.5*sig(ch.T,52,5)*dt,0,1);
       cheeseChemistry(sk, dt);
     }
     return { qPan: flux[0], qMeat: flux[n], hc: 300 };
@@ -1227,6 +1228,7 @@
     const Cn = sc.Cn, Kn = sc.Kn, Q = sc.Q, Aj = sc.Aj, X = sc.X, fmv = sc.fmv;
     const Tpk = p.Tpk, poolB = p.poolB, poolT = p.poolT;
     const topRow = (Nz - 1) * Nr;
+    p._cheeseEvap=0;p._cheesePanQ=0;p._cheeseAirQ=0;
     p.cheeseDrip = 0; // cheese that leaves the slice this step (only happens over a grate)
     for (let j = 0; j < Nr; j++) Aj[j] = A * aj[j]; // ring areas — recomputed because the patty shrinks
     Q.fill(0);
@@ -1333,8 +1335,8 @@
         + (bc.top.rad ? A * 0.9 * C.sigma * bc.top.radView * ((bc.top.radT + 273.15) ** 4 - (cs[m - 1].T + 273.15) ** 4) : 0);
       qTop += flux[m];
       for (let k = 0; k < m; k++) {
-        const ch = cs[k], Cc = ch.mass * 2500;
-        ch.T += ((flux[k] - (k < m - 1 ? flux[k + 1] : -flux[m])) * dt) / Cc;
+        const ch = cs[k];
+        p._cheeseEvap+=Cheese.heat(ch,(flux[k]-(k<m-1?flux[k+1]:-flux[m]))*dt);
         ch.melt = clamp(ch.melt + 0.08 * sig(ch.T, 52, 5) * dt, 0, 1);
         stepCheeseSkirt(p, ch, k, dt, bc);
       }
@@ -1617,7 +1619,9 @@
 
     p.peakCenter = Math.max(p.peakCenter, centerT(p));
     const res = sc.res;
-    res.qTop = qTop; res.qBot = qPan; res.hc = hc; res.boilBottom = boilBottom / dt; res.evapTop = evapTop;
+    for(let j=0;j<Nr;j++)qPanR[j]+=p._cheesePanQ*aj[j];
+    evapTop+=p._cheeseEvap/dt;
+    res.qTop = qTop+p._cheeseAirQ; res.qBot = qPan+p._cheesePanQ; res.hc = hc; res.boilBottom = boilBottom / dt; res.evapTop = evapTop;
     res.fatDrip = fatDrip / dt; res.fatSide = fatSide / dt; res.juiceSide = juiceSide / dt; res.Ts = surfT; res.qSide = qSide;
     res.cheeseDrip = p.cheeseDrip / dt;
     return res;
@@ -1776,6 +1780,7 @@
         if (!Number.isFinite(sk.T)) sk.T = ch.T;
         if (!Number.isFinite(sk.water)) sk.water = CHEESE_WATER;
         for (const k of ['melt', 'brown', 'char', 'dry', 'charRate', 'mass']) if (!Number.isFinite(sk[k])) sk[k] = 0;
+        delete ch.core;delete ch.rim;Cheese.ensure(ch);
       }
     }
   }
@@ -1783,6 +1788,7 @@
   function cheeseFinite(p) {
     for (const list of [p.cheeses, p.cheeseUnder]) for (const ch of list) {
       if (!Number.isFinite(ch.T) || !Number.isFinite(ch.mass)) return false;
+      if(ch.core&&[ch.core,ch.rim].some(n=>!n||!Number.isFinite(n.T)||!Number.isFinite(n.m)||!Number.isFinite(n.w)))return false;
       const sk = ch.skirt;
       if (sk && (!Number.isFinite(sk.T) || !Number.isFinite(sk.water) || !Number.isFinite(sk.mass))) return false;
     }
@@ -2871,6 +2877,8 @@
     if (it.kind === 'bun') {
       const b = it.cutFace.brown, ch = it.cutFace.char;
       if (ch > 0.35) return { state: 'burnt', note: `${it.label} burnt black on the cut face (char ${ch.toFixed(2)}): bitter, and it scrapes the roof of your mouth.`, score: -4, toast: b, burnt: true };
+      const crumb=it.faceIsCut?it.face:it.up;
+      if((it.absorbedWater||0)>.004&&crumb.w>(it.faceIsCut?it.w0f:it.w0u)+.001)return {state:'soggy',note:'The bun has soaked up juices from the stack and softened.',score:-1,toast:b};
       if (b > 4.5) return { state: 'over-toasted', note: `${it.label} toasted too far — dark and dusty (browning ${b.toFixed(1)}).`, score: -1, toast: b };
       if (b > 1.2) return { state: 'toasted', note: `${it.label} toasted golden (browning ${b.toFixed(1)}${it.fatSoaked > 0.0005 ? `, ${(it.fatSoaked * 1000).toFixed(1)} g of pan fat soaked into it` : ''}). Sealed: it will hold up under the juice.`, score: 1.5, toast: b };
       if (b > 0.4) return { state: 'barely toasted', note: `${it.label} only just caught colour. A pale bun goes soggy.`, score: 0, toast: b };
@@ -2886,7 +2894,7 @@
     if (it.kind === 'egg') {
       const white = it.setTop, y = it.yolkSet;
       if (white < 0.5) return { state: 'raw white', note: `The egg white is still raw and clear on top (set ${white.toFixed(2)}). That comes straight back to the kitchen.`, score: -5 };
-      if (it.faceDown.char > 0.35 || it.lace.char > 0.4) return { state: 'burnt', note: 'The egg is burnt black underneath and at the rim.', score: -3 };
+      if (Math.max(it.faceDown.char,it.faceUp.char) > 0.35 || it.lace.char > 0.4) return { state: 'burnt', note: 'The egg is burnt black underneath and at the rim.', score: -3 };
       const lace = it.lace.brown > 1.2 ? ' with a crisp brown lace at the rim' : '';
       if (y < 0.3) return { state: 'runny yolk', note: `Set white, liquid yolk${lace}. It will run down your wrist, which some people order on purpose.`, score: 0.5 };
       if (y < 0.75) return { state: 'jammy yolk', note: `Set white and a jammy yolk${lace} — the state everybody wants and almost nobody hits.`, score: 2.5 };
@@ -3219,7 +3227,8 @@
         bc.bottom.T = Tamb + 8; bc.top.T = Tamb; bc.top.RH = s.env.RH; bc.side.T = Tamb;
         const owner=p.assembledTo!=null?s.patties.find(q=>q.id===p.assembledTo):null;
         Assembly.cover(owner||p,bc,null,owner?p:null);
-        stepPattyGuarded(s, p, dt, bc);
+        const flux=stepPattyGuarded(s, p, dt, bc);
+        Assembly.collectJuice(owner||p,p,flux.juiceSide*dt,Math.min(100,gridMean(p,p.T)));
         p.restT = (p.restT || 0) + dt;
       }
     }
@@ -3484,12 +3493,12 @@
       // a toasted cut face is a sealed, part-dextrinised crust with the pan's fat in it: it drinks
       // roughly 60 % less of the juice than raw crumb does. That is why the heel goes on the griddle.
       const soakF = heel ? lerp(1, 0.4, clamp(heel.cutFace.brown / 2, 0, 1)) : 1;
-      p.bunSoakRaw = soak; p.bunSoak = soak * soakF; p.bunToast = heel ? heel.cutFace.brown : 0;
+      p.bunSoakRaw = soak; p.bunSoak = p.manualAssembly?(heel?.absorbedWater||0):soak*soakF; p.bunToast = heel ? heel.cutFace.brown : 0;
       const crown = tops.find((it) => it.kind === 'bun' && it.half === 'top');
       // what the renderer draws on the cut faces of the bun it goes out on
       p.bunFaces = { bottom: heel ? { brown: heel.cutFace.brown, char: heel.cutFace.char } : null, top: crown ? { brown: crown.cutFace.brown, char: crown.cutFace.char } : null };
       for (const it of tops) if (it.where !== 'cut') { it.where = 'cut'; it.serveT = itemT(it); }
-      for (let j = 0; j < p.Nr; j++) { p.poolT[j] = 0; p.poolB[j] = 0; } p.poolTop = 0; p.poolBottom = 0;
+      if(!p.manualAssembly){for (let j = 0; j < p.Nr; j++) { p.poolT[j] = 0; p.poolB[j] = 0; } p.poolTop = 0; p.poolBottom = 0;}
       const built = tops.length ? ` Built with ${tops.map((it) => it.label.toLowerCase()).join(', ')}.` : '';
       logEvent(s, `Patty ${p.id} ${heel && crown ? 'on a bun' : heel || crown ? 'served with a partial bun' : 'served without a bun'}.${heel && p.bunSoak > 0.0015 ? ` ${(p.bunSoak * 1000).toFixed(1)} g of juice went straight into the bottom bun${heel && soakF < 0.8 ? ' — far less than it would have taken untoasted' : ''}.` : ''}${p.cheeses.length ? ` ${p.cheeses.length} slice${p.cheeses.length > 1 ? 's' : ''} of cheese under the lid.` : ''}${built}`, 'action');
     }
@@ -3522,7 +3531,10 @@
       const st = itemState(it);
       return { kind: it.kind, label: it.label, state: st.state, note: st.note, score: st.score };
     });
-    if (Assembly.hasPatty(patty)) for (const layer of Assembly.layers(patty)) if (layer.cold) items.push({kind:layer.cold,label:Assembly.cold[layer.cold].label,state:'added',note:'Added during assembly',score:0});
+    if (Assembly.hasPatty(patty)) for (const layer of Assembly.layers(patty)) if (layer.cold) {
+      const wilted=layer.cold==='lettuce'&&(layer.wilt||0)>.5;
+      items.push({kind:layer.cold,label:Assembly.cold[layer.cold].label,state:wilted?'wilted':'added',note:wilted?'The lettuce has wilted against the hot filling.':'Added during assembly',score:0});
+    }
     if (patty.manualAssembly) {
       const order = Assembly.layers(patty).filter(l=>!l.patty).map(l=>l.item?l.item.label:Assembly.cold[l.cold].label);
       items.sort((a,b)=>order.indexOf(a.label)-order.indexOf(b.label));
@@ -3922,6 +3934,7 @@
       else if (burnt) gripe('build', 0.5, [`The ${name} ${is} burnt.`, `The ${name} ${has} caught.`], 12);
       else if (st === 'cold') gripe('build', 0.4, [`The ${name} ${is} stone cold on top of it.`, `Cold ${name}. On a hot burger.`], 12);
       else if (st === 'soggy') gripe('build', 0.35, [`The ${name} ${has} gone to mush.`, `The ${name} ${is} soggy.`], 12);
+      else if (st === 'wilted') gripe('build', 0.15, ['The lettuce has wilted against the hot filling.'], 12);
       else if (score != null && score < 0) gripe('build', 0.3, [`The ${name} ${is} ${st}.`, `Not sure about the ${name} — ${pl ? "they're" : "it's"} ${st}.`], 12);
       else if ((score != null && score >= 1.5) || st === 'melted' || st === 'toasted') nice('build', [`The ${name} ${is} exactly right.`, `Good ${name} on it too.`, st ? `${name[0].toUpperCase() + name.slice(1)} — ${st}. Perfect.` : `Good ${name}.`], 12);
     }

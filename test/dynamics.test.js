@@ -247,3 +247,41 @@ test('pan boiling is stable across time steps and stops drawing heat when dry',(
   const r=W.step(tiny,{Tamb:20,RH:.5},false,10);assert.ok(r.heat<=1e-8*2260000+1e-10);
   assert.ok(tiny.water>=0);assert.equal(W.step({...tiny,water:0},{Tamb:20,RH:.5},false,.05).heat,0);
 });
+
+const Ch=require('../js/cheese');
+test('cheese partitions, boils and transfers to assembly without losing its mass and energy ledger',()=>{
+  const ch={mass:.02,T:98,melt:0,skirt:null};Ch.ensure(ch);
+  const E=()=>energy(ch.core,1500)+energy(ch.rim,1500),before=E();Ch.partition(ch,.3);assert.ok(Math.abs(E()-before)<1e-7);
+  const water=ch.water,mass=ch.mass;const lost=Ch.heat(ch,1000,true);
+  assert.ok(lost>0);assert.ok(Math.abs(ch.mass+lost-mass)<1e-12);assert.ok(Math.abs(ch.water+lost-water)<1e-12);
+  assert.ok(Math.abs(E()+lost*(M.latent+100*M.cpW)-before-1000)<1e-6);
+  const e2=E();Ch.partition(ch,0);assert.ok(Math.abs(E()-e2)<1e-7);
+  const copy=S.decode(S.encode(ch));Ch.surface(ch).add(200);Ch.surface(copy).add(200);assert.deepEqual(copy,ch);
+  assert.ok(Math.abs(ch.mass+ch.evaporated-.02)<1e-12);
+});
+test('adding room-temperature oil conserves energy and cools the metal',()=>{
+  const s=state(),p=s.pan;for(let j=0;j<p.Np;j++)p.Tr[j]=180+j*3;p.T=200;p.Tcenter=p.Tr[0];
+  const E=()=>p.Tr.reduce((v,T,j)=>v+(p.ringM[j]*p.cp+p.oil*2000*p.ringA[j]/(Math.PI*p.floorR**2))*T,0);
+  const before=E(),center=p.Tcenter;P.addFat(s,'canola',10);
+  assert.ok(p.Tcenter<center);assert.ok(Math.abs(E()-before-.01*2000*s.env.Tamb)<1e-7);
+});
+test('turning a burnt egg cannot hide the burnt face from judgement',()=>{
+  const s=state(),[egg]=P.addItem(s,'egg');egg.setTop=egg.setBot=1;egg.faceDown.char=.6;egg.stuck=false;
+  const before=P.itemState(egg);P.flipItem(s,egg);assert.equal(P.itemState(egg).state,'burnt');assert.equal(P.itemState(egg).score,before.score);
+});
+test('assembly juice actually wets the bun, conserves water, and responds to layer order',()=>{
+  function setup(barrier){const s=state(),p=patty(s);P.removePatty(s,p);const [bun]=P.addItem(s,'bun');P.removeItem(s,bun);A.add(s,p,bun.id);if(barrier)A.add(s,p,'mayo');A.add(s,p,'patty');p.poolT.fill(.005/p.Nr);p.poolTop=.005;for(const l of p.assembly)if(l.cold)A.coldNode(l);return {s,p,bun};}
+  function water({p,bun}){return bun.body.w+bun.face.w+bun.up.w+p.poolTop+p.poolBottom+p.assembly.reduce((v,l)=>v+(l.cold?l.w:0)+((l.item||(l.patty?p:l)).stackJuice?.w||0),0);}
+  const direct=setup(false),shield=setup(true),before=water(direct),start=direct.bun.body.w+direct.bun.face.w+direct.bun.up.w;
+  for(let i=0;i<1200;i++){A.stepMoisture(direct.p,.05);A.stepMoisture(shield.p,.05);}
+  assert.ok(direct.bun.absorbedWater>.003);assert.ok(shield.bun.absorbedWater<direct.bun.absorbedWater*.7);
+  assert.ok(Math.abs(water(direct)-before)<1e-10);assert.ok(Math.abs(direct.bun.body.w+direct.bun.face.w+direct.bun.up.w-start-direct.bun.absorbedWater)<1e-10);
+  const copy=S.decode(S.encode(shield));A.stepMoisture(shield.p,.05);A.stepMoisture(copy.p,.05);assert.deepEqual(copy.p,shield.p);
+  const soaked=direct.bun.absorbedWater;P.serve(direct.s,direct.p);assert.equal(direct.p.bunSoak,soaked);
+});
+test('wilted lettuce gets descriptive feedback without changing the score',()=>{
+  const s=state(),p=patty(s);P.removePatty(s,p);A.add(s,p,'patty');A.add(s,p,'lettuce');
+  const fresh=P.buildOf(s,p),score=P.evaluateTicket(s).total;p.assembly[1].wilt=1;
+  const wilt=P.buildOf(s,p);assert.equal(wilt.items.at(-1).state,'wilted');assert.match(wilt.items.at(-1).note,/wilted/);
+  assert.equal(wilt.penalty,fresh.penalty);assert.equal(wilt.bonus,fresh.bonus);assert.equal(P.evaluateTicket(s).total,score);
+});
