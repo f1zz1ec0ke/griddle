@@ -18,4 +18,6 @@ The oven finishes up to four patties in fixed rack positions, or takes one tray.
 
 Covered pans travel with their lids. Put carried food down before reusing its utensil. Egg cracking and bun splitting check for space first; eggs lost through the grill leave cooking debris, not inventory items.
 
+Look at a pan to read its centre temperature in your selected units. Perimeter fixtures sit against the walls; the oven faces into the room. Older saves migrate fixture positions and food left on their counters.
+
 Validation: model tests cover independent heat, exact food/pan transfer, portion and salt conservation, preparation, assembly, tray ownership and save continuation. Browser checks exercise actual pointer input from fridge to heated pan, plus tool actions, hot handling, cutaways and restoration. The audit also covers discarded-target cleanup, hot surfaces, failed transfers, loaded saves and slow-frame timing. Cooking uses fixed 50 ms steps with up to 250 ms of catch-up per rendered frame. Software WebGL checks do not establish hardware frame rates.

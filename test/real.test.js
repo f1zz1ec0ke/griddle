@@ -1,6 +1,13 @@
 const test=require('node:test'),assert=require('node:assert/strict'),{Kitchen}=require('../js/real-model'),P=require('../js/physics');
 const A=require('../js/assembly');
 function patty(k){k.bowl={mass:500,salt:5,work:.2};k.scoop(2);return k.form([0,.96,-.9]);}
+test('older layouts migrate fixtures and counter items once without losing cooking state',()=>{
+ const S=require('../js/session'),{fixturePoint}=require('../js/real-model'),k=new Kitchen(),p=patty(k);k.doors.oven=true;k.placeFood(p,'oven');const tomato=k.addIngredient('tomato',[-2.6,1.062,-1.3]);
+ const d=S.decode(k.snapshot());delete d.layoutVersion;d.stations.find(s=>s.id==='oven').x=-2.4;d.stations.find(s=>s.id==='charcoal').x=2.5;
+ const spare=d.entities.find(e=>e.panType==='nonstick');spare.home[2]=spare.pos[2]=3.15;
+ const copy=Kitchen.restore(S.encode(d));assert.deepEqual(copy.get(tomato.id).pos,fixturePoint('oven',[0,1.062,0]));assert.equal(copy.get(spare.id).home[2],3.65);assert.equal(copy.get(p.id).food,copy.station('oven').state.patties[0]);assert.equal(copy.station('charcoal').x,3.45);
+ const again=Kitchen.restore(copy.snapshot());assert.deepEqual(again.get(tomato.id).pos,copy.get(tomato.id).pos);assert.deepEqual(again.get(spare.id).home,copy.get(spare.id).home);
+});
 test('eggs lost through the grill retain debris but cannot break kitchen saves',()=>{
  const k=new Kitchen(),e=k.addIngredient('egg',[0,.95,0]);assert.equal(k.crackEgg(e,'charcoal'),null);k.step(.05);
  assert.equal(k.get(e.id),undefined);assert.equal(k.station('charcoal').state.grill.droppedEggs.length,1);

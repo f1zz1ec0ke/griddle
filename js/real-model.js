@@ -4,7 +4,9 @@
   const P=typeof module==='object'?require('./physics'):root.BurgerPhysics;
   const S=typeof module==='object'?require('./session'):root.GriddleSession;
   const A=typeof module==='object'?require('./assembly'):root.BurgerAssembly;
-  const stationDefs=[['gas',-1.5,.95,'castiron'],['electric',0,.95,'carbonsteel'],['induction',1.5,.95,'stainless'],['charcoal',2.5,-1.5,'castiron'],['oven',-2.4,-1.4,'castiron']];
+  const fixtures={sink:{from:[2.6,2.7],to:[2.6,3.57],yaw:0},fridge:{from:[-3.3,1.7],to:[-3.3,3.52],yaw:0},oven:{from:[-2.6,-1.3],to:[-3.48,-1.3],yaw:-Math.PI/2},rack:{from:[-2.45,3.15],to:[-2.45,3.65],yaw:0}};
+  function fixturePoint(name,point){const f=fixtures[name],c=Math.cos(f.yaw),s=Math.sin(f.yaw);return [f.to[0]+point[0]*c+point[2]*s,point[1],f.to[1]-point[0]*s+point[2]*c];}
+  const stationDefs=[['gas',-1.5,.95,'castiron'],['electric',0,.95,'carbonsteel'],['induction',1.5,.95,'stainless'],['charcoal',3.45,-1.5,'castiron'],['oven',...fixtures.oven.to,'castiron']];
   function clearPlacement(point,footprint,surface,obstacles){
     const free=(x,z)=>obstacles.every(b=>x+footprint.maxX+.006<=b.minX||x+footprint.minX-.006>=b.maxX||z+footprint.maxZ+.006<=b.minZ||z+footprint.minZ-.006>=b.maxZ);
     if(free(point[0],point[2]))return point.slice();
@@ -23,7 +25,7 @@
       P.setOven(this.station('oven').state,0);this.station('charcoal').state.grill.lit=false;
       for(const st of this.stations.filter(s=>!['charcoal','oven'].includes(s.id))){const e=this.entity('pan',st.id+' pan',[st.x,.93,st.z]);e.pan=st.state.pan;e.station=st.id;e.food=[];e.panType=st.state.pan.spec?.id||stationDefs.find(d=>d[0]===st.id)[3];st.panId=e.id;}
       const spare=this.entity('pan','non-stick pan',[-2.45,1.06,3.15]);spare.panType='nonstick';spare.parked=P.createState({stove:'gas',pan:'nonstick'});spare.pan=spare.parked.pan;spare.food=[];
-      this.entities.filter(e=>e.kind==='pan').forEach((e,i)=>e.home=[-2.45,1.06+i*.20,3.15]);
+      this.entities.filter(e=>e.kind==='pan').forEach((e,i)=>e.home=fixturePoint('rack',[0,1.06+i*.20,0]));
       spare.pos=spare.home.slice();
       for(const [i,kind] of ['spatula','tongs','spoon','press','knife','salt','oil','water','glove','probe','cloth','lighter','coal','wood','ketchup','mayo','mustard','lid','tray'].entries()){
         const e=this.entity(kind,kind==='press'?'smash plate':kind,[kind==='probe'?1.80:[-1.62,-1.28,.96,1.30,1.64][i%5],.936,-1.23+Math.floor(i/5)*.25]);e.home=e.pos.slice();
@@ -211,7 +213,7 @@
       if(tray.kind!=='tray')return 'Use the oven tray.';
       if((tray.cargo||[]).some(id=>this.get(id)?.kind!=='patty'||this.get(id).food.assembly?.length||this.get(id).food.D>.24))return 'Finish loose patties in the oven; keep burgers on the pass.';
       if(this.entities.some(e=>e!==tray&&e.station==='oven'&&e.trayCarrier!==tray.id))return 'Clear the oven rack before adding the tray.';
-      const cargo=(tray.cargo||[]).slice();for(const id of cargo){const e=this.get(id);this.placeFood(e,'oven');e.trayCarrier=tray.id;}tray.cargo=cargo;tray.station='oven';tray.held=false;tray.pos=[-2.6,.54,-1.32];return null;
+      const cargo=(tray.cargo||[]).slice();for(const id of cargo){const e=this.get(id);this.placeFood(e,'oven');e.trayCarrier=tray.id;}tray.cargo=cargo;tray.station='oven';tray.held=false;tray.pos=fixturePoint('oven',[0,.54,-.02]);return null;
     }
     assemble(held,target){
       const base=target.stackRoot?this.get(target.stackRoot):target;
@@ -243,7 +245,7 @@
       // Keep endless practice bounded in history, while retaining every live ingredient.
       for(const s of [...this.stations.map(s=>s.state),this.loose,...this.entities.filter(e=>e.parked).map(e=>e.parked)]){if(s.events.length>80)s.events.splice(0,s.events.length-80);if(s.trace.length>180)s.trace.splice(0,s.trace.length-180);}
     }
-    snapshot(){return S.encode({version:1,nextId:this.nextId,heldId:this.heldId,entities:this.entities.filter(e=>!e.discarded),time:this.time,bowl:this.bowl,portion:this.portion,player:this.player,doors:this.doors,stations:this.stations,loose:this.loose,settings:this.settings,lastTasting:this.lastTasting});}
+    snapshot(){return S.encode({version:1,layoutVersion:2,nextId:this.nextId,heldId:this.heldId,entities:this.entities.filter(e=>!e.discarded),time:this.time,bowl:this.bowl,portion:this.portion,player:this.player,doors:this.doors,stations:this.stations,loose:this.loose,settings:this.settings,lastTasting:this.lastTasting});}
     static restore(data){
       const d=S.decode(data);if(d.version!==1||!Array.isArray(d.stations)||d.stations.length!==5||!Array.isArray(d.entities)||d.entities.length>3000)throw Error('Invalid Real kitchen save');
       // Older kitchens kept empty inventory eggs after the grill took ownership.
@@ -283,8 +285,17 @@
       for(const q of [d.bowl,d.portion])if(!q||!['mass','salt','work'].every(k=>Number.isFinite(q[k])&&q[k]>=0)||(q.fatFrac!=null&&(!Number.isFinite(q.fatFrac)||q.fatFrac<0||q.fatFrac>1)))throw Error('Invalid mince');
       for(const e of d.entities)if(e.home&&e.kind!=='pan'){const atHome=e.pos.every((v,i)=>Math.abs(v-e.home[i])<.001);e.home[1]=.936;if(e.kind==='probe')e.home[0]=1.80;if(atHome)e.pos=e.home.slice();}
       const k=Object.create(Kitchen.prototype);Object.assign(k,d);k.settings={thicknessMm:P.clamp(d.settings?.thicknessMm||20,8,35),sliceMm:P.clamp(d.settings?.sliceMm||6,2,12)};
+      if((d.layoutVersion||1)<2){
+        for(const st of k.stations){const def=stationDefs.find(q=>q[0]===st.id);st.x=def[1];st.z=def[2];}
+        for(const e of k.entities){
+          if(e.kind==='pan'&&e.home){const atHome=e.pos.every((v,i)=>Math.abs(v-e.home[i])<.001);e.home=fixturePoint('rack',[0,e.home[1],0]);if(atHome)e.pos=e.home.slice();}
+          if(e.kind==='tray'&&e.station==='oven')e.pos=fixturePoint('oven',[0,.54,-.02]);
+          if(e.station||e.held||e.stackRoot||e.panCarrier||e.trayCarrier)continue;
+          for(const name of ['oven','sink']){const f=fixtures[name],x=e.pos[0]-f.from[0],z=e.pos[2]-f.from[1];if(Math.abs(x)<(name==='oven'?.36:.65)&&Math.abs(z)<.44&&Math.abs(e.pos[1]-(name==='oven'?1.06:.93))<.08){e.pos=fixturePoint(name,[x,e.pos[1],z]);e.yaw=(e.yaw||0)+f.yaw;break;}}
+        }
+      }
       if(!k.entities.some(e=>e.kind==='plate')){const plate=k.entity('plate','tasting plate',[.50,.936,-.85]);plate.home=plate.pos.slice();}return k;
     }
   }
-  const api={Kitchen,stationDefs,clearPlacement};if(typeof module==='object')module.exports=api;else root.RealKitchen=api;
+  const api={Kitchen,stationDefs,clearPlacement,fixtures,fixturePoint};if(typeof module==='object')module.exports=api;else root.RealKitchen=api;
 })(typeof window!=='undefined'?window:globalThis);
