@@ -22,7 +22,7 @@ module.exports={name:'real-detail',experience:'real',description:'preparation, p
   Object.assign(w.player,{x:0,z:-1.45,y:0,yaw:Math.PI,pitch:-1.0});r.move(0);
   const probe=get('probe');hold(probe);hover(patty,[patty.pos[0],patty.pos[1]+patty.food.h,patty.pos[2]]);left();wheel(1);wheel(1);finish();
   const p=r.interaction.probe;check('probe tip reaches the chosen food instead of teleporting the hand',p?.valid);check('probe reads a finite temperature at selected depth',p?.depth===.002&&Number.isFinite(p.temperature));
-  up();r.interaction.continuous(.05);check('releasing withdraws the probe',!r.interaction.probe);
+  up();r.interaction.continuous(.05);check('releasing parks the probe in the patty and frees the hand',!r.interaction.probe&&probe.probeAttachment?.foodId===patty.id&&!r.held);hover(probe,probe.pos);r.toggleGrab();finish();check('right click removes the parked probe',r.held===probe.id&&!probe.probeAttachment);
   const egg=w.addIngredient('egg',[.4,.96,-.88]);hold(egg);r.hover={data:{type:'station',id:'electric'},point:new T.Vector3(0,.97,.95)};left();r.animateHands(.3);r.renderEntities(0);
   check('cracking opens two halves of the existing egg asset',r.interaction.shells?.length===2&&r.interaction.shells[0].shell.position.distanceTo(r.interaction.shells[1].shell.position)>.05);
   finish();up();check('one cracked egg lands on the aimed cooking station',egg.station==='electric'&&w.station('electric').state.items.filter(e=>e.id===egg.id).length===1&&!r.interaction.shells);

@@ -63,7 +63,11 @@ class Kitchen {
     this.pageErrors = []; this.consoleErrors = []; this.shots = []; this.steps = [];
   }
   // ---- driving the real controls
-  async click(sel) { await this.page.click(sel); await this.page.waitForTimeout(20); }
+  async reveal(sel) {
+    const drawer = await this.page.$eval(sel, el => el.closest('.drawer[hidden]')?.id);
+    if (drawer) await this.page.locator(`[aria-controls="${drawer}"]`).click();
+  }
+  async click(sel) { await this.reveal(sel); await this.page.click(sel); await this.page.waitForTimeout(20); }
   /**
    * Click something the game re-renders as the clock ticks. Playwright's own click resolves the
    * element and then presses it in a second round trip, which loses the race against a chip list
@@ -72,6 +76,7 @@ class Kitchen {
    * handler doing the work.
    */
   async clickLive(sel) {
+    await this.reveal(sel);
     const hit = await this.page.evaluate((s) => { const el = document.querySelector(s); if (!el) return false; el.click(); return true; }, sel);
     if (!hit) throw new Error(`${this.name}: nothing matches ${sel}`);
     await this.page.waitForTimeout(10);
@@ -91,10 +96,12 @@ class Kitchen {
   }
   /** Move a slider the way a pointer does: set the value and fire the input event the page listens for. */
   async range(sel, value) {
+    await this.reveal(sel);
     await this.page.$eval(sel, (el, v) => { el.value = String(v); el.dispatchEvent(new Event('input', { bubbles: true })); }, value);
     await this.page.waitForTimeout(10);
   }
   async choose(sel, value) {
+    await this.reveal(sel);
     await this.page.$eval(sel, (el, v) => { el.value = String(v); el.dispatchEvent(new Event('change', { bubbles: true })); }, value);
     await this.page.waitForTimeout(10);
   }

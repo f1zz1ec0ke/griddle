@@ -1,6 +1,41 @@
 const test=require('node:test'),assert=require('node:assert/strict'),{Kitchen}=require('../js/real-model'),P=require('../js/physics');
 const A=require('../js/assembly');
 function patty(k){k.bowl={mass:500,salt:5,work:.2};k.scoop(2);return k.form([0,.96,-.9]);}
+test('a dressed bottom bun cooks, saves, promotes and peels without losing any layers',()=>{
+ const k=new Kitchen(),[bottom,top]=k.slice(k.addIngredient('bunWhole',[.4,.96,-.9])),plate=k.entities.find(e=>e.kind==='plate');
+ const tomato=k.addIngredient('tomatoSlice',[0,.96,0]),cheese=k.addIngredient('cheese',[0,.96,0]),sauce=k.entities.find(e=>e.kind==='mayo');
+ cheese.massG=28;assert.equal(k.name(bottom),'bottom bun');assert.equal(k.name(top),'top bun');assert.ok(k.putOnTray(bottom,plate));
+ assert.ok(k.assemble(sauce,bottom));assert.ok(k.assemble(tomato,bottom));assert.ok(k.assemble(cheese,bottom));assert.equal(k.loose.patties.length,0);assert.equal(k.layers(bottom).length,4);
+ const copy=Kitchen.restore(k.snapshot());assert.equal(copy.get(bottom.id).prep,copy.get(bottom.id).food.prepAssembly);assert.equal(copy.get(cheese.id).sliceState,copy.layers(copy.get(bottom.id))[3].cheese);
+ for(let i=0;i<30;i++){k.step(.05);copy.step(.05);}assert.deepEqual(copy.get(bottom.id).food,bottom.food);assert.ok(Number.isFinite(k.layers(bottom)[2].T));
+ assert.match(k.placeFood(bottom,'gas'),/assembled/);assert.equal(k.putOnTray(bottom,k.entities.find(e=>e.kind==='tray')),false);
+ const meat=patty(k);assert.ok(k.assemble(meat,bottom));assert.deepEqual(k.layers(meat).map(l=>l.patty?'patty':l.item?.kind||l.cold||'cheese'),['bun','mayo','tomato','cheese','patty']);assert.deepEqual(plate.cargo,[meat.id]);assert.equal(bottom.prep,undefined);
+ assert.equal(k.peel(meat),meat);assert.deepEqual(plate.cargo,[bottom.id]);assert.equal(k.layers(bottom).length,4);assert.equal(tomato.stackRoot,bottom.id);assert.equal(cheese.stackRoot,bottom.id);assert.ok(Kitchen.restore(k.snapshot()));
+ assert.equal(k.peel(bottom),cheese);assert.equal(cheese.sliceState.mass,.028);assert.ok(k.addCheese(cheese,meat));assert.equal(meat.food.cheeses[0].mass,.028);
+ k.discard(bottom);assert.equal(k.get(tomato.id),undefined);assert.equal(k.loose.items.length,1);assert.ok(k.get(top.id));assert.ok(Kitchen.restore(k.snapshot()));
+});
+test('bun halves, closed builds and cheese caps reject incompatible assembly atomically',()=>{
+ const k=new Kitchen(),a=k.slice(k.addIngredient('bunWhole',[0,.96,0])),b=k.slice(k.addIngredient('bunWhole',[1,.96,0])),meat=patty(k);
+ assert.match(k.assemblyProblem(a[1],a[0]),/patty/);assert.equal(k.assemble(meat,a[1]),false);
+ for(let i=0;i<4;i++)assert.ok(k.assemble(k.addIngredient('cheese',[0,.96,0]),a[0]));assert.ok(k.assemble(meat,a[0]));
+ const extra=k.addIngredient('cheese',[0,.96,0]);assert.equal(k.addCheese(extra,meat),false);assert.equal(k.assemble(extra,meat),false);assert.equal(extra.discarded,false);
+ assert.match(k.assemblyProblem(b[1],meat),/same bun pair/);assert.ok(k.assemble(a[1],meat));assert.match(k.assemblyProblem(b[0],meat),/top bun/);
+});
+test('egg layers yield to weight and individual pickles fan across one layer without changing mass',()=>{
+ const k=new Kitchen(),[bun,top]=k.slice(k.addIngredient('bunWhole',[0,.96,0])),egg=k.addIngredient('egg',[0,.96,0]);k.makeFood(egg,'egg');egg.food.yolkSet=.5;
+ k.assemble(egg,bun);const picks=Array.from({length:4},()=>k.addIngredient('pickleSlice',[0,.96,0]));for(const p of picks){p.sliceMm=6;k.assemble(p,bun);}const meat=patty(k);k.assemble(meat,bun);k.assemble(top,meat);
+ const mass=P.itemMass(egg.food),heights=k.layers(meat).map(l=>l.patty?.02:l.item?.kind==='bun'?.022:l.item?.kind==='egg'?.019:.006),layout=A.stackLayout(meat.food,P,heights);
+ assert.ok(layout[1].scale<.58);const coins=layout.slice(2,6);assert.equal(new Set(coins.map(q=>q.base)).size,1);assert.ok(coins.reduce((h,q)=>h+q.advance,0)<=.006);assert.ok(coins.every(q=>Math.hypot(q.x,q.z)<meat.food.D/2));assert.equal(P.itemMass(egg.food),mass);
+ k.peel(meat);k.peel(meat);assert.ok(A.stackLayout(k.stackState(bun),P,heights.slice(0,6))[1].scale>layout[1].scale);
+});
+test('parked probe keeps a live sample across heat transfers and saves, and returns safely on discard',()=>{
+ const k=new Kitchen(),meat=patty(k),probe=k.entities.find(e=>e.kind==='probe');probe.held=true;
+ assert.ok(k.parkProbe(probe,meat,{x:.2,z:.1,depth:.5,rotation:[0,0,0,1]}));assert.equal(probe.held,false);meat.food.T.fill(68);
+ assert.equal(k.probeReading(probe).temperature,68);k.placeFood(meat,'gas');assert.equal(k.attachedProbe(meat),probe);k.step(.05);
+ const copy=Kitchen.restore(k.snapshot()),sample=copy.probeReading(copy.get(probe.id));assert.equal(sample.temperature,k.probeReading(probe).temperature);assert.equal(sample.depth,k.probeReading(probe).depth);assert.equal(sample.food.id,meat.id);
+ k.detach(meat);meat.food.h*=.8;assert.equal(k.probeReading(probe).depth,meat.food.h*.5);k.discard(meat);assert.equal(probe.probeAttachment,undefined);assert.deepEqual(probe.pos,probe.home);assert.ok(Kitchen.restore(k.snapshot()));
+ const S=require('../js/session'),bad=S.decode(copy.snapshot());bad.entities.find(e=>e.id===probe.id).probeAttachment.foodId=99999;assert.throws(()=>Kitchen.restore(S.encode(bad)),/Invalid attached probe/);
+});
 test('a bottom bun can be placed under a resting patty without moving the burger to the hand',()=>{
  const k=new Kitchen(),p=patty(k),position=p.pos.slice(),b=k.slice(k.addIngredient('bunWhole',[.4,.96,-.9]));b[0].held=true;b[0].pos=[8,8,8];
  assert.ok(k.assemble(b[0],p));assert.deepEqual(p.pos,position);assert.equal(b[0].held,false);assert.equal(b[0].stackRoot,p.id);assert.equal(p.food.assembly.length,2);assert.ok(k.assemble(b[1],p));assert.ok(Kitchen.restore(k.snapshot()));

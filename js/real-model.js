@@ -4,6 +4,7 @@
   const P=typeof module==='object'?require('./physics'):root.BurgerPhysics;
   const S=typeof module==='object'?require('./session'):root.GriddleSession;
   const A=typeof module==='object'?require('./assembly'):root.BurgerAssembly;
+  const Cheese=typeof module==='object'?require('./cheese'):root.BurgerCheese;
   const fixtures={sink:{from:[2.6,2.7],to:[2.6,3.57],yaw:0},fridge:{from:[-3.3,1.7],to:[-3.3,3.52],yaw:0},oven:{from:[-2.6,-1.3],to:[-3.48,-1.3],yaw:-Math.PI/2},rack:{from:[-2.45,3.15],to:[-2.45,3.65],yaw:0}};
   function fixturePoint(name,point){const f=fixtures[name],c=Math.cos(f.yaw),s=Math.sin(f.yaw);return [f.to[0]+point[0]*c+point[2]*s,point[1],f.to[1]-point[0]*s+point[2]*c];}
   const stationDefs=[['gas',-1.5,.95,'castiron'],['electric',0,.95,'carbonsteel'],['induction',1.5,.95,'stainless'],['charcoal',3.45,-1.5,'castiron'],['oven',...fixtures.oven.to,'castiron']];
@@ -100,12 +101,12 @@
       p.whc0=.98-.05*p.work+.08*mixed+.02*surface;p.saltStructure=.3*mixed;
     }
     exposedPatty(e){const stack=e?.food?.assembly;if(e?.kind!=='patty')return null;if(!stack?.length)return e;const top=stack.at(-1);return top.patty?(top.meat?this.entities.find(q=>q.food===top.meat):e):null;}
-    cheeseTarget(e){const target=this.exposedPatty(e),p=target?.food;return p&&['pan','rest'].includes(p.where)&&p.cheeses.length+p.cheeseUnder.length<4?target:null;}
+    cheeseTarget(e){const target=this.exposedPatty(e),p=target?.food;return p&&['pan','rest'].includes(p.where)&&this.cheeseCount(e)<4&&!this.attachedProbe(e)?target:null;}
     addCheese(held,patty){
       const target=this.cheeseTarget(patty);if(held.kind!=='cheese'||held.discarded||!target)return false;const p=target.food;
       if(p.where==='pan'){if(!P.addCheese(this.owner(target),p))return false;}
       else p.cheeses.push({T:6,melt:0,mass:.02,rot:p.cheeses.length*.42,overhang:0,contact:0,skirt:null});
-      const ch=p.cheeses.at(-1);ch.mass=(held.massG||20)/1000;ch.T=held.coldState?.T??6;held.discarded=true;return true;
+      const ch=p.cheeses.at(-1);if(held.sliceState)Object.assign(ch,held.sliceState);else{ch.mass=(held.massG||20)/1000;ch.T=held.coldState?.T??6;}held.discarded=true;return true;
     }
     probe(e,radius,depth){
       const p=e?.food;if(!p)return null;
@@ -114,19 +115,13 @@
       const at=(z,r)=>p.T[Math.min(p.Nz-1,z)*p.Nr+Math.min(p.Nr-1,r)];
       return P.lerp(P.lerp(at(k0,j0),at(k0,j0+1),j-j0),P.lerp(at(k0+1,j0),at(k0+1,j0+1),j-j0),k-k0);
     }
-    topPart(base){
-      if(base?.stackRoot)base=this.get(base.stackRoot);const stack=base?.food?.assembly;if(!stack?.length)return null;
-      const layer=stack.at(-1),part=layer.patty?(layer.meat?this.entities.find(e=>e.food===layer.meat):base):layer.item?this.entities.find(e=>e.food===layer.item):this.entities.find(e=>e.stackRoot===base.id&&e.layer===stack.length-1);
-      return part;
+    attachedProbe(e){if(!e)return null;const ids=[e.id,...this.entities.filter(q=>q.stackRoot===e.id).map(q=>q.id)];return this.entities.find(q=>!q.discarded&&q.probeAttachment&&ids.includes(q.probeAttachment.foodId));}
+    lidProblem(id){return this.entities.some(q=>q.probeAttachment&&this.get(q.probeAttachment.foodId)?.station===id)?'Remove the probe before covering the food.':null;}
+    parkProbe(tool,food,attachment){
+      if(tool?.kind!=='probe'||food?.kind!=='patty'||this.attachedProbe(food)||![attachment.x,attachment.z,attachment.depth,...(attachment.rotation||[])].every(Number.isFinite)||attachment.rotation?.length!==4||Math.hypot(attachment.x,attachment.z)>.98||attachment.depth<=0||attachment.depth>=1)return false;
+      tool.probeAttachment={...attachment,foodId:food.id};tool.held=false;return true;
     }
-    peel(base){
-      if(base?.stackRoot)base=this.get(base.stackRoot);const stack=base?.food?.assembly;if(!stack?.length||base.held||base.station)return null;
-      const layer=stack.at(-1),part=this.topPart(base);
-      if(!part)return null;
-      if(part===base){const plate=this.get(base.trayCarrier),bottom=this.entities.find(e=>e.stackRoot===base.id&&e.kind==='bun'&&e.food.half==='bottom');if(plate)this.detach(base);A.unpack(base.food);for(const e of this.entities.filter(e=>e.stackRoot===base.id)){e.stackRoot=null;e.layer=null;e.pos[1]=base.pos[1];}base.food.manualAssembly=false;if(plate&&bottom)this.putOnTray(bottom,plate);}
-      else {A.pop(base.food);part.stackRoot=null;part.layer=null;if(layer.cold)part.coldState=layer;}
-      return part;
-    }
+    probeReading(tool){const a=tool?.probeAttachment,food=this.get(a?.foodId);return food?{food,temperature:this.probe(food,Math.hypot(a.x,a.z)*food.food.D/2,a.depth*food.food.h),depth:a.depth*food.food.h}:null;}
     taste(e){
       const p=e?.food;if(e?.kind!=='patty'||!p)return null;
       const report=P.evaluate(this.owner(e),P.donenessOf(p.peakCenter).id,p),meats=[p,...(p.assembly||[]).filter(l=>l.meat).map(l=>l.meat)];
@@ -169,7 +164,7 @@
       this.makeFood(e,'egg');return this.placeFood(e,stationId,point);
     }
     foodPlacement(e,stationId,point){
-      if(e.stackRoot||e.food?.assembly?.length)return {error:'Keep assembled burgers on the pass.'};
+      if(e.stackRoot||this.layers(e).length)return {error:'Keep assembled burgers on the pass.'};
       const st=this.station(stationId);if(!st||(!st.panId&&!['charcoal','oven'].includes(st.id)))return {error:'Put a pan on this hob first.'};
       if(st.state.lid)return {error:'Lift the lid first.'};
       if(st.id==='oven'&&(!this.doors.oven||e.kind!=='patty'))return {error:'Open the oven; its rack takes patties.'};
@@ -197,7 +192,8 @@
     discard(e){
       const root=e.stackRoot?this.get(e.stackRoot):e;
       const all=this.entities.filter(q=>q===root||q.stackRoot===root.id);
-      if(root.food?.assembly)A.unpack(root.food);
+      for(const tool of this.entities)if(tool.probeAttachment&&all.some(q=>q.id===tool.probeAttachment.foodId)){delete tool.probeAttachment;tool.pos=tool.home.slice();}
+      if(root.food?.assembly)A.unpack(root.food);if(root.prep){delete root.prep;delete root.food.prepAssembly;}
       for(const q of all){this.detach(q);q.discarded=true;this.loose.patties=this.loose.patties.filter(p=>p!==q.food);this.loose.items=this.loose.items.filter(p=>p!==q.food);}
     }
     liftPan(e){
@@ -214,7 +210,7 @@
       if(e.parked){st.state.lid=e.parked.lid;st.state.patties=e.parked.patties;st.state.items=e.parked.items;for(const n of e.food){const q=this.get(n);if(q){q.station=id;q.panCarrier=null;}}if(e.lidId){const lid=this.get(e.lidId);lid.station=id;lid.panCarrier=null;}e.parked=null;}return null;
     }
     trayPlacement(e,tray){
-      if(!['tray','plate'].includes(tray.kind)||!e.food||e.kind==='pan'||e.stackRoot||tray.station||(e.food.assembly?.length&&tray.kind!=='plate'))return null;
+      if(!['tray','plate'].includes(tray.kind)||!e.food||e.kind==='pan'||e.stackRoot||tray.station||(this.layers(e).length&&tray.kind!=='plate'))return null;
       if((tray.cargo||[]).length>=(tray.kind==='plate'?1:4))return null;
       const radius=(e.food.Dcov||e.food.D)/2,positions=tray.kind==='plate'?[{x:0,y:0}]:[{x:-.06,y:-.075},{x:.06,y:-.075},{x:-.06,y:.075},{x:.06,y:.075},{x:0,y:0}];
       const pos=positions.find(p=>Math.abs(p.x)+radius<=(tray.kind==='plate'?.11:.125)&&Math.abs(p.y)+radius<=(tray.kind==='plate'?.11:.16)&&(tray.cargo||[]).every((id,i)=>{const q=this.get(id),at=q.carrierPos||positions[i];return Math.hypot(at.x-p.x,at.y-p.y)>=radius+(q.food.Dcov||q.food.D)/2+.004;}));
@@ -238,43 +234,6 @@
       const problem=this.ovenTrayProblem(tray);if(problem)return problem;
       const cargo=(tray.cargo||[]).slice();for(const id of cargo){const e=this.get(id);this.placeFood(e,'oven');e.trayCarrier=tray.id;}tray.cargo=cargo;tray.station='oven';tray.held=false;tray.pos=fixturePoint('oven',[0,.54,-.02]);return null;
     }
-    assemblyProblem(held,target){
-      const base=target?.stackRoot?this.get(target.stackRoot):target;
-      if(!base||!held||held===base||held.discarded||base.discarded||held.stackRoot)return 'Choose another ingredient.';
-      if(base.station||base.panCarrier||held.station||held.panCarrier)return 'Take the food off the heat before building.';
-      if(base.food&&A.closed(base.food))return 'Put this down, then lift the top bun with E.';
-      const starting=held.kind==='patty'&&base.kind==='bun'&&base.food.half==='bottom'&&!base.stackRoot&&!held.food.assembly?.length||held.kind==='bun'&&held.food.half==='bottom'&&base.kind==='patty'&&!base.food.assembly?.length;
-      if(starting){const plate=this.get(base.trayCarrier);return plate&&(plate.kind!=='plate'||(held.kind==='patty'?held:base).food.D>.22)?'That burger will not fit on this plate.':null;}
-      if(!base.food?.assembly?.length)return 'Start with a patty and a bottom bun, then add toppings.';
-      const stack=base.food.assembly,cold={tomatoSlice:'tomato',pickleSlice:'pickles',lettuce:'lettuce',ketchup:'ketchup',mayo:'mayo',mustard:'mustard'}[held.kind];
-      if(cold)return stack.filter(l=>l.cold===cold).length>=(A.cold[cold].sauce?1:4)?'There is enough '+held.label+' on this burger.':null;
-      if(held.kind==='patty')return held.food.assembly?.length||stack.filter(l=>l.patty).length>=2?'Two patties is plenty.':null;
-      if(held.kind==='bun')return held.food.half!=='top'?'The bottom bun is already in place.':!stack.some(l=>l.item?.half==='bottom'&&l.item.pair===held.food.pair)?'Use the top from the same bun pair.':null;
-      if(held.food&&held.kind!=='pan')return null;
-      return 'Prepare that ingredient first.';
-    }
-    assemble(held,target){
-      const base=target.stackRoot?this.get(target.stackRoot):target;
-      if(this.assemblyProblem(held,target))return false;
-      if(held.kind==='bun'&&held.food.half==='bottom'&&base.kind==='patty'&&!base.food.assembly?.length){
-        const plate=this.get(base.trayCarrier),pos=base.pos.slice();if(!this.assemble(base,held))return false;base.pos=pos;if(plate)this.putOnTray(base,plate);held.held=false;return true;
-      }
-      if(held.kind==='patty'&&target.kind==='bun'&&target.food.half==='bottom'&&!target.stackRoot){
-        if(held.food.assembly?.length||target.station||target.panCarrier)return false;
-        const plate=this.get(target.trayCarrier);if(plate&&(plate.kind!=='plate'||held.food.D>.22))return false;
-        if(!A.add(this.loose,held.food,target.id))return false;A.add(this.loose,held.food,'patty');this.detach(held);this.detach(target);target.stackRoot=held.id;held.pos=target.pos.slice();held.held=false;if(plate)this.putOnTray(held,plate);return true;
-      }
-      if(base.kind!=='patty'||!base.food.assembly?.length||held===base||A.closed(base.food))return false;
-      const cold={tomatoSlice:'tomato',pickleSlice:'pickles',lettuce:'lettuce',ketchup:'ketchup',mayo:'mayo',mustard:'mustard'}[held.kind];
-      const key=cold||(held.kind==='patty'?'patty:'+held.id:held.id);
-      if(!A.add(this.loose,base.food,key))return false;
-      if(held.food)this.detach(held);
-      if(cold&&held.coldState)Object.assign(base.food.assembly.at(-1),held.coldState);
-      else if(cold&&held.massG)base.food.assembly.at(-1).mass=held.massG/1000;
-      if(cold&&held.sliceMm)base.food.assembly.at(-1).height=held.sliceMm/1000;
-      if(cold&&A.cold[cold].sauce){const sauce=this.entity(cold,cold,base.pos);sauce.stackRoot=base.id;sauce.layer=base.food.assembly.length-1;}
-      else{held.stackRoot=base.id;held.layer=base.food.assembly.length-1;held.held=false;}return true;
-    }
     step(dt){
       this.time+=dt;
       for(const st of this.stations){P.roomAir(st.state).windowOpen=this.doors.window;P.step(st.state,dt);}
@@ -284,6 +243,7 @@
       for(const e of this.entities)if(e.kind==='pan'&&e.parked)P.step(e.parked,dt);
       for(const e of this.entities)if(e.kind==='tray')e.trayT=(e.trayT||21)+((e.station==='oven'?this.station('oven').state.oven.T:21)-(e.trayT||21))*(-Math.expm1(-dt/45));
       for(const e of this.entities)if(e.coldState&&!e.stackRoot){e.coldState.T+=(21-e.coldState.T)*(-Math.expm1(-dt/120));e.coldState.age=(e.coldState.age||0)+dt;}
+      for(const e of this.entities)if(e.sliceState&&!e.stackRoot&&!e.discarded){const node=Cheese.surface(e.sliceState);node.add((this.loose.env.Tamb-node.T)*node.C*(-Math.expm1(-dt/120)));}
       // Keep endless practice bounded in history, while retaining every live ingredient.
       for(const s of [...this.stations.map(s=>s.state),this.loose,...this.entities.filter(e=>e.parked).map(e=>e.parked)]){if(s.events.length>80)s.events.splice(0,s.events.length-80);if(s.trace.length>180)s.trace.splice(0,s.trace.length-180);}
     }
@@ -306,17 +266,22 @@
         if(e.panCarrier!=null){const pan=byId.get(e.panCarrier);if(pan?.kind!=='pan'||!pan.parked||e.station||(e.kind!=='lid'&&!pan.food.includes(e.id)))throw Error('Invalid carried pan');}
         if(e.trayCarrier!=null){const tray=byId.get(e.trayCarrier);if(!['tray','plate'].includes(tray?.kind)||!tray.cargo?.includes(e.id))throw Error('Invalid tray reference');}
         if(e.cargo&&(!['tray','plate'].includes(e.kind)||!Array.isArray(e.cargo)||e.cargo.length>(e.kind==='plate'?1:4)||new Set(e.cargo).size!==e.cargo.length||e.cargo.some(id=>{const q=byId.get(id);return q?.trayCarrier!==e.id||!q.food||q.kind==='pan'||q===e;})))throw Error('Invalid tray contents');
-        if(e.stackRoot!=null){const base=byId.get(e.stackRoot);if(base?.kind!=='patty'||base===e||!base.food.assembly?.some((l,i)=>l.item===e.food||l.meat===e.food||l.cold&&i===e.layer))throw Error('Invalid burger layer');}
+        if(e.stackRoot!=null){const base=byId.get(e.stackRoot),stack=base?.prep||base?.food?.assembly;if(!['patty','bun'].includes(base?.kind)||base===e||!stack?.some((l,i)=>l.item===e.food||l.meat===e.food||(l.cold||l.cheese)&&i===e.layer))throw Error('Invalid burger layer');}
+        if(e.sliceState&&(!['mass','T','melt'].every(key=>Number.isFinite(e.sliceState[key]))||e.sliceState.mass<=0||e.sliceState.melt<0||e.sliceState.melt>1))throw Error('Invalid cheese slice');
+        if(e.probeAttachment){const a=e.probeAttachment;if(e.kind!=='probe'||e.held||byId.get(a.foodId)?.kind!=='patty'||![a.x,a.z,a.depth,...(a.rotation||[])].every(Number.isFinite)||a.rotation?.length!==4||Math.hypot(a.x,a.z)>.98||a.depth<=0||a.depth>=1||Math.abs(Math.hypot(...a.rotation)-1)>.001)throw Error('Invalid attached probe');}
         if(e.food&&e.kind!=='pan'){
           const owners=states.filter(s=>(e.kind==='patty'?s.patties:s.items).includes(e.food));
           const owner=e.panCarrier?byId.get(e.panCarrier).parked:e.station?d.stations.find(s=>s.id===e.station).state:d.loose;
           if(owners.length!==1||owners[0]!==owner)throw Error('Invalid food ownership');
-          if(e.kind==='patty'&&e.food.assembly?.length){
-            if(e.station||e.panCarrier||e.stackRoot||e.food.assembly.length>40)throw Error('Invalid burger');
-            for(const [i,l] of e.food.assembly.entries()){
-              if(!l||[!!l.patty,!!l.item,!!l.cold].filter(Boolean).length!==1)throw Error('Invalid burger layer');
-              if(l.meat||l.item){const q=foodEntities.find(q=>q.food===(l.meat||l.item));if(!q||q.stackRoot!==e.id)throw Error('Invalid assembled reference');}
-              if(l.cold&&(!A.cold[l.cold]||!d.entities.some(q=>q.stackRoot===e.id&&q.layer===i)))throw Error('Invalid topping reference');
+          const stack=e.prep||e.food.assembly;
+          if(stack?.length){
+            if(e.station||e.panCarrier||e.stackRoot||!Array.isArray(stack)||stack.length>40)throw Error('Invalid burger');
+            if(e.prep&&(e.kind!=='bun'||e.food.half!=='bottom'||e.food.prepAssembly!==e.prep||stack[0].item!==e.food||stack.some(l=>l.patty)))throw Error('Invalid dressed bun');
+            if(!e.prep&&(e.kind!=='patty'||stack.filter(l=>l.patty&&!l.meat).length!==1))throw Error('Invalid burger base');
+            for(const [i,l] of stack.entries()){
+              if(!l||[!!l.patty,!!l.item,!!l.cold,!!l.cheese].filter(Boolean).length!==1)throw Error('Invalid burger layer');
+              if(l.meat||l.item){const q=foodEntities.find(q=>q.food===(l.meat||l.item));if(!q||!(e.prep&&i===0&&q===e)&&q.stackRoot!==e.id)throw Error('Invalid assembled reference');}
+              if(l.cold||l.cheese){const q=d.entities.find(q=>q.stackRoot===e.id&&q.layer===i);if(!q||(l.cold&&!A.cold[l.cold])||(l.cheese&&(q.kind!=='cheese'||q.sliceState!==l.cheese)))throw Error('Invalid topping reference');l.entityId=q.id;}
             }
           }
           if(e.kind!=='patty')for(const item of [e.food,...(e.food.regions||[])])for(const key of ['face','up','body','wBot','wTop','yolk','lace','bot','top']){const n=item[key];if(n&&(!Number.isFinite(n.T)||!['m','w'].every(k=>Number.isFinite(n[k])&&n[k]>=0)))throw Error('Invalid ingredient');}
@@ -339,5 +304,6 @@
       if(!k.entities.some(e=>e.kind==='plate')){const plate=k.entity('plate','tasting plate',[.50,.936,-.85]);plate.home=plate.pos.slice();}return k;
     }
   }
+  Object.assign(Kitchen.prototype,typeof module==='object'?require('./real-build'):root.RealBuildMethods);
   const api={Kitchen,stationDefs,clearPlacement,fixtures,fixturePoint,toolHomes};if(typeof module==='object')module.exports=api;else root.RealKitchen=api;
 })(typeof window!=='undefined'?window:globalThis);

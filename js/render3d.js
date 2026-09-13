@@ -936,6 +936,7 @@
       this.baconGeo.attributes.position.needsUpdate = true;
       this.baconGeo.attributes.color.needsUpdate = true;
       this.baconGeo.computeVertexNormals();
+      this.baconGeo.computeBoundingBox();this.baconGeo.computeBoundingSphere();
       this.baconMesh.material.roughness = clamp(0.25 + 0.5 * it.crisp - 0.2 * fatLeft, 0.15, 0.9);
       this.baconMesh.material.clearcoat = clamp(0.8 * fatLeft + 0.3 * (1 - it.crisp), 0, 1); // wet with its own fat until it is crisp
       this.group.rotation.y = 0.5 + 0.2 * it.id;
@@ -956,6 +957,7 @@
       pos[0] = 0; pos[1] = 0.0032 * (1 - 0.3 * set); pos[2] = 0;
       this.whiteGeo.attributes.position.needsUpdate = true;
       this.whiteGeo.computeVertexNormals();
+      this.whiteGeo.computeBoundingBox();this.whiteGeo.computeBoundingSphere();
       const wc = mix3(ICOL.whiteRaw, ICOL.whiteSet, set);
       const under = itemFaceColour(it.faceDown, wc, 0.5);
       setLin(this.whiteMat, mix3(wc, under, 0.35)); // some of the browned underside shows through at the edges
@@ -1111,6 +1113,7 @@
       target.dispose(); pmrem.dispose();
     }
     _buildOil() {
+      this.waterView=new root.PanWaterView(this.panGroup);
       const n=33;
       this.oilPixels=new Uint8Array(n*n*4);
       this.oilTexture=new T.DataTexture(this.oilPixels,n,n,T.RGBAFormat);
@@ -1135,6 +1138,7 @@
     }
     _updateOil(state) {
       const pan=state.pan,f=root.BurgerOilFilm.ensure(pan),n=f.n;
+      this.waterView.update(pan,state.t,this.panFloorY,this.stoveType!=='charcoal');
       this.oil.visible=pan.oil>1e-6 && this.stoveType!=='charcoal';
       if(!this.oil.visible)return;
       this.oil.position.y=this.panFloorY+.00018;
@@ -1143,7 +1147,8 @@
       for(let k=0;k<f.mass.length;k++) max=Math.max(max,f.mass[k]/scale);
       for(let j=0;j<n;j++)for(let i=0;i<n;i++) {
         const k=j*n+i,depth=f.mass[k]/scale;
-        a.setXYZ(k,i*f.cell-f.r,f.r-j*f.cell,depth);
+        const x=i*f.cell-f.r,z=j*f.cell-f.r;
+        a.setXYZ(k,x,-z,depth+this.waterView.heightAt(x,z));
         this.oilPixels[k*4]=Math.round(255*depth/max);this.oilPixels[k*4+3]=255;
       }
       a.needsUpdate=true;this.oil.geometry.computeVertexNormals();this.oilTexture.needsUpdate=true;

@@ -35,6 +35,7 @@
       case 'cheeseBlock': Object.assign(p,{grip:[.04,0,0],support:[-.045,0,0]});break;
       case 'bunWhole': Object.assign(p,{grip:[.018,0,0]});break;
       case 'patty': if(e.food?.assembly?.length)Object.assign(p,{grip:[.032,0,0],support:[-.04,0,0]});break;
+      case 'bun': if(e.prep?.length)Object.assign(p,{grip:[.032,0,0],support:[-.04,0,0]});break;
       case 'egg': if(!e.food)Object.assign(p,{pose:'bottle',grip:[0,height*.45,0]});break;
       case 'pickles': Object.assign(p,{pose:'bottle',grip:[0,height*.5,0],rotation:[pi/2,0,0]});break;
       case 'bacon': Object.assign(p,{pose:'pinch',grip:[0,height*.5,.035]});break;

@@ -3285,11 +3285,12 @@
         bc.bottom.h=15; bc.top.h=C.hAirTop; bc.top.insulated=false;
         bc.bottom.T = Tamb + 8; bc.top.T = Tamb; bc.top.RH = s.env.RH;
         bc.bottom.internalCap=it.assembledTo!=null?Math.max(...['face','up','body','bot','top','wBot','wTop','yolk'].map(k=>it[k]?.T||0)):0;
-        if(it.assembledTo!=null) {const owner=s.patties.find(p=>p.id===it.assembledTo); if(owner) Assembly.cover(owner,bc,it);}
+        if(it.assembledTo!=null) {const owner=s.patties.find(p=>p.id===it.assembledTo)||s.items.find(p=>p.id===it.assembledTo&&p.prepAssembly); if(owner) Assembly.cover(owner.prepAssembly?{assembly:owner.prepAssembly}:owner,bc,it);}
         stepItem(s, it, dt, bc);
       }
     }
     for(const p of s.patties) steamAll+=Assembly.stepHeat(s,p,dt)||0;
+    for(const it of s.items)if(it.prepAssembly)steamAll+=Assembly.stepHeat(s,{...it,assembly:it.prepAssembly},dt)||0;
     if(s.oven) { const o=s.oven; o.loadW=ovenLoad; o.T+=(o.heaterW-6*(o.T-Tamb)-ovenLoad)*dt/1800; }
     if(!grill) Oil.sync(pan);
     pan.smokeItems = clamp(itemSmoke, 0, 2);
