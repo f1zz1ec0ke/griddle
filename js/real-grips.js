@@ -13,7 +13,7 @@
     const p={pose:'cup',grip:[0,0,0],rotation:[0,0,0],level:true,support:null,tip:null};
     switch(e.kind){
       case 'spatula': Object.assign(p,{pose:'handle',grip:[0,.022,.115],tip:[0,.003,-.02]});break;
-      case 'knife': case 'tongs': case 'spoon': Object.assign(p,{pose:'handle',grip:[0,.013,.085],tip:[0,.019,e.kind==='spoon'?-.09:-.065]});break;
+      case 'knife': case 'tongs': case 'spoon': case 'brush': case 'rake': Object.assign(p,{pose:'handle',grip:[0,.013,.085],tip:[0,.004,['brush','rake'].includes(e.kind)?-.13:e.kind==='spoon'?-.09:-.10]});break;
       case 'probe': Object.assign(p,{pose:'handle',grip:[0,height/2,-.117],rotation:[0,pi,0],tip:[0,height/2,0]});break;
       case 'pan': {
         const radius=(e.pan?.diam||.30)/2,wall=e.panType==='castiron'?.041:e.panType==='carbonsteel'?.037:.043;
@@ -24,6 +24,9 @@
       case 'lid': Object.assign(p,{pose:'pinch',grip:[0,height-.009,0]});break;
       case 'tray': Object.assign(p,{pose:'pinch',grip:[.133,.0075,.08],support:(e.trayT||21)<=55?[-.15,0,.08]:null});break;
       case 'plate': Object.assign(p,{pose:'pinch',grip:[.10,.006,.02],support:[-.12,0,.02]});break;
+      case 'butter': Object.assign(p,{pose:'pinch',grip:[.055,.006,0],spout:[0,.015,-.04],pour:true});break;
+      case 'timer': Object.assign(p,{pose:'cup',grip:[.025,0,0]});break;
+      case 'ashpan': Object.assign(p,{pose:'handle',grip:[0,.027,-.13],rotation:[0,pi,0],spout:[0,.049,.075],pour:true});break;
       case 'salt': case 'oil': case 'water': case 'ketchup': case 'mayo': case 'mustard': case 'lighter':
         Object.assign(p,{pose:'bottle',grip:[0,Math.min(height*.46,.055),0],spout:[0,height,0],pour:e.kind!=='lighter'});break;
       case 'cloth': Object.assign(p,{pose:'flat',grip:[0,height,0]});break;

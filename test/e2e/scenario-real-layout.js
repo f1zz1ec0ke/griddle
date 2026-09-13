@@ -22,5 +22,5 @@ module.exports={name:'real-layout',experience:'real',description:'wall fixtures,
   cycle();cycle();const before={...r.renderer.info.memory};for(let i=0;i<12;i++)cycle();const after=r.renderer.info.memory;
   check('repeated patty creation and disposal keeps GPU geometry and texture counts stable',before.geometries===after.geometries&&before.textures===after.textures);
   document.getElementById('real-pause').hidden=true;r.hover=null;r.hint();return out;
- });for(const c of checks)k.ok(c.ok,c.name);await k.shot('kitchen');
+ });for(const c of checks)k.ok(c.ok,c.name);await k.frames(2);await k.shot('kitchen');
 }};

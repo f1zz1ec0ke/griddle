@@ -11,7 +11,7 @@
     const tex=new T.CanvasTexture(c);tex.encoding=T.sRGBEncoding;A.shared.add(tex);labels.set(key,tex);return tex;
   }
   function build(r,kind){
-    const supported=['tongs','spoon','knife','press','cloth','glove','tray','oil','water','ketchup','mayo','mustard','lighter','meat','meatLean','meatRich','egg','tomato','pickles','onion','coal','wood'];
+    const supported=['tongs','spoon','knife','press','cloth','glove','tray','oil','water','ketchup','mayo','mustard','lighter','meat','meatLean','meatRich','egg','tomato','pickles','onion','coal','wood','butter','brush','rake','timer','ashpan'];
     if(!supported.includes(kind))return null;
     const g=new T.Group();g.name='Real '+kind;
     const mat=(type,color)=>A.material(type,color),steel=mat('steel',0xc1cac5),wood=mat('wood',0x785139);
@@ -21,7 +21,26 @@
     const tube=(points,radius,m)=>mesh(new T.TubeGeometry(new T.CatmullRomCurve3(points.map(p=>new T.Vector3(...p))),24,radius,8,false),m);
     const badge=(text,w,h,x,y,z)=>{const o=mesh(new T.PlaneGeometry(w,h),new T.MeshStandardMaterial({map:decal(text),roughness:.82,side:T.DoubleSide}),x,y,z);o.rotation.y=Math.PI;return o;};
     const rivet=(x,y,z)=>{const o=mesh(new T.CylinderGeometry(.0022,.0022,.001,12),steel,x,y,z);return o;};
-    if(['knife','spoon','tongs'].includes(kind)){
+    if(kind==='timer'){
+      lathe([[0,0],[.042,0],[.048,.007],[.048,.025],[.042,.036],[0,.036]],mat('enamel',0x91b5a5));
+      const face=mesh(new T.CircleGeometry(.039,48),mat('paint',0xf0e4c9),0,.037,0);face.rotation.x=-Math.PI/2;
+      for(let i=0;i<12;i++){const a=i*Math.PI/6,tick=box(.0012,.0007,i%3? .004:.007,Math.sin(a)*.033,.038,Math.cos(a)*.033,steel);tick.rotation.y=a;}
+      const dial=lathe([[0,0],[.018,0],[.019,.012],[.015,.023],[0,.025]],mat('steel',0xc0c8c0),0,.038,0);dial.userData.timerDial=true;
+      const mark=box(.002,.001,.010,0,.063,-.007,mat('paint',0x40564a));mark.userData.timerNeedle=true;
+      const button=box(.021,.012,.016,0,.010,-.052,mat('enamel',0xe1b05e));button.userData.timerButton=true;
+    }else if(kind==='butter'){
+      lathe([[0,0],[.054,0],[.060,.004],[.060,.009],[.052,.013],[0,.007]],mat('ceramic',0xe9ddbe)).scale.z=.7;
+      box(.067,.023,.034,0,.019,0,mat('paint',0xe9ca75)).userData.butterBlock=true;for(let i=0;i<3;i++)box(.0006,.023,.035,-.015+i*.015,.019,0,mat('paint',0xc8a957));
+    }else if(kind==='ashpan'){
+      lathe([[0,0],[.083,0],[.087,.010],[.095,.046],[.090,.049],[.082,.012],[0,.008]],steel);
+      tube([[-.026,.027,-.091],[-.026,.027,-.13],[.026,.027,-.13],[.026,.027,-.091]],.005,wood);
+    }else if(kind==='brush'||kind==='rake'){
+      box(.027,.022,.17,0,.023,.068,wood);for(const z of [.018,.12])rivet(0,.034,z);
+      tube([[0,.023,-.017],[0,.03,-.10]],.004,steel);
+      box(kind==='rake'?.075:.065,.012,.035,0,.020,-.11,kind==='rake'?steel:wood);
+      if(kind==='rake')for(let i=0;i<5;i++)tube([[-.033+i*.0165,.02,-.115],[-.033+i*.0165,.004,-.145]],.0025,steel);
+      else for(let i=0;i<9;i++)for(let j=0;j<4;j++)tube([[-.026+i*.0065,.015,-.097-j*.008],[-.026+i*.0065,.003,-.103-j*.008]],.0007,steel);
+    }else if(['knife','spoon','tongs'].includes(kind)){
       box(.024,.016,.135,0,.014,.071,wood);for(const z of [.035,.103])rivet(0,.0225,z);
       if(kind==='knife'){
         const shape=new T.Shape();shape.moveTo(-.004,.012);shape.lineTo(-.022,-.10);shape.quadraticCurveTo(-.018,-.134,.004,-.145);shape.lineTo(.022,.012);shape.closePath();

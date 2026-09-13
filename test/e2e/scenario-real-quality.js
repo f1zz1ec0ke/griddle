@@ -12,7 +12,11 @@ module.exports={name:'real-quality',experience:'real',description:'contextual HU
   const knobs=r.ovenKnobs,heat=w.station('oven').state.oven;r.ovenDrag=null;r.turn({type:'ovenKnob',control:'temperature'},20);check('oven temperature can be set while power is off',heat.target===0&&w.settings.ovenSetpoint===210);r.turn({type:'ovenKnob',control:'power'},30);r.renderEntities(0);check('both oven dials have moving pointers and distinct functions',heat.target===210&&knobs.length===2&&knobs.every(q=>q.mesh.children.length===2&&Math.abs(q.mesh.rotation.z)>0));w.setOvenPower(false);
   function hold(e){r.action=null;r.left=false;r.activity=null;for(const q of w.entities){q.held=false;q.payload=null;}r.held=e?.id||null;if(e)e.held=true;r.renderEntities(0);}
   function settle(){for(let i=0;i<25;i++)r.animateHands(.05);r.renderEntities(0);}
-  function target(e){r.hover={data:{type:'entity',entity:e.id,name:e.label},point:new T.Vector3(...e.pos)};}
+  function target(e){
+   const point=new T.Vector3(...e.pos);r.contact.reset();Object.assign(w.player,{x:point.x,z:point.z-.85,y:0});
+   for(let i=0;i<6;i++){r.move(0);const d=point.clone().sub(r.camera.position);w.player.yaw=Math.atan2(-d.x,-d.z);w.player.pitch=Math.atan2(d.y,Math.hypot(d.x,d.z));}r.move(0);
+   r.hover={data:{type:'entity',entity:e.id,name:e.label},point};
+  }
   w.addMince(w.addIngredient('meat',[0,.96,-.88]));w.bowl.salt=4;w.scoop(150/90);const p=w.form([0,.962,-.88]);
   const tomato=w.addIngredient('tomato',[.16,.962,-.88]),slice=w.cut(tomato,6,r.interaction.supportAt(tomato.pos))[0];check('a prepared slice has a real support',slice&&slice.pos[1]===tomato.pos[1]);
   const buns=w.slice(w.addIngredient('bunWhole',[-.05,.962,-.59])),plate=w.entities.find(e=>e.kind==='plate'),spatula=w.entities.find(e=>e.kind==='spatula');
@@ -24,13 +28,13 @@ module.exports={name:'real-quality',experience:'real',description:'contextual HU
   const cheese=w.entity('cheese','cheese',[0,.96,0]);hold(cheese);target(buns[0]);r.placeHeld(r.hover);check('aiming at a burger layer still puts cheese on exposed meat',p.food.cheeses.length===1&&!r.held);
   hold(null);target(p);r.interaction.use();settle();r.hint();check('tasting produces a compact result',!document.getElementById('real-tasting').hidden&&document.querySelectorAll('#real-tasting p').length>=5);
   const marker=document.getElementById('real-hint').getBoundingClientRect();check('action hints leave the centre of the view clear',marker.top>innerHeight*.60);
-  w.detach(p);w.peel(p);w.placeFood(p,'gas');hold(spatula);target(p);r.hint();check('food selection retains pan temperature feedback',!document.getElementById('real-heat').hidden&&document.getElementById('real-heat-name').textContent==='Gas');
+  w.detach(p);while(w.layers(p).length||w.topPart(p)?.cheeseCarrier)w.peel(p);w.placeFood(p,'gas');hold(spatula);target(p);r.hint();check('food selection retains pan temperature feedback',!document.getElementById('real-heat').hidden&&document.getElementById('real-heat-name').textContent==='Gas');
   p.food.faceDown.brown=1.4;r.presentation.update(r.hover,p,spatula);check('browning is signalled without an event log',document.getElementById('real-cues').textContent.includes('Browning'));
   P.flipPatty(w.station('gas').state,p.food);r.presentation.update(r.hover,p,spatula);check('flipping clears the old underside cue',!document.getElementById('real-cues').textContent.includes('Browning'));
   r.hover={data:{type:'station',id:'gas'},point:new T.Vector3(-1.5,.98,.95)};r.interaction.render();check('a held utensil cannot preview inside a pan',!r.interaction.ghost.visible);
   const oil=w.entities.find(e=>e.kind==='oil');hold(oil);r.hover={data:{type:'station',id:'gas'},point:new T.Vector3(-1.5,.98,.95)};r.left=true;r.continuous(.2);check('pouring drives both oil and feedback',r.activity?.kind==='oil'&&w.station('gas').state.pan.oil>0);
   w.station('gas').state.lid=true;r.continuous(.2);for(let i=0;i<20;i++)r.animateHands(.05);check('blocked pouring has no phantom flow or pour pose',!r.activity&&r.pourBlend<.001);w.station('gas').state.lid=false;
-  r.left=false;hold(spatula);target(p);let fired=false;r.animate('flip',()=>fired=true);const original=r.camera.position.clone();r.camera.position.add(new T.Vector3(0,0,-10));settle();check('walking away cancels an unfinished action',!fired);r.camera.position.copy(original);
+  r.left=false;hold(spatula);target(p);let fired=false;r.animate('flip',()=>fired=true);const original=w.player.z;w.player.z-=3;r.move(0);settle();check('walking away cancels an unfinished action',!fired);w.player.z=original;r.move(0);
   const lid=w.entities.find(e=>e.kind==='lid');hold(lid);target(p);r.interaction.render();check('an uncovered pan accepts a lid preview',r.interaction.ghost.visible);r.placeHeld(r.hover);check('right click covers the pan even when aiming at food',w.station('gas').state.lid&&lid.station==='gas');r.pick(lid);settle();r.placeHeld({data:{type:'rest',entity:lid.id},point:new T.Vector3(...lid.home)});
   const tray=w.entities.find(e=>e.kind==='tray');hold(tray);w.doors.oven=true;r.hover={data:{type:'ovenRack'},point:new T.Vector3(...RealKitchen.fixturePoint('oven',[0,.54,-.02]))};const ovenPlan=r.interaction.placement(r.hover,tray);r.placeHeld(r.hover);check('oven tray preview agrees with its final rack position',ovenPlan&&new T.Vector3(...ovenPlan.pos).distanceTo(new T.Vector3(...tray.pos))<.001);
   const discarded=w.addIngredient('tomato',[0,.94,0]);hold(discarded);r.hover={data:{type:'bin'},point:new T.Vector3(3.65,.6,-3.1)};r.placeHeld(r.hover);settle();check('discarding opens the pedal bin and retires the ingredient',w.doors.bin&&!w.get(discarded.id));

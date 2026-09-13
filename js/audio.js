@@ -144,6 +144,9 @@
     stop(){this.enabled=false;for(const {voice} of this.voices.values())voice.stop();this.ctx?.suspend();}
     effect(kind,point){
       if(!this.enabled||!this.ctx)return;const ctx=this.ctx,t=ctx.currentTime;
+      if(kind==='timer'){
+        for(const [i,f] of [880,1174.66].entries()){const tone=ctx.createOscillator(),gain=ctx.createGain(),pan=ctx.createPanner(),start=t+i*.18;pan.panningModel='equalpower';pan.refDistance=.7;pan.setPosition(point.x,point.y,point.z);tone.frequency.value=f;gain.gain.setValueAtTime(.0001,start);gain.gain.exponentialRampToValueAtTime(.05,start+.012);gain.gain.exponentialRampToValueAtTime(.0001,start+.65);tone.connect(gain);gain.connect(pan);pan.connect(ctx.destination);tone.start(start);tone.stop(start+.7);tone.onended=()=>{tone.disconnect();gain.disconnect();pan.disconnect();};}return;
+      }
       const soft=['grab','food','form','pour','taste'].includes(kind),osc=ctx.createOscillator(),gain=ctx.createGain(),pan=ctx.createPanner();
       pan.panningModel='equalpower';pan.refDistance=.7;pan.rolloffFactor=1;const at=point||{x:0,y:1,z:0};pan.setPosition(at.x,at.y,at.z);
       osc.type='sine';osc.frequency.setValueAtTime(soft?150:kind==='slice'?480:900,t);osc.frequency.exponentialRampToValueAtTime(soft?65:220,t+.075);

@@ -1,5 +1,70 @@
 const test=require('node:test'),assert=require('node:assert/strict'),{Kitchen}=require('../js/real-model'),P=require('../js/physics');
 const A=require('../js/assembly');
+test('a counter pan accepts cooking, liquids and removable cheese without a hob',()=>{
+ const k=new Kitchen(),pan=k.entities.find(e=>e.kind==='pan'&&!e.station),egg=k.addIngredient('egg',[0,.96,0]),p=patty(k);
+ assert.equal(k.crackEgg(egg,pan.id,{x:.055,y:0}),null);assert.equal(egg.panCarrier,pan.id);assert.equal(k.owner(egg),pan.parked);
+ assert.ok(k.pourInto(pan.id,'water',20));assert.ok(k.pourInto(pan.id,'canola',5));assert.equal(pan.pan.water,.020);assert.equal(pan.pan.oil,.005);
+ k.detach(egg);assert.equal(k.placeFood(p,pan.id),null);const cheese=k.addIngredient('cheese',[0,.96,0]);assert.ok(k.addCheese(cheese,p));k.step(.05);
+ assert.equal(k.topPart(p),cheese);assert.equal(k.peel(p),cheese);assert.equal(p.food.cheeses.length,0);assert.ok(cheese.sliceState);assert.ok(Kitchen.restore(k.snapshot()));
+});
+test('mince, whole ingredients and slices retain their temperatures through preparation',()=>{
+ const k=new Kitchen(),pack=k.addIngredient('meat',[0,.96,0]),tomato=k.addIngredient('tomato',[.5,.96,0]);pack.temperature=18;tomato.temperature=17;
+ k.addMince(pack);k.scoop(1);assert.equal(k.portion.T,18);const p=k.form([0,.96,0]);assert.equal(P.centerT(p.food),18);
+ const [slice]=k.cut(tomato);assert.equal(slice.coldState.T,17);for(let i=0;i<1200;i++)k.step(.05);
+ assert.ok(k.bowl.T>18&&k.bowl.T<21);assert.ok(slice.coldState.T>17);const [bun]=k.slice(k.addIngredient('bunWhole',[1,.96,0]));const temp=slice.coldState.T;k.assemble(slice,bun);assert.equal(k.layers(bun)[1].T,temp);assert.ok(Kitchen.restore(k.snapshot()));
+});
+test('a sandwich may close without meat or a matching bun, and tasting identifies its raw egg',()=>{
+ const k=new Kitchen(),[bottom]=k.slice(k.addIngredient('bunWhole',[0,.96,0])),[,top]=k.slice(k.addIngredient('bunWhole',[1,.96,0])),egg=k.addIngredient('egg',[0,.96,0]);k.makeFood(egg,'egg');
+ assert.ok(k.assemble(egg,bottom));assert.ok(k.assemble(top,bottom));assert.equal(k.name(bottom),'sandwich');const report=k.taste(bottom);assert.ok(report.parts.some(p=>p.kind==='egg'&&p.score<0));assert.match(report.notes.join(' '),/raw/);
+ egg.food.faceDown.char=1;assert.match(k.taste(bottom).notes.join(' '),/burnt/);assert.ok(Kitchen.restore(k.snapshot()));
+});
+test('oven trays cook bacon and buns while returning their heat load to the cavity',()=>{
+ const k=new Kitchen(),tray=k.entities.find(e=>e.kind==='tray'),bacon=k.addIngredient('bacon',[0,.96,0]);k.doors.oven=true;assert.ok(k.putOnTray(bacon,tray));assert.equal(k.ovenTray(tray),null);
+ const oven=k.station('oven').state;oven.oven.T=180;P.setOven(oven,180);const start=P.itemT(bacon.food);for(let i=0;i<600;i++)k.step(.05);
+ assert.ok(P.itemT(bacon.food)>start+10);assert.ok(oven.oven.loadW>0);assert.equal(bacon.food.where,'oven');assert.ok(Kitchen.restore(k.snapshot()));k.liftTray(tray);assert.equal(bacon.food.where,'rest');
+ const bun=k.addIngredient('bun',[0,.96,0]);assert.equal(k.placeFood(bun,'oven'),null);k.step(.05);assert.ok(P.itemT(bun.food)>21);
+});
+test('an oven-safe pan carries food into the oven, exchanges heat and leaves with its original state',()=>{
+ const k=new Kitchen(),pan=k.get(k.station('gas').panId),meat=patty(k);k.placeFood(meat,'gas');k.liftPan(pan);k.doors.oven=true;
+ const grid=meat.food.T;assert.equal(k.ovenPan(pan),null);assert.equal(k.owner(meat),pan.parked);const oven=k.station('oven').state.oven;oven.T=180;k.setOvenPower(true);
+ for(let i=0;i<1200;i++)k.step(.05);assert.ok(pan.pan.T>30);assert.ok(oven.loadW>0);assert.equal(meat.food.T,grid);assert.ok(Kitchen.restore(k.snapshot()));
+ k.liftPan(pan);k.liftPan(k.get(k.station('induction').panId));assert.equal(k.dockPan(pan,'induction'),null);assert.equal(k.owner(meat),k.station('induction').state);assert.equal(meat.food.T,grid);
+ const nonstick=k.entities.find(e=>e.panType==='nonstick');assert.match(k.ovenPan(nonstick),/metal/);
+});
+test('draining conserves oil and water between pans and records spills for cleaning',()=>{
+ const k=new Kitchen(),pan=k.entities.find(e=>e.kind==='pan'&&!e.station),dest=k.get(k.station('gas').panId);k.pourInto(pan.id,'water',30);k.pourInto(pan.id,'canola',10);pan.tilt=.8;
+ const got=k.drain(pan,.5,'gas',[0,.93,0]);assert.ok(got.water>0&&got.oil>0);assert.ok(Math.abs(pan.pan.water+dest.pan.water-.03)<1e-12);assert.ok(Math.abs(pan.pan.oil+dest.pan.oil-.01)<1e-12);
+ k.drain(pan,.5,null,[0,.93,0]);assert.equal(k.spills.length,1);assert.ok(Kitchen.restore(k.snapshot()));assert.ok(k.wipeSpill({x:0,y:.93,z:0}));assert.equal(k.spills.length,0);
+ const coals=k.drain(pan,.5,'charcoal',[3.45,.9,-1.5]),grill=k.station('charcoal').state.grill;assert.equal(grill.fatOnCoals,coals.oil);assert.equal(grill.juiceOnCoals,coals.water);assert.equal(k.spills.length,0);
+});
+test('tilting redistributes an oil film without creating or losing oil',()=>{
+ const Oil=require('../js/oil-film'),s=P.createState({});P.addFat(s,'canola',10);s.pan.slopeX=.2;for(let i=0;i<200;i++)Oil.step(s.pan,[],.05);
+ const f=Oil.ensure(s.pan),N=Math.sqrt(f.mass.length);let x=0,total=0;for(let i=0;i<f.mass.length;i++){total+=f.mass[i];x+=f.mass[i]*(i%N*f.cell-f.r);}assert.ok(x/total<-.015);assert.ok(Math.abs(total-.01)<1e-10);
+});
+test('basting uses existing pan fat and a kitchen timer resumes its remaining duration',()=>{
+ const k=new Kitchen(),meat=patty(k);k.placeFood(meat,'gas');assert.match(k.baste('gas'),/butter or oil/);k.pourInto('gas','canola',15);const fat=k.station('gas').state.pan.oil;assert.equal(k.baste('gas'),null);assert.equal(k.station('gas').state.pan.oil,fat);
+ k.setTimer(30);k.toggleTimer();k.step(1);const saved=Kitchen.restore(k.snapshot());assert.equal(saved.timer.remaining,29);saved.stepTimer(29);assert.equal(saved.timer.remaining,0);assert.equal(saved.timer.running,false);assert.equal(saved.timer.rang,true);saved.toggleTimer();assert.equal(saved.timer.remaining,30);
+});
+test('a knob of butter stays solid in a cold pan and consumes heat while melting into fat and water',()=>{
+ const k=new Kitchen(),s=k.station('gas').state,p=s.pan;k.pourInto('gas','butter',15);k.stepButter(s,10);assert.equal(p.butter[0].mass,.015);assert.equal(p.oil,0);
+ const saved=Kitchen.restore(k.snapshot());assert.deepEqual(saved.station('gas').state.pan.butter,p.butter);
+ p.Tr.fill(160);p.T=p.Tcenter=p.Tedge=160;const start=p.Tr.reduce((sum,T,j)=>sum+T*p.ringM[j]*p.cp,0);
+ for(let i=0;i<1200;i++)k.stepButter(s,.05);
+ assert.equal(p.butter.length,0);assert.ok(Math.abs(p.oil-.015*.82)<1e-9);assert.ok(Math.abs(p.water-.015*.16)<1e-9);assert.ok(Math.abs(p.fond-.015*.02)<1e-9);assert.ok(p.T<160);
+ const finish=p.Tr.reduce((sum,T,j)=>sum+T*(p.ringM[j]*p.cp+p.oil*2000*p.ringA[j]/(Math.PI*p.floorR**2)),0);
+ const cost=.015*2100*9+.015*80000;
+ assert.ok(Math.abs((start-finish)-cost+p.oil*2000*30)<1e-6,'pan supplies warming and melting energy; melted oil retains its sensible heat');
+});
+test('a closed oven gates its pan and its original probe must be removed before loading',()=>{
+ const k=new Kitchen(),e=patty(k),pan=k.get(k.station('gas').panId),probe=k.entities.find(e=>e.kind==='probe');k.placeFood(e,'gas');k.doors.oven=true;
+ k.parkProbe(probe,e,{x:0,z:0,depth:.5,rotation:[0,0,0,1]});assert.match(k.ovenPanProblem(pan),/probe/);delete probe.probeAttachment;assert.equal(k.ovenPan(pan),null);
+ k.doors.oven=false;assert.equal(k.pourInto(pan.id,'water',10),false);assert.match(k.foodPlacement(patty(k),pan.id).error,/Open/);k.doors.oven=true;assert.ok(k.pourInto(pan.id,'water',10));
+});
+test('submerged food in an oven pan takes its heat from the oil bath',()=>{
+ const k=new Kitchen(),pan=k.get(k.station('gas').panId);k.settings.thicknessMm=8;const p=patty(k);k.placeFood(p,'gas');k.pourInto('gas','canola',1000);k.liftPan(pan);k.doors.oven=true;k.ovenPan(pan);
+ pan.pan.Tr.fill(80);pan.pan.T=pan.pan.Tcenter=pan.pan.Tedge=80;k.station('oven').state.oven.T=80;k.stepCookware(.01);
+ assert.ok(pan.pan.T<80);assert.ok(Math.abs(pan.parked.externalOven.loadW)<1e-7,'equal-temperature pan and oven exchange no heat; the oil supplies the food');
+});
 function patty(k){k.bowl={mass:500,salt:5,work:.2};k.scoop(2);return k.form([0,.96,-.9]);}
 test('a dressed bottom bun cooks, saves, promotes and peels without losing any layers',()=>{
  const k=new Kitchen(),[bottom,top]=k.slice(k.addIngredient('bunWhole',[.4,.96,-.9])),plate=k.entities.find(e=>e.kind==='plate');
@@ -16,10 +81,10 @@ test('a dressed bottom bun cooks, saves, promotes and peels without losing any l
 });
 test('bun halves, closed builds and cheese caps reject incompatible assembly atomically',()=>{
  const k=new Kitchen(),a=k.slice(k.addIngredient('bunWhole',[0,.96,0])),b=k.slice(k.addIngredient('bunWhole',[1,.96,0])),meat=patty(k);
- assert.match(k.assemblyProblem(a[1],a[0]),/patty/);assert.equal(k.assemble(meat,a[1]),false);
+ assert.equal(k.assemblyProblem(a[1],a[0]),null);assert.equal(k.assemble(meat,a[1]),false);
  for(let i=0;i<4;i++)assert.ok(k.assemble(k.addIngredient('cheese',[0,.96,0]),a[0]));assert.ok(k.assemble(meat,a[0]));
  const extra=k.addIngredient('cheese',[0,.96,0]);assert.equal(k.addCheese(extra,meat),false);assert.equal(k.assemble(extra,meat),false);assert.equal(extra.discarded,false);
- assert.match(k.assemblyProblem(b[1],meat),/same bun pair/);assert.ok(k.assemble(a[1],meat));assert.match(k.assemblyProblem(b[0],meat),/top bun/);
+ assert.equal(k.assemblyProblem(b[1],meat),null);assert.ok(k.assemble(a[1],meat));assert.match(k.assemblyProblem(b[0],meat),/top bun/);
 });
 test('egg layers yield to weight and individual pickles fan across one layer without changing mass',()=>{
  const k=new Kitchen(),[bun,top]=k.slice(k.addIngredient('bunWhole',[0,.96,0])),egg=k.addIngredient('egg',[0,.96,0]);k.makeFood(egg,'egg');egg.food.yolkSet=.5;
@@ -197,7 +262,7 @@ test('plated burgers can be rebuilt down to their bottom bun without losing owne
 
 test('cheese and surface salt address exposed meat, including the second patty',()=>{
  const k=new Kitchen(),p=patty(k),q=patty(k),b=k.slice(k.addIngredient('bunWhole',[0,.95,0]));k.assemble(p,b[0]);k.assemble(q,p);
- assert.equal(k.exposedPatty(p),q);for(let i=0;i<4;i++){const cheese=k.entity('cheese','cheese',[0,.95,0]);cheese.massG=12;assert.ok(k.addCheese(cheese,p));assert.ok(cheese.discarded);}
+ assert.equal(k.exposedPatty(p),q);for(let i=0;i<4;i++){const cheese=k.entity('cheese','cheese',[0,.95,0]);cheese.massG=12;assert.ok(k.addCheese(cheese,p));assert.equal(cheese.cheeseCarrier,q.id);assert.equal(cheese.discarded,false);}
  assert.equal(p.food.cheeses.length,0);assert.equal(q.food.cheeses.length,4);assert.equal(q.food.cheeses[0].mass,.012);assert.equal(k.cheeseTarget(p),null);
  k.assemble(b[1],p);assert.equal(k.exposedPatty(p),null);assert.equal(k.addCheese(k.entity('cheese','cheese',[0,.95,0]),p),false);Kitchen.restore(k.snapshot());
 });

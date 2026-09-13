@@ -5,9 +5,14 @@ module.exports={name:'real-transitions',experience:'real',description:'covered c
   const check=(name,value)=>out.push({name,value:!!value});
   const get=kind=>w.entities.find(e=>e.kind===kind);
   function hold(e){r.action=null;r.left=false;for(const q of w.entities)q.held=false;r.held=e?.id||null;if(e)e.held=true;r.renderEntities(0);}
-  function aim(e,type='entity',id){r.hover={data:e?{type,entity:e.id,name:e.label}:{type,id},point:new T.Vector3(...(e?.pos||[0,.95,.95]))};}
+  function aim(e,type='entity',id){
+   const point=new T.Vector3(...(e?.pos||(id==='gas'?[-1.5,.95,.95]:[0,.95,.95])));
+   r.contact.reset();Object.assign(w.player,{x:point.x,z:point.z-.85,y:0});
+   for(let i=0;i<6;i++){r.move(0);const d=point.clone().sub(r.camera.position);w.player.yaw=Math.atan2(-d.x,-d.z);w.player.pitch=Math.atan2(d.y,Math.hypot(d.x,d.z));}r.move(0);
+   r.hover={data:e?{type,entity:e.id,name:e.label}:{type,id},point};
+  }
   const pan=w.get(w.station('gas').panId),lid=get('lid'),glove=get('glove');lid.station='gas';w.station('gas').state.lid=true;
-  hold(glove);aim(null,'station','gas');r.toggleGrab();
+  hold(glove);Object.assign(w.player,{x:-1.5,z:.1,y:0,yaw:Math.PI,pitch:-.8});r.move(0);aim(null,'station','gas');r.toggleGrab();for(let i=0;i<30;i++)r.animateHands(.05);
   check('glove lifts a covered pan with its lid',glove.payload===pan.id&&lid.panCarrier===pan.id);
   if(glove.payload){glove.payload=null;pan.held=false;w.dockPan(pan,'gas');}
   lid.station=null;lid.panCarrier=null;pan.lidId=null;w.station('gas').state.lid=false;
@@ -35,7 +40,7 @@ module.exports={name:'real-transitions',experience:'real',description:'covered c
   aim(p);click(2);aim(plate);click(2);check('the complete burger transfers from spatula to tasting plate',p.trayCarrier===plate.id&&plate.cargo.length===1&&!get('spatula').payload);
   aim(get('spatula'),'rest');r.hover.data.entity=get('spatula').id;click(2);w.lastTasting=null;aim(p);click(0);
   check('aiming at the plated burger tastes it without needing to hit the plate rim',!!w.lastTasting&&!document.getElementById('real-tasting').hidden);
-  r.save();const copy=RealKitchen.Kitchen.restore(w.snapshot());check('completed service restores every burger layer and its plate',copy.get(p.id).food.assembly.length===3&&copy.get(plate.id).cargo[0]===p.id);
+  r.save();const copy=RealKitchen.Kitchen.restore(w.snapshot());check('completed service restores every burger layer and its plate',copy.get(p.id).food.assembly?.length===3&&copy.get(plate.id).cargo?.[0]===p.id);
   Object.assign(w.player,{x:0,z:-1.85,y:0,yaw:Math.PI,pitch:-.65});r.move(0);r.paused=true;document.getElementById('real-pause').hidden=true;r.hint();
   return out;
  });

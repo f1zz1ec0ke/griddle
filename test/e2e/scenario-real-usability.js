@@ -8,7 +8,7 @@ module.exports={name:'real-usability',experience:'real',description:'crouch, pre
   window.dispatchEvent(new KeyboardEvent('keydown',{code:'ControlLeft',bubbles:true}));r.move(.05);check('Control no longer crouches',r.eyeHeight>1.7);window.dispatchEvent(new KeyboardEvent('keyup',{code:'ControlLeft',bubbles:true}));
   const spatula=w.entities.find(e=>e.kind==='spatula');hold(spatula);
   const near=w.addIngredient('egg',[0,.95,0]),far=w.addIngredient('egg',[0,.95,0]);w.makeFood(near,'egg');w.makeFood(far,'egg');w.placeFood(near,'gas',{x:0,y:-.065});w.placeFood(far,'gas',{x:0,y:.065});r.renderEntities(0);
-  r.hover={data:{type:'station',id:'gas'},point:new T.Vector3(-1.5,.97,1.015)};
+  aim(new T.Vector3(-1.5,.97,1.015),-1.5,-.25);r.hover={data:{type:'station',id:'gas'},point:new T.Vector3(-1.5,.97,1.015)};
   check('pan fallback chooses the aimed egg rather than the first egg',r.foodAt(r.hover)===far);r.use();for(let i=0;i<20;i++)r.animateHands(.05);check('only the aimed egg flips',far.food.flips===1&&near.food.flips===0);
   r.hover={data:{type:'station',id:'gas'},point:new T.Vector3(-1.63,.97,.95)};check('empty pan space does not silently select another egg',!r.foodAt(r.hover));
   r.renderEntities(0);const group=r.stations.get('gas').itemViews.get(far.food).group,box=new T.Box3().setFromObject(group),point=box.getCenter(new T.Vector3());point.y=box.max.y-.002;aim(point,-3.4,.95);

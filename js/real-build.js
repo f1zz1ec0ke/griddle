@@ -4,15 +4,20 @@
   const P=typeof module==='object'?require('./physics'):root.BurgerPhysics,A=typeof module==='object'?require('./assembly'):root.BurgerAssembly;
   const coldKinds={tomatoSlice:'tomato',pickleSlice:'pickles',lettuce:'lettuce',ketchup:'ketchup',mayo:'mayo',mustard:'mustard'};
   const methods={
-    labels:{meatLean:'90/10 mince pack',meatRich:'70/30 mince pack',bunWhole:'whole bun',meat:'mince pack',pickles:'whole pickle',onion:'whole onion',cheeseBlock:'cheese block',tomatoSlice:'tomato slice',pickleSlice:'pickle slice',coal:'charcoal bag',press:'smash plate',glove:'oven glove'},
+    labels:{meatLean:'90/10 mince pack',meatRich:'70/30 mince pack',bunWhole:'whole bun',meat:'mince pack',pickles:'whole pickle',onion:'whole onion',cheeseBlock:'cheese block',tomatoSlice:'tomato slice',pickleSlice:'pickle slice',coal:'charcoal bag',press:'smash plate',glove:'oven glove',butter:'butter dish',brush:'grill brush',rake:'coal rake',timer:'kitchen timer',ashpan:'ash catcher'},
     rootOf(e){return e?.stackRoot?this.get(e.stackRoot):e;},
     layers(e){e=this.rootOf(e);return e?.prep||e?.food?.assembly||[];},
     stackState(e){return e.prep?{...e.food,assembly:e.prep}:e.food;},
-    name(e){if(!e)return '';if(this.layers(e).length)return this.rootOf(e).kind==='patty'?'burger':'dressed bottom bun';return e.kind==='bun'?(e.food.half==='top'?'top bun':'bottom bun'):this.labels[e.kind]||e.label;},
+    name(e){if(!e)return '';if(this.layers(e).length)return this.rootOf(e).kind==='patty'?'burger':A.closed(this.stackState(this.rootOf(e)))?'sandwich':'dressed bottom bun';return e.kind==='bun'?(e.food.half==='top'?'top bun':'bottom bun'):this.labels[e.kind]||e.label;},
     cheeseCount(e){const base=this.rootOf(e),stack=this.layers(base);return stack.length?stack.reduce((n,l)=>n+(l.cheese?1:l.patty?(l.meat||base.food).cheeses.length+(l.meat||base.food).cheeseUnder.length:0),0):base?.kind==='patty'?base.food.cheeses.length+base.food.cheeseUnder.length:0;},
-    topPart(base){base=this.rootOf(base);const stack=this.layers(base),l=stack.at(-1);return !l?null:l.patty?(l.meat?this.entities.find(e=>e.food===l.meat):base):l.item?this.entities.find(e=>e.food===l.item):this.entities.find(e=>e.stackRoot===base.id&&e.layer===stack.length-1);},
+    topPart(base){base=this.rootOf(base);const stack=this.layers(base),l=stack.at(-1),meat=!l&&base?.kind==='patty'?base:l?.patty?(l.meat?this.entities.find(e=>e.food===l.meat):base):null;
+      if(meat){const ch=meat.food.cheeses.at(-1),slice=this.entities.find(e=>!e.discarded&&e.cheeseCarrier===meat.id&&e.sliceState===ch);return slice||meat;}
+      return !l?null:l.item?this.entities.find(e=>e.food===l.item):this.entities.find(e=>e.stackRoot===base.id&&e.layer===stack.length-1);
+    },
     peel(base){
-      base=this.rootOf(base);const stack=this.layers(base);if(!stack.length||base.held||base.station)return null;
+      base=this.rootOf(base);const stack=this.layers(base);if(!base||base.held)return null;
+      const slice=this.topPart(base);if(slice?.cheeseCarrier){const meat=this.get(slice.cheeseCarrier);meat.food.cheeses=meat.food.cheeses.filter(ch=>ch!==slice.sliceState);slice.cheeseCarrier=null;slice.pos=meat.pos.slice();return slice;}
+      if(!stack.length||base.station||base.panCarrier)return null;
       const l=stack.at(-1),part=this.topPart(base);if(!part||part===base&&base.prep)return null;
       if(part===base){
         // Leave every layer beneath the meat on its original bun, in its original order.
@@ -36,7 +41,7 @@
       if(this.attachedProbe(base))return 'Remove the probe before adding another layer.';
       if(!onBun&&!stack.length)return 'Start on a bottom bun. Add the patty whenever you like.';
       if(held.kind==='patty'){const plate=this.get(base.trayCarrier);if(plate&&(plate.kind!=='plate'||held.food.D>.22))return 'That burger will not fit on this plate.';return stack.filter(l=>l.patty).length>=2?'Two patties is plenty.':null;}
-      if(held.kind==='bun')return held.food.half!=='top'?'The bottom bun is already in place.':!stack.some(l=>l.patty)?'Add a patty before the top bun.':!stack.some(l=>l.item?.half==='bottom'&&l.item.pair===held.food.pair)?'Use the top from the same bun pair.':null;
+      if(held.kind==='bun')return held.food.half!=='top'?'The bottom bun is already in place.':null;
       if(held.kind==='cheese')return this.cheeseCount(base)>=4?'Four cheese slices is plenty.':null;
       const cold=coldKinds[held.kind];if(cold)return stack.filter(l=>l.cold===cold).length>=(A.cold[cold].sauce?1:4)?'There is enough '+held.label+' on this burger.':null;
       return held.food&&held.kind!=='pan'?null:'Prepare that ingredient first.';
@@ -55,7 +60,7 @@
       }
       const stack=this.layers(base),cold=coldKinds[held.kind];let layer,part=held;
       if(cold){layer=held.coldState||{cold,T:6,age:0};if(held.massG)layer.mass=held.massG/1000;if(held.sliceMm)layer.height=held.sliceMm/1000;layer.single=cold==='pickles';if(A.cold[cold].sauce)part=this.entity(cold,cold,base.pos);}
-      else if(held.kind==='cheese'){held.sliceState ||= {T:6,mass:(held.massG||20)/1000,melt:0,rot:0,overhang:0,contact:0};layer={cheese:held.sliceState};}
+      else if(held.kind==='cheese'){held.sliceState ||= {T:held.temperature??6,mass:(held.massG||20)/1000,melt:0,rot:0,overhang:0,contact:0};layer={cheese:held.sliceState};}
       else if(held.kind==='patty'){layer={patty:true,meat:held.food};}
       else layer={item:held.food};
       if(held.food)this.detach(held);layer.entityId=part.id;part.stackRoot=base.id;part.layer=stack.length;part.held=false;stack.push(layer);
