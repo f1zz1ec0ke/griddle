@@ -44,8 +44,8 @@
   const money = (v) => '$' + (v || 0).toFixed(2);
 
   class Game {
-    constructor() {
-      this.vp = new root.BurgerRender.Viewport($('view'));
+    constructor(viewport) {
+      this.vp = viewport || new root.BurgerRender.Viewport($('view'));
       this.audio = new root.KitchenAudio();
       this.fahrenheit = false;
       try { this.fahrenheit = localStorage.getItem('griddle.temperatureUnit') === 'F'; } catch (_) {}
@@ -726,7 +726,7 @@
       document.addEventListener('pointerdown', () => { if (!s.audio.ctx && !s.audioAsked) { s.audioAsked = true; s.audio.start(); $('btn-audio').textContent = 'Sound on'; } }, { once: true });
       window.addEventListener('beforeunload', (e) => { if ((s.hasUnfinishedShift() || s.mode === 'practice') && !s.saveSession(true)) { e.preventDefault(); e.returnValue = ''; } }); // a reload loses the shift; the browser asks first
       window.addEventListener('keydown', (e) => {
-        if(['choose','real'].includes(document.body.dataset.experience))return;
+        if(['loading','choose','real'].includes(document.body.dataset.experience))return;
         if (!$('help').hidden) {
           if (e.key === 'Escape') { e.preventDefault(); s.closeHelp(); }
           else if (e.key === 'Tab') {
@@ -902,7 +902,7 @@
     }
     // ------------------------------------------------------------ loop
     frame(now) {
-      if(['choose','real'].includes(document.body.dataset.experience)){this.last=now;requestAnimationFrame(t=>this.frame(t));return;}
+      if(['loading','choose','real'].includes(document.body.dataset.experience)){this.last=now;requestAnimationFrame(t=>this.frame(t));return;}
       if (this.noticeUntil && now >= this.noticeUntil) { $('kitchen-notice').hidden = true; this.noticeUntil = 0; }
       const visualDt = Math.max(0, Math.min(0.1, (now - this.last) / 1000));
       const real = this.stopped ? 0 : visualDt; this.last = now;
@@ -1327,5 +1327,5 @@
       ctx.fillStyle = '#ff6b7a'; ctx.fillRect(W / 2 - 40, 4, 10, 3); ctx.fillStyle = '#c9bfae'; ctx.fillText('axis', W / 2 - 27, 9); ctx.fillStyle = '#d9a066'; ctx.fillRect(W / 2 + 6, 4, 10, 3); ctx.fillStyle = '#c9bfae'; ctx.fillText('rim', W / 2 + 19, 9);
     }
   }
-  root.addEventListener('DOMContentLoaded', () => { root.game = new Game(); });
+  root.Game = Game;
 })(window);

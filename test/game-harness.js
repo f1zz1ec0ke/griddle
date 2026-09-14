@@ -45,7 +45,7 @@ function kitchen(storage = new Map()) {
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../js/game.js'), 'utf8'), {
     window: root, document, performance, requestAnimationFrame() {}, localStorage: { getItem: k => storage.get(k) || null, setItem: (k, v) => storage.set(k, v) },
   });
-  listeners.get('DOMContentLoaded')();
+  root.game = new root.Game();
   return { game: root.game, elements, document, listeners, storage, P };
 }
 module.exports = { kitchen };

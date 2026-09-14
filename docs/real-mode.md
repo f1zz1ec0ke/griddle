@@ -27,3 +27,5 @@ The gold ring marks the targeted food. Utensils have forgiving reach; ghosts sho
 Real autosaves while playing and on pause. Re-entering resumes the current kitchen. Fresh kitchen keeps the prior save under `griddle.real.previous`, recoverable from mode selection. Paused scenes redraw only when needed.
 
 Validation combines model tests, pointer/keyboard cooking, focused browser fixtures and screenshots. It covers every grip, independent heat, preparation, transfers, assembly, placement, save recovery and bounded rendering resources. Cooking uses 50 ms steps with up to 250 ms of catch-up per frame. Software WebGL checks do not establish hardware frame rates.
+
+Fixed scenery is batched by compatible material and location. WebGL2 caches its shadow colour and depth; hands, food, doors and cookware still cast live shadows. Other rendering paths use complete shadow draws. Both kitchens and their shaders prepare behind a progress screen before mode selection, including equipment, smoke and sliced food. Stations share a fair texture-update budget, and empty effects stop uploading GPU buffers. See [render profiling](render-performance.md).

@@ -13,6 +13,8 @@ const path = require('path');
 const { runScenario, OUT } = require('./helper');
 
 const SCENARIOS = [
+  require('./scenario-loading.js'),
+  require('./scenario-real-render.js'),
   require('./scenario-real-final.js'),
   require('./scenario-real-craft.js'),
   require('./scenario-real.js'),
@@ -45,7 +47,7 @@ const SCENARIOS = [
   const results = [];
   for (const sc of list) {
     console.log(`▶ ${sc.name} — ${sc.description}`);
-    const r = await runScenario(sc.name, sc.run, sc.experience || 'legacy');
+    const r = await runScenario(sc.name, sc.run, sc.experience || 'legacy', {gpu:process.argv.includes('--gpu'),beforeLoad:sc.beforeLoad,beforeReady:sc.beforeReady});
     results.push(r);
     if (r.error) console.log(`✖ ${sc.name} failed after ${r.seconds.toFixed(1)} s: ${r.error.message}`);
     else console.log(`✔ ${sc.name} passed in ${r.seconds.toFixed(1)} s (${r.shots.length} screenshots, 0 page errors)`);

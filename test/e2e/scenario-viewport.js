@@ -52,6 +52,16 @@ module.exports = {
 
     // ---- three tickets of two burgers with toppings, counted in the order phase between tickets,
     // when the scene holds no patties and no toppings at all
+    // Empty particle pools now upload only on first use. Make every persistent pool resident so
+    // the comparison measures ticket cleanup, rather than the first puff of smoke or fat drip.
+    await k.read(g=>{
+      const vp=g.vp;
+      for(const effect of [vp.steam,vp.smoke]){effect.spawn(0,vp.panFloorY,0);effect.update(.01,0,()=>[0,0,0]);}
+      for(const effect of [vp.spatter,vp.bubbles,vp.beads,vp.drips]){effect.spawn({x:0,y:vp.panFloorY,z:0});effect.update(0,()=>true);}
+      vp.renderer.render(vp.scene,vp.camera);
+      for(const effect of [vp.steam,vp.smoke]){effect.parts.length=0;effect.update(0,0,()=>[0,0,0]);}
+      for(const effect of [vp.spatter,vp.bubbles,vp.beads,vp.drips]){effect.parts.length=0;effect.update(0,()=>false);}
+    });
     const between = [];
     for (let t = 0; t < 3; t++) {
       await k.order(['medium', 'medium'], 'Review', '“Two mediums, with everything.”');

@@ -146,11 +146,11 @@ class Kitchen {
 }
 
 /** Boot a browser + server, hand the scenario a Kitchen, and tear everything down again. */
-async function runScenario(name, fn, experience = 'legacy') {
+async function runScenario(name, fn, experience = 'legacy', options = {}) {
   const { chromium } = loadPlaywright();
   fs.mkdirSync(OUT, { recursive: true });
   const { server, url } = await serve();
-  const browser = await chromium.launch({ args: CHROME_ARGS, ...(process.env.CHROME_PATH ? {executablePath:process.env.CHROME_PATH} : {}) });
+  const browser = await chromium.launch({ args: options.gpu ? [] : CHROME_ARGS, ...(process.env.CHROME_PATH ? {executablePath:process.env.CHROME_PATH} : {}) });
   const page = await browser.newPage({ viewport: VIEWPORT });
   const k = new Kitchen(page, name);
   page.on('pageerror', (e) => k.pageErrors.push(String(e && e.stack ? e.stack : e)));
@@ -158,9 +158,12 @@ async function runScenario(name, fn, experience = 'legacy') {
   const started = Date.now();
   let error = null;
   try {
+    if(options.beforeLoad)await options.beforeLoad(page);
     await page.goto(url, { waitUntil: 'load' });
-    await page.waitForFunction(() => window.game && window.game.state, null, { timeout: 30000 });
-    await page.locator('#choose-'+experience).click();
+    if(options.beforeReady)await options.beforeReady(k);
+    await page.waitForFunction(() => window.GriddleLoading ? GriddleLoading.ready || GriddleLoading.failed : window.game && window.game.state, null, { timeout: 180000 });
+    if(await page.evaluate(()=>window.GriddleLoading?.failed))throw new Error('The kitchen loading screen reported a startup failure.');
+    if(experience!=='choose')await page.locator('#choose-'+experience).click();
     await fn(k);
   } catch (e) {
     error = e;
