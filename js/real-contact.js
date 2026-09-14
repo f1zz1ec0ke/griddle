@@ -16,18 +16,23 @@
       if(action.kind==='smash'&&e?.food)t.point.set(e.pos[0],e.pos[1]+e.food.h,e.pos[2]);
       if(action.kind==='place'){const h=r.heldEntity(),held=h?.payload?r.world.get(h.payload):h,plan=r.interaction.placement(t,held);if(plan)t.point.set(...plan.pos);}
       action.contact=contactActions.has(action.kind);action.entityId=e?.id;
+      // Fixture animations move the hand, not the camera. Remember held work through its release.
+      const held=r.heldEntity();
+      action.lean=action.contact||!!held&&(['pour','crack','discard'].includes(action.kind)||action.kind==='press'&&held.kind==='lighter'&&!['button','bin'].includes(t.data.type));
     }
     lean(dt,refresh=false){
-      const r=this.r,a=r.action,t=a?.target||(r.left?r.hover:null);
+      const r=this.r,a=r.action,control=r.interaction.techniques.control;
+      const working=r.left&&(r.grabControl||control||r.interaction.probe||r.activity);
+      const point=a?a.lean?a.target?.point:null:working?(control?.target.point||r.interaction.probe?.point||r.activity?.point||r.hover?.point):null;
       if(!refresh){const p=r.world.player;if(this.player&&Math.hypot(p.x-this.player.x,p.y-this.player.y,p.z-this.player.z)>.6){this.amount=0;this.point=null;}this.player={x:p.x,y:p.y,z:p.z};}
       if(!refresh){this.base.copy(r.camera.position);this.hasBase=true;}if(!this.hasBase)return;
       r.camera.position.copy(this.base);
-      const u=a?a.time/a.duration:0,strength=a?(u<.36?this.ease(0,.36,u):u<.72?1:1-this.ease(.72,1,u)):r.left?.65:0;
+      const u=a?a.time/a.duration:0,strength=point?(a?(u<.36?this.ease(0,.36,u):u<.72?1:1-this.ease(.72,1,u)):.65):0;
       this.amount+=(strength-this.amount)*Math.min(1,Math.max(dt,0)*20);
-      const point=t?.point||this.point;if(t)this.point=t.point.clone();if(!point||this.amount<.001){this.torso.rotation.x=0;return;}
+      if(point)this.point=point.clone();if(!this.point||this.amount<.001){this.torso.rotation.x=0;return;}
       const held=r.heldEntity(),item=held?.kind==='glove'&&held.payload?r.world.get(held.payload):held,profile=item?r.grip(item):null;
       const reach=profile?r.gripPoint(profile,profile.tip||[0,0,0]).length():0;
-      const distance=point.distanceTo(this.base),shift=P.clamp(distance-(.54+Math.min(.18,reach*.7)),0,.95)*this.amount;
+      const distance=this.point.distanceTo(this.base),shift=P.clamp(distance-(.54+Math.min(.18,reach*.7)),0,.95)*this.amount;
       // Move along the sight line: leaning must not move the reticle off its target.
       const direction=r.camera.getWorldDirection(new T.Vector3());r.camera.position.addScaledVector(direction,shift);
       const forward=Math.hypot(direction.x,direction.z)*shift;

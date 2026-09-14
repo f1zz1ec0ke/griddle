@@ -332,7 +332,7 @@
         if(h?.kind==='wood'&&s.grill){P.addWood(s,'hickory');this.animate('grab',()=>{});return;}
         if(h?.kind==='spoon'&&s.grill){this.animate('stir',()=>P.stirCoals(s));return;}
         if(h?.kind==='cloth'){this.animate('wipe',()=>P.wipeStove(s));return;}
-        if(h?.kind==='lid'){const problem=this.world.lidProblem(st.id);if(problem){this.toast(problem);return;}if(!st.panId||s.grill){this.toast('Put this lid on a pan.');return;}s.lid=true;if(st.pan){h.panCarrier=st.pan.id;st.pan.lidId=h.id;}else h.station=st.id;h.held=false;this.held=null;this.animate('reach',()=>{});return;}
+        if(h?.kind==='lid'){this.placeWithHands(t);return;}
         if(h?.food){this.animate('place',()=>{const error=this.world.placeFood(h,st.id,this.interaction.panPoint(t,st.id));if(error)this.toast(error);else this.held=null;});return;}
         if(['oil','water'].includes(h?.kind))return;
       }
@@ -404,7 +404,7 @@
           if(!rec.oilView){rec.oilView={panGroup:rec.mesh,panFloorY:.004,stoveType:'gas'};root.BurgerRender.Viewport.prototype._buildOil.call(rec.oilView);}
           root.BurgerRender.Viewport.prototype._updateOil.call(rec.oilView,{pan:e.pan,t:this.world.time});
         }
-        const m=rec.mesh;m.visible=true;
+        const m=rec.mesh;m.visible=true;if(!rec.view&&!e.fall)m.rotation.set(0,0,0);
         if(rec.clip&&(!e.stackRoot||!this.world.rootOf(e)?.cut))root.RealStackView.clearClip(rec);
         if(!e.stackRoot&&!this.world.layers(e).length){rec.stackOwner=null;rec.stackLift=null;}
         if(e.fall&&!e.held){if(e.slide){e.pos[0]+=e.slide[0]*dt*.9;e.pos[2]+=e.slide[1]*dt*.9;}e.fall+=9.8*dt;e.pos[1]-=e.fall*dt;m.rotation.z=Math.min(.7,m.rotation.z+dt*2);if(e.pos[1]<.035){e.pos[1]=.035;e.fall=0;e.slide=null;if(e.kind==='pan'&&e.parked){e.tilt=.95;this.world.drain(e,1,null,[e.pos[0],.007,e.pos[2]]);}}}
@@ -419,7 +419,7 @@
         if(e.panCarrier){const panMesh=this.meshes.get(e.panCarrier)?.mesh;if(panMesh){panMesh.add(m);if(e.kind==='lid')m.position.set(0,.035,0);else m.position.set(e.food.pos.x,.004+rec.lift,e.food.pos.y);}continue;}
         if(e.trayCarrier&&!e.station){const tray=this.world.get(e.trayCarrier),trayMesh=this.meshes.get(tray.id)?.mesh;if(trayMesh){const n=tray.cargo.indexOf(e.id),at=e.carrierPos||{x:tray.kind==='plate'?0:n%2?.06:-.06,y:tray.kind==='plate'?0:n<2?-.075:.075};trayMesh.add(m);m.position.set(at.x,(tray.kind==='plate'?.008:.0152)+rec.lift,at.y);}continue;}
         if(e.held){if(m.parent!==this.heldAnchor)this.heldAnchor.add(m);this.heldPose(e,m);m.position.y+=rec.lift;}
-        else {if(m.parent!==this.scene)this.scene.add(m);m.position.set(e.pos[0],e.pos[1]+rec.lift,e.pos[2]);m.scale.setScalar(1);if(!rec.view&&!e.fall)m.rotation.set(0,0,0);}
+        else {if(m.parent!==this.scene)this.scene.add(m);m.position.set(e.pos[0],e.pos[1]+rec.lift,e.pos[2]);m.scale.setScalar(1);}
         if(!e.held)m.rotation.y=e.kind==='tray'&&e.station==='oven'?root.RealKitchen.fixtures.oven.yaw:e.yaw||0;
         if(e.cutFraction!=null)m.scale[e.kind==='pickles'?'z':e.kind==='cheeseBlock'?'y':'x']=Math.max(.02,e.cutFraction);
         if(e.sliceMm&&['tomatoSlice','pickleSlice'].includes(e.kind))m.scale.y*=e.sliceMm/({tomatoSlice:6,pickleSlice:4}[e.kind]);
