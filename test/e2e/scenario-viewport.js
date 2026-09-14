@@ -29,9 +29,11 @@ module.exports = {
     // ---- the form slider: every input event makes a new patty object and a new PattyView
     await k.order(['medium'], 'Review', '“Medium, and take your time forming it.”');
     await k.click('#btn-accept');
+    await k.frames(2); // include the preview's first GPU upload in the baseline
     const m0 = await k.read(mem);
     for (let i = 0; i < 20; i++) await k.range('#f-thick', 12 + (i % 18));
     for (let i = 0; i < 20; i++) await k.range('#f-mass', 120 + (i % 18) * 5);
+    await k.frames(2);
     const m1 = await k.read(mem);
     k.ok(m1.textures === m0.textures && m1.geometries === m0.geometries,
       `40 slider ticks leak nothing: ${JSON.stringify(m0)} → ${JSON.stringify(m1)}`);
@@ -41,6 +43,7 @@ module.exports = {
     const swaps = {};
     for (const id of ['gas', 'charcoal', 'induction', 'gas', 'charcoal', 'electric', 'gas']) {
       await k.choose('#e-stove', id);
+      await k.frames(2);
       const m = await k.read(mem);
       if (swaps[id] === undefined) swaps[id] = m.geometries;
       else k.ok(m.geometries === swaps[id], `the ${id} stove is still ${m.geometries} geometries the second time it is built`);
@@ -67,6 +70,7 @@ module.exports = {
       await k.clickLive('#btn-cut');
       if (t === 0) await k.shot('served-with-toppings');
       await k.clickLive('#btn-again');
+      await k.frames(2);
       between.push(await k.read((g) => ({ geometries: g.vp.renderer.info.memory.geometries, textures: g.vp.renderer.info.memory.textures, views: g.vp.views.size, items: g.vp.itemViews.size })));
     }
     k.log(`between tickets: ${between.map((b) => `${b.geometries} geo / ${b.textures} tex`).join('  →  ')}`);
@@ -104,31 +108,44 @@ module.exports = {
     k.ok(beads1.moved > 0.02, `the patty slid ${(beads1.moved * 100).toFixed(1)} cm across the pan`);
     k.ok(beads1.n > 0 && beads1.off === 0, `all ${beads1.n} beads went with it (${beads1.off} left hanging over bare metal)`);
 
-    // ---- the stack on the served burger: each layer starts where the one under it ended.
-    // Adding a topping selects it, so the assign row puts each one on burger 1 by hand rather than
-    // leaving it to whichever burger it happens to come off the pan next to.
-    await k.click('#btn-bacon'); await k.clickLive('[data-burger="0"]');
-    await k.click('#btn-egg'); await k.clickLive('[data-burger="0"]');
+    // ---- build through the current controls, then check contact and compression on the plate.
+    await k.click('#btn-bacon');
+    await k.click('#btn-egg');
     const yolk = await k.until('the egg to set', (g) => g.items.find((i) => i.kind === 'egg').yolkSet, (v) => v > 0.8, { chunk: 15, max: 900 });
     k.log(`the egg went out with its yolk at ${yolk.toFixed(2)}`);
     await clearMetal(k, 2);
+    await k.click('#btn-bun');
     await k.fast(20);
+    await clearMetal(k, 2);
+    const build = await k.read(g => ['bottom','bacon','egg','top'].map(key =>
+      g.items.find(it => key === 'bottom' || key === 'top' ? it.kind === 'bun' && it.half === key : it.kind === key).id));
+    await k.chip(0);
+    await k.clickLive('#open-build');
+    await k.clickLive(`[data-build="item:${build[0]}"]`);
+    await k.clickLive('[data-build="patty"]');
+    for (const id of build.slice(1)) await k.clickLive(`[data-build="item:${id}"]`);
+    await k.clickLive('#close-build');
     await k.clickLive('#btn-cut');
-    await k.frames(3);                  // the crown is placed on the next frame the patty view draws
+    await k.frames(3);
     const stack = await k.read((g) => {
       const p = g.patties[0], v = g.vp.views.get(p);
-      const of = (kind) => { for (const [it, iv] of g.vp.itemViews) if (it.kind === kind && it.burger === p.id) return iv; return null; };
-      const bacon = of('bacon'), egg = of('egg');
+      const of = (kind,half) => { for (const [it, iv] of g.vp.itemViews) if (it.kind === kind && it.burger === p.id && (!half || it.half === half)) return iv; return null; };
+      const bacon = of('bacon'), egg = of('egg'), top = of('bun','top');
+      const meatH = p.h * (1 + 0.28 * p.dome) + p.cheeses.length * 0.0015;
       return {
-        base: v.group.position.y + p.h * (1 + 0.28 * p.dome) + p.cheeses.length * 0.0015,
-        bacon: { y: bacon.group.position.y, h: bacon.layerH() },
-        egg: { y: egg.group.position.y, h: egg.layerH() },
-        yolkTop: egg.group.position.y + egg.yolkMesh.position.y + 0.021 * egg.yolkMesh.scale.y,
-        crown: v.group.position.y + v.bunTop.position.y,
+        base: v.group.position.y + meatH * v.group.scale.y,
+        bacon: { y: bacon.group.position.y, h: bacon.layerH() * bacon.group.scale.y },
+        egg: { y: egg.group.position.y, h: egg.layerH() * egg.group.scale.y },
+        yolkTop: egg.group.position.y + (egg.yolkMesh.position.y + 0.021 * egg.yolkMesh.scale.y) * egg.group.scale.y,
+        crown: top.group.position.y,
+        height: g.vp.assemblyViews.get(p).userData.height,
+        uncompressed: meatH + [...g.vp.itemViews].filter(([it]) => it.burger === p.id).reduce((h,[,iv]) => h + iv.layerH(),0),
       };
     });
     k.near(stack.bacon.y, stack.base, 1e-4, 'the bacon lies on the patty, not above it');
-    k.near(stack.egg.y, stack.bacon.y + stack.bacon.h, 1e-4, 'the egg lies on the bacon');
+    k.ok(stack.egg.y > stack.bacon.y && stack.egg.y <= stack.bacon.y + stack.bacon.h + 1e-4, 'the egg settles into the bacon without an air gap');
+    k.near(stack.crown, stack.egg.y + stack.egg.h, 1e-4, 'the top bun rests on the compressed egg');
+    k.ok(stack.height < stack.uncompressed, 'the assembled burger is shorter than the sum of its loose layers');
     k.ok(stack.crown > stack.yolkTop, `the crown clears the yolk — ${(stack.crown * 1000).toFixed(1)} mm over a yolk reaching ${(stack.yolkTop * 1000).toFixed(1)} mm — so the yolk is visible`);
     await k.shot('served-stack');
 
@@ -178,16 +195,18 @@ module.exports = {
     await k.clickLive('#btn-move-out');
     await k.fast(40);
     await k.clickLive('#btn-remove');
+    await k.frames(6); // let the throttled dirt texture catch up with fast-forwarded physics
     const dirty = await k.read((g) => ({ parent: g.vp.fond.parent === g.vp.stove ? 'stove' : 'panGroup', visible: g.vp.fond.visible, y: g.vp.fond.position.y, panY: g.vp.PAN_Y, panGroup: g.vp.panGroup.visible, bits: g.state.pan.meatBits + g.state.pan.fond, phase: g.phase }));
     k.ok(dirty.parent === 'stove' && dirty.panGroup === false, 'the residue hangs off the stove, so hiding the pan for a kettle does not hide it too');
     k.ok(dirty.bits > 1e-5 && dirty.visible, `${(dirty.bits * 1000).toFixed(2)} g of torn crust and fond on the bars, and it is drawn`);
     k.near(dirty.y, dirty.panY + 0.0004, 1e-5, 'and it is drawn on the crowns of the bars');
     const painted = await k.read((g) => { const d = g.vp.dirtCv.getContext('2d').getImageData(0, 0, 512, 512).data; let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 12) n++; return n / (512 * 512); });
-    k.ok(painted > 0.02 && painted < 0.45, `masked to the bars themselves and not the gaps between them (${(painted * 100).toFixed(0)} % of the disc carries dirt)`);
+    k.ok(painted > 0.02 && painted < 0.45, `visible flecks stay on the bars (${(painted * 100).toFixed(2)} % of the disc carries dirt)`);
     await k.read((g) => { const c = g.vp.controls; c.goal.target.set(0, g.vp.PAN_Y - 0.01, 0); c.goal.polar = 0.28; c.goal.dist = 0.42; });
     await k.frames(12);
     await k.shot('grate-residue');
     await k.clickLive('#btn-wash');
+    await k.frames(2);
     const brushed = await k.read((g) => ({ visible: g.vp.fond.visible, bits: g.state.pan.meatBits + g.state.pan.fond, T: g.state.pan.T }));
     k.ok(brushed.bits === 0 && !brushed.visible, `the wire brush takes it all off and the bars stay at ${brushed.T.toFixed(0)} °C`);
     await k.frames(6);

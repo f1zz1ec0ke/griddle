@@ -13,6 +13,19 @@ const path = require('path');
 const { runScenario, OUT } = require('./helper');
 
 const SCENARIOS = [
+  require('./scenario-real-final.js'),
+  require('./scenario-real-craft.js'),
+  require('./scenario-real.js'),
+  require('./scenario-real-visuals.js'),
+  require('./scenario-real-grips.js'),
+  require('./scenario-real-detail.js'),
+  require('./scenario-real-polish.js'),
+  require('./scenario-real-audit.js'),
+  require('./scenario-real-transitions.js'),
+  require('./scenario-real-layout.js'),
+  require('./scenario-real-usability.js'),
+  require('./scenario-real-quality.js'),
+  require('./scenario-real-refinement.js'),
   require('./scenario-medium-rare.js'),
   require('./scenario-ticket-of-three.js'),
   require('./scenario-charcoal.js'),
@@ -32,11 +45,12 @@ const SCENARIOS = [
   const results = [];
   for (const sc of list) {
     console.log(`▶ ${sc.name} — ${sc.description}`);
-    const r = await runScenario(sc.name, sc.run);
+    const r = await runScenario(sc.name, sc.run, sc.experience || 'legacy');
     results.push(r);
     if (r.error) console.log(`✖ ${sc.name} failed after ${r.seconds.toFixed(1)} s: ${r.error.message}`);
     else console.log(`✔ ${sc.name} passed in ${r.seconds.toFixed(1)} s (${r.shots.length} screenshots, 0 page errors)`);
     if (r.consoleErrors.length) console.log(`  console errors: ${r.consoleErrors.length}\n    ${r.consoleErrors.slice(0, 5).join('\n    ')}`);
+    if (r.pageErrors.length) console.log(`  page errors:\n    ${r.pageErrors.join('\n    ')}`);
     console.log('');
   }
   const failed = results.filter((r) => r.error);

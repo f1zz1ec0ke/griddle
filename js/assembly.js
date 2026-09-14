@@ -47,12 +47,12 @@
     return !!layer;
   }
   function unpack(p) { while (pop(p)) {} }
-  function label(layer) { return layer.patty ? (layer.meat ? 'Second patty' : 'Patty') : layer.item ? layer.item.label : cold[layer.cold].label; }
+  function label(layer) { return layer.patty ? (layer.meat ? 'Second patty' : 'Patty') : layer.item ? layer.item.label : layer.cheese?'Cheese':cold[layer.cold].label; }
   // Conservative contact exchange between the actual stack surfaces. The existing
   // food solvers still handle conduction within each ingredient and exposed faces.
   function coldNode(l) {
     if(!Number.isFinite(l.T))l.T=6;
-    const mass={lettuce:.010,tomato:.025,pickles:.015}[l.cold]||.008;
+    const mass=l.mass||({lettuce:.010,tomato:.025,pickles:.015}[l.cold]||.008);
     const fraction={lettuce:.95,tomato:.94,pickles:.94,mustard:.70,mayo:.22,ketchup:.70}[l.cold];
     if(l.w==null){l.w=mass*fraction;l.m=mass-l.w;l.w0=l.w;l.lostWater=0;}
     return l;
@@ -61,6 +61,7 @@
     return {T:n.T,C:M.capacity(n,cp),add:q=>{const m=M.heat(n,q,cp,free);if(m)onSteam(m);return m;}};
   }
   function surface(p,l,upper) {
+    if(l.cheese)return Cheese.surface(l.cheese);
     if(l.cold) {
       const n=coldNode(l);
       return nodeSurface(n,1500,n.w,m=>{l.lostWater+=m;});
@@ -159,6 +160,7 @@
     const stack=layers(p),area=Math.min(p.A || .01,.01);
     for(let i=0;i<stack.length;i++) {
       const l=stack[i];
+      if(l.cheese){const ch=l.cheese,a=surface(p,l,true),exposed=(i===0?1:0)+(i===stack.length-1?1:0)+.15;steam+=a.add((s.env.Tamb-a.T)*a.C*(-Math.expm1(-8*area*exposed*dt/a.C)))||0;ch.melt=Math.min(1,ch.melt+.08/(1+Math.exp(-(ch.T-52)/5))*dt);}
       if(l.cold) {
         l.age=(l.age || 0)+dt;
         const a=surface(p,l,true), exposed=(i===0?1:0)+(i===stack.length-1?1:0)+.15;
@@ -184,16 +186,20 @@
     let load=0;
     const stack=layers(p),out=new Array(stack.length);
     for(let i=stack.length-1;i>=0;i--) {
-      const l=stack[i],food=l.meat||p,kind=l.patty?'patty':l.item?.kind||l.cold;
-      const mass=(l.patty?P.pattyMass(food)+[...food.cheeses,...food.cheeseUnder].reduce((v,c)=>v+c.mass,0):l.item?P.itemMass(l.item):coldNode(l).m+l.w)+((l.item||(l.patty?food:l)).stackJuice?.w||0);
+      const l=stack[i],food=l.meat||p,kind=l.patty?'patty':l.item?.kind||(l.cheese?'cheese':l.cold);
+      const mass=(l.patty?P.pattyMass(food)+[...food.cheeses,...food.cheeseUnder].reduce((v,c)=>v+c.mass,0):l.item?P.itemMass(l.item):l.cheese?l.cheese.mass:coldNode(l).m+l.w)+((l.item||(l.patty?food:l)).stackJuice?.w||0);
       const radius=(l.item?.D||food.D)/2,pressure=load*9.81/Math.max(.002,Math.PI*radius*radius);
-      const [limit,stiffness]=({bun:[.28,260],patty:[.08,650],onions:[.68,85],bacon:[.65,110],egg:[.25,230],lettuce:[.72,45],tomato:[.12,350],pickles:[.10,400]})[kind]||[.60,65];
+      const [limit,stiffness]=({bun:[.28,260],patty:[.08,650],onions:[.68,85],bacon:[.65,110],egg:[.64,38+42*(l.item?.yolkSet||0)],lettuce:[.72,45],tomato:[.18,260],pickles:[.32,145],cheese:[.38,100]})[kind]||[.60,65];
       const compression=limit*(-Math.expm1(-pressure/stiffness));
       const loose=['onions','bacon','lettuce'].includes(kind);
       out[i]={height:heights[i],scale:1-compression,overlap:loose?compression*.22:0,load,pressure};
       load+=mass;
     }
-    return out;
+    // Individual pickle coins fan across the bun instead of forming a vertical tower.
+    for(let i=0;i<stack.length;){if(stack[i].cold!=='pickles'||!stack[i].single){i++;continue;}let end=i+1;while(end<stack.length&&stack[end].cold==='pickles'&&stack[end].single)end++;
+      const count=end-i,r=Math.min(.028,(p.D||.10)*.27),rise=Math.max(...out.slice(i,end).map(l=>l.height*l.scale));
+      for(let j=i;j<end;j++){const a=(j-i)*2.399;Object.assign(out[j],{x:count>1?Math.cos(a)*r:0,z:count>1?Math.sin(a)*r:0,base:i,advance:j===end-1?rise:0});}i=end;
+    }return out;
   }
   const api = {cold,layers,closed,hasPatty,add,pop,unpack,label,coldNode,surface,exchange,cover,stepHeat,stackLayout,collectJuice,stepMoisture};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

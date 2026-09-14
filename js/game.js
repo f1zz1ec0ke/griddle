@@ -726,6 +726,7 @@
       document.addEventListener('pointerdown', () => { if (!s.audio.ctx && !s.audioAsked) { s.audioAsked = true; s.audio.start(); $('btn-audio').textContent = 'Sound on'; } }, { once: true });
       window.addEventListener('beforeunload', (e) => { if ((s.hasUnfinishedShift() || s.mode === 'practice') && !s.saveSession(true)) { e.preventDefault(); e.returnValue = ''; } }); // a reload loses the shift; the browser asks first
       window.addEventListener('keydown', (e) => {
+        if(['choose','real'].includes(document.body.dataset.experience))return;
         if (!$('help').hidden) {
           if (e.key === 'Escape') { e.preventDefault(); s.closeHelp(); }
           else if (e.key === 'Tab') {
@@ -901,6 +902,7 @@
     }
     // ------------------------------------------------------------ loop
     frame(now) {
+      if(['choose','real'].includes(document.body.dataset.experience)){this.last=now;requestAnimationFrame(t=>this.frame(t));return;}
       if (this.noticeUntil && now >= this.noticeUntil) { $('kitchen-notice').hidden = true; this.noticeUntil = 0; }
       const visualDt = Math.max(0, Math.min(0.1, (now - this.last) / 1000));
       const real = this.stopped ? 0 : visualDt; this.last = now;

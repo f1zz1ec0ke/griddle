@@ -1,0 +1,323 @@
+const test=require('node:test'),assert=require('node:assert/strict'),{Kitchen}=require('../js/real-model'),P=require('../js/physics');
+const A=require('../js/assembly');
+test('resting changes serving warmth without undoing the recorded doneness',()=>{
+ const k=new Kitchen(),meat=patty(k);meat.food.T.fill(40);meat.food.peakCenter=73;
+ const report=k.taste(meat);assert.match(report.notes.join(' '),/well done/i);assert.match(report.notes.join(' '),/lukewarm/i);assert.doesNotMatch(report.notes.join(' '),/still raw/i);assert.equal(report.temperature,40);
+ const [bottom]=k.slice(k.addIngredient('bunWhole',[1,.96,0]));k.assemble(meat,bottom);const second=patty(k);second.food.T.fill(55);second.food.peakCenter=56;k.assemble(second,meat);
+ const double=k.taste(meat).notes.join(' ');assert.match(double,/Patty 1:.*well done/i);assert.match(double,/Patty 2:.*medium-rare/i);
+});
+test('covered food retains its cheese until the lid is lifted',()=>{
+ const k=new Kitchen(),meat=patty(k),cheese=k.addIngredient('cheese',[0,.96,0]);k.placeFood(meat,'gas');k.addCheese(cheese,meat);k.station('gas').state.lid=true;
+ const other=k.addIngredient('cheese',[0,.96,0]);assert.equal(k.addCheese(other,meat),false);assert.equal(k.peel(meat),null);assert.equal(cheese.cheeseCarrier,meat.id);assert.equal(meat.food.cheeses.length,1);
+ k.station('gas').state.lid=false;assert.equal(k.peel(meat),cheese);assert.ok(Kitchen.restore(k.snapshot()));
+});
+test('an invalid draining destination leaves the source liquid intact',()=>{
+ const k=new Kitchen(),from=k.entities.find(e=>e.panType==='nonstick'),to=k.get(k.station('gas').panId);k.pourInto(from.id,'water',30);k.pourInto(from.id,'canola',10);from.tilt=.8;
+ k.station('gas').state.lid=true;assert.match(k.drain(from,.5,'gas').error,/uncovered/i);
+ k.station('gas').state.lid=false;k.doors.oven=true;k.ovenPan(to);k.doors.oven=false;assert.match(k.drain(from,.5,to.id).error,/Open the oven/);
+ assert.equal(from.pan.water,.03);assert.equal(from.pan.oil,.01);assert.equal(to.pan.water,0);assert.equal(k.spills.length,0);
+});
+test('docking a smoky pan preserves smoke already released into the kitchen',()=>{
+ const k=new Kitchen(),pan=k.entities.find(e=>e.panType==='nonstick'),hob=k.station('gas');k.liftPan(k.get(hob.panId));
+ Object.assign(P.roomAir(pan.parked),{upper:.8,lower:.2});Object.assign(P.roomAir(hob.state),{upper:.1,lower:.05});
+ k.dockPan(pan,'gas');assert.equal(P.roomAir(hob.state).upper,.9);assert.equal(P.roomAir(hob.state).lower,.25);assert.ok(Kitchen.restore(k.snapshot()));
+});
+test('a counter pan accepts cooking, liquids and removable cheese without a hob',()=>{
+ const k=new Kitchen(),pan=k.entities.find(e=>e.kind==='pan'&&!e.station),egg=k.addIngredient('egg',[0,.96,0]),p=patty(k);
+ assert.equal(k.crackEgg(egg,pan.id,{x:.055,y:0}),null);assert.equal(egg.panCarrier,pan.id);assert.equal(k.owner(egg),pan.parked);
+ assert.ok(k.pourInto(pan.id,'water',20));assert.ok(k.pourInto(pan.id,'canola',5));assert.equal(pan.pan.water,.020);assert.equal(pan.pan.oil,.005);
+ k.detach(egg);assert.equal(k.placeFood(p,pan.id),null);const cheese=k.addIngredient('cheese',[0,.96,0]);assert.ok(k.addCheese(cheese,p));k.step(.05);
+ assert.equal(k.topPart(p),cheese);assert.equal(k.peel(p),cheese);assert.equal(p.food.cheeses.length,0);assert.ok(cheese.sliceState);assert.ok(Kitchen.restore(k.snapshot()));
+});
+test('mince, whole ingredients and slices retain their temperatures through preparation',()=>{
+ const k=new Kitchen(),pack=k.addIngredient('meat',[0,.96,0]),tomato=k.addIngredient('tomato',[.5,.96,0]);pack.temperature=18;tomato.temperature=17;
+ k.addMince(pack);k.scoop(1);assert.equal(k.portion.T,18);const p=k.form([0,.96,0]);assert.equal(P.centerT(p.food),18);
+ const [slice]=k.cut(tomato);assert.equal(slice.coldState.T,17);for(let i=0;i<1200;i++)k.step(.05);
+ assert.ok(k.bowl.T>18&&k.bowl.T<21);assert.ok(slice.coldState.T>17);const [bun]=k.slice(k.addIngredient('bunWhole',[1,.96,0]));const temp=slice.coldState.T;k.assemble(slice,bun);assert.equal(k.layers(bun)[1].T,temp);assert.ok(Kitchen.restore(k.snapshot()));
+});
+test('a sandwich may close without meat or a matching bun, and tasting identifies its raw egg',()=>{
+ const k=new Kitchen(),[bottom]=k.slice(k.addIngredient('bunWhole',[0,.96,0])),[,top]=k.slice(k.addIngredient('bunWhole',[1,.96,0])),egg=k.addIngredient('egg',[0,.96,0]);k.makeFood(egg,'egg');
+ assert.ok(k.assemble(egg,bottom));assert.ok(k.assemble(top,bottom));assert.equal(k.name(bottom),'sandwich');const report=k.taste(bottom);assert.ok(report.parts.some(p=>p.kind==='egg'&&p.score<0));assert.match(report.notes.join(' '),/raw/);
+ egg.food.faceDown.char=1;assert.match(k.taste(bottom).notes.join(' '),/burnt/);assert.ok(Kitchen.restore(k.snapshot()));
+});
+test('oven trays cook bacon and buns while returning their heat load to the cavity',()=>{
+ const k=new Kitchen(),tray=k.entities.find(e=>e.kind==='tray'),bacon=k.addIngredient('bacon',[0,.96,0]);k.doors.oven=true;assert.ok(k.putOnTray(bacon,tray));assert.equal(k.ovenTray(tray),null);
+ const oven=k.station('oven').state;oven.oven.T=180;P.setOven(oven,180);const start=P.itemT(bacon.food);for(let i=0;i<600;i++)k.step(.05);
+ assert.ok(P.itemT(bacon.food)>start+10);assert.ok(oven.oven.loadW>0);assert.equal(bacon.food.where,'oven');assert.ok(Kitchen.restore(k.snapshot()));k.liftTray(tray);assert.equal(bacon.food.where,'rest');
+ const bun=k.addIngredient('bun',[0,.96,0]);assert.equal(k.placeFood(bun,'oven'),null);k.step(.05);assert.ok(P.itemT(bun.food)>21);
+});
+test('an oven-safe pan carries food into the oven, exchanges heat and leaves with its original state',()=>{
+ const k=new Kitchen(),pan=k.get(k.station('gas').panId),meat=patty(k);k.placeFood(meat,'gas');k.liftPan(pan);k.doors.oven=true;
+ const grid=meat.food.T;assert.equal(k.ovenPan(pan),null);assert.equal(k.owner(meat),pan.parked);const oven=k.station('oven').state.oven;oven.T=180;k.setOvenPower(true);
+ for(let i=0;i<1200;i++)k.step(.05);assert.ok(pan.pan.T>30);assert.ok(oven.loadW>0);assert.equal(meat.food.T,grid);assert.ok(Kitchen.restore(k.snapshot()));
+ k.liftPan(pan);k.liftPan(k.get(k.station('induction').panId));assert.equal(k.dockPan(pan,'induction'),null);assert.equal(k.owner(meat),k.station('induction').state);assert.equal(meat.food.T,grid);
+ const nonstick=k.entities.find(e=>e.panType==='nonstick');assert.match(k.ovenPan(nonstick),/metal/);
+});
+test('draining conserves oil and water between pans and records spills for cleaning',()=>{
+ const k=new Kitchen(),pan=k.entities.find(e=>e.kind==='pan'&&!e.station),dest=k.get(k.station('gas').panId);k.pourInto(pan.id,'water',30);k.pourInto(pan.id,'canola',10);pan.tilt=.8;
+ const got=k.drain(pan,.5,'gas',[0,.93,0]);assert.ok(got.water>0&&got.oil>0);assert.ok(Math.abs(pan.pan.water+dest.pan.water-.03)<1e-12);assert.ok(Math.abs(pan.pan.oil+dest.pan.oil-.01)<1e-12);
+ k.drain(pan,.5,null,[0,.93,0]);assert.equal(k.spills.length,1);assert.ok(Kitchen.restore(k.snapshot()));assert.ok(k.wipeSpill({x:0,y:.93,z:0}));assert.equal(k.spills.length,0);
+ const coals=k.drain(pan,.5,'charcoal',[3.45,.9,-1.5]),grill=k.station('charcoal').state.grill;assert.equal(grill.fatOnCoals,coals.oil);assert.equal(grill.juiceOnCoals,coals.water);assert.equal(k.spills.length,0);
+});
+test('tilting redistributes an oil film without creating or losing oil',()=>{
+ const Oil=require('../js/oil-film'),s=P.createState({});P.addFat(s,'canola',10);s.pan.slopeX=.2;for(let i=0;i<200;i++)Oil.step(s.pan,[],.05);
+ const f=Oil.ensure(s.pan),N=Math.sqrt(f.mass.length);let x=0,total=0;for(let i=0;i<f.mass.length;i++){total+=f.mass[i];x+=f.mass[i]*(i%N*f.cell-f.r);}assert.ok(x/total<-.015);assert.ok(Math.abs(total-.01)<1e-10);
+});
+test('basting uses existing pan fat and a kitchen timer resumes its remaining duration',()=>{
+ const k=new Kitchen(),meat=patty(k);k.placeFood(meat,'gas');assert.match(k.baste('gas'),/butter or oil/);k.pourInto('gas','canola',15);const fat=k.station('gas').state.pan.oil;assert.equal(k.baste('gas'),null);assert.equal(k.station('gas').state.pan.oil,fat);
+ k.setTimer(30);k.toggleTimer();k.step(1);const saved=Kitchen.restore(k.snapshot());assert.equal(saved.timer.remaining,29);saved.stepTimer(29);assert.equal(saved.timer.remaining,0);assert.equal(saved.timer.running,false);assert.equal(saved.timer.rang,true);saved.toggleTimer();assert.equal(saved.timer.remaining,30);
+});
+test('a knob of butter stays solid in a cold pan and consumes heat while melting into fat and water',()=>{
+ const k=new Kitchen(),s=k.station('gas').state,p=s.pan;k.pourInto('gas','butter',15);k.stepButter(s,10);assert.equal(p.butter[0].mass,.015);assert.equal(p.oil,0);
+ const saved=Kitchen.restore(k.snapshot());assert.deepEqual(saved.station('gas').state.pan.butter,p.butter);
+ p.Tr.fill(160);p.T=p.Tcenter=p.Tedge=160;const start=p.Tr.reduce((sum,T,j)=>sum+T*p.ringM[j]*p.cp,0);
+ for(let i=0;i<1200;i++)k.stepButter(s,.05);
+ assert.equal(p.butter.length,0);assert.ok(Math.abs(p.oil-.015*.82)<1e-9);assert.ok(Math.abs(p.water-.015*.16)<1e-9);assert.ok(Math.abs(p.fond-.015*.02)<1e-9);assert.ok(p.T<160);
+ const finish=p.Tr.reduce((sum,T,j)=>sum+T*(p.ringM[j]*p.cp+p.oil*2000*p.ringA[j]/(Math.PI*p.floorR**2)),0);
+ const cost=.015*2100*9+.015*80000;
+ assert.ok(Math.abs((start-finish)-cost+p.oil*2000*30)<1e-6,'pan supplies warming and melting energy; melted oil retains its sensible heat');
+});
+test('a closed oven gates its pan and its original probe must be removed before loading',()=>{
+ const k=new Kitchen(),e=patty(k),pan=k.get(k.station('gas').panId),probe=k.entities.find(e=>e.kind==='probe');k.placeFood(e,'gas');k.doors.oven=true;
+ k.parkProbe(probe,e,{x:0,z:0,depth:.5,rotation:[0,0,0,1]});assert.match(k.ovenPanProblem(pan),/probe/);delete probe.probeAttachment;assert.equal(k.ovenPan(pan),null);
+ k.doors.oven=false;assert.equal(k.pourInto(pan.id,'water',10),false);assert.match(k.foodPlacement(patty(k),pan.id).error,/Open/);k.doors.oven=true;assert.ok(k.pourInto(pan.id,'water',10));
+});
+test('submerged food in an oven pan takes its heat from the oil bath',()=>{
+ const k=new Kitchen(),pan=k.get(k.station('gas').panId);k.settings.thicknessMm=8;const p=patty(k);k.placeFood(p,'gas');k.pourInto('gas','canola',1000);k.liftPan(pan);k.doors.oven=true;k.ovenPan(pan);
+ pan.pan.Tr.fill(80);pan.pan.T=pan.pan.Tcenter=pan.pan.Tedge=80;k.station('oven').state.oven.T=80;k.stepCookware(.01);
+ assert.ok(pan.pan.T<80);assert.ok(Math.abs(pan.parked.externalOven.loadW)<1e-7,'equal-temperature pan and oven exchange no heat; the oil supplies the food');
+});
+function patty(k){k.bowl={mass:500,salt:5,work:.2};k.scoop(2);return k.form([0,.96,-.9]);}
+test('a dressed bottom bun cooks, saves, promotes and peels without losing any layers',()=>{
+ const k=new Kitchen(),[bottom,top]=k.slice(k.addIngredient('bunWhole',[.4,.96,-.9])),plate=k.entities.find(e=>e.kind==='plate');
+ const tomato=k.addIngredient('tomatoSlice',[0,.96,0]),cheese=k.addIngredient('cheese',[0,.96,0]),sauce=k.entities.find(e=>e.kind==='mayo');
+ cheese.massG=28;assert.equal(k.name(bottom),'bottom bun');assert.equal(k.name(top),'top bun');assert.ok(k.putOnTray(bottom,plate));
+ assert.ok(k.assemble(sauce,bottom));assert.ok(k.assemble(tomato,bottom));assert.ok(k.assemble(cheese,bottom));assert.equal(k.loose.patties.length,0);assert.equal(k.layers(bottom).length,4);
+ const copy=Kitchen.restore(k.snapshot());assert.equal(copy.get(bottom.id).prep,copy.get(bottom.id).food.prepAssembly);assert.equal(copy.get(cheese.id).sliceState,copy.layers(copy.get(bottom.id))[3].cheese);
+ for(let i=0;i<30;i++){k.step(.05);copy.step(.05);}assert.deepEqual(copy.get(bottom.id).food,bottom.food);assert.ok(Number.isFinite(k.layers(bottom)[2].T));
+ assert.match(k.placeFood(bottom,'gas'),/assembled/);assert.equal(k.putOnTray(bottom,k.entities.find(e=>e.kind==='tray')),false);
+ const meat=patty(k);assert.ok(k.assemble(meat,bottom));assert.deepEqual(k.layers(meat).map(l=>l.patty?'patty':l.item?.kind||l.cold||'cheese'),['bun','mayo','tomato','cheese','patty']);assert.deepEqual(plate.cargo,[meat.id]);assert.equal(bottom.prep,undefined);
+ assert.equal(k.peel(meat),meat);assert.deepEqual(plate.cargo,[bottom.id]);assert.equal(k.layers(bottom).length,4);assert.equal(tomato.stackRoot,bottom.id);assert.equal(cheese.stackRoot,bottom.id);assert.ok(Kitchen.restore(k.snapshot()));
+ assert.equal(k.peel(bottom),cheese);assert.equal(cheese.sliceState.mass,.028);assert.ok(k.addCheese(cheese,meat));assert.equal(meat.food.cheeses[0].mass,.028);
+ k.discard(bottom);assert.equal(k.get(tomato.id),undefined);assert.equal(k.loose.items.length,1);assert.ok(k.get(top.id));assert.ok(Kitchen.restore(k.snapshot()));
+});
+test('bun halves, closed builds and cheese caps reject incompatible assembly atomically',()=>{
+ const k=new Kitchen(),a=k.slice(k.addIngredient('bunWhole',[0,.96,0])),b=k.slice(k.addIngredient('bunWhole',[1,.96,0])),meat=patty(k);
+ assert.equal(k.assemblyProblem(a[1],a[0]),null);assert.equal(k.assemble(meat,a[1]),false);
+ for(let i=0;i<4;i++)assert.ok(k.assemble(k.addIngredient('cheese',[0,.96,0]),a[0]));assert.ok(k.assemble(meat,a[0]));
+ const extra=k.addIngredient('cheese',[0,.96,0]);assert.equal(k.addCheese(extra,meat),false);assert.equal(k.assemble(extra,meat),false);assert.equal(extra.discarded,false);
+ assert.equal(k.assemblyProblem(b[1],meat),null);assert.ok(k.assemble(a[1],meat));assert.match(k.assemblyProblem(b[0],meat),/top bun/);
+});
+test('egg layers yield to weight and individual pickles fan across one layer without changing mass',()=>{
+ const k=new Kitchen(),[bun,top]=k.slice(k.addIngredient('bunWhole',[0,.96,0])),egg=k.addIngredient('egg',[0,.96,0]);k.makeFood(egg,'egg');egg.food.yolkSet=.5;
+ k.assemble(egg,bun);const picks=Array.from({length:4},()=>k.addIngredient('pickleSlice',[0,.96,0]));for(const p of picks){p.sliceMm=6;k.assemble(p,bun);}const meat=patty(k);k.assemble(meat,bun);k.assemble(top,meat);
+ const mass=P.itemMass(egg.food),heights=k.layers(meat).map(l=>l.patty?.02:l.item?.kind==='bun'?.022:l.item?.kind==='egg'?.019:.006),layout=A.stackLayout(meat.food,P,heights);
+ assert.ok(layout[1].scale<.58);const coins=layout.slice(2,6);assert.equal(new Set(coins.map(q=>q.base)).size,1);assert.ok(coins.reduce((h,q)=>h+q.advance,0)<=.006);assert.ok(coins.every(q=>Math.hypot(q.x,q.z)<meat.food.D/2));assert.equal(P.itemMass(egg.food),mass);
+ k.peel(meat);k.peel(meat);assert.ok(A.stackLayout(k.stackState(bun),P,heights.slice(0,6))[1].scale>layout[1].scale);
+});
+test('parked probe keeps a live sample across heat transfers and saves, and returns safely on discard',()=>{
+ const k=new Kitchen(),meat=patty(k),probe=k.entities.find(e=>e.kind==='probe');probe.held=true;
+ assert.ok(k.parkProbe(probe,meat,{x:.2,z:.1,depth:.5,rotation:[0,0,0,1]}));assert.equal(probe.held,false);meat.food.T.fill(68);
+ assert.equal(k.probeReading(probe).temperature,68);k.placeFood(meat,'gas');assert.equal(k.attachedProbe(meat),probe);k.step(.05);
+ const copy=Kitchen.restore(k.snapshot()),sample=copy.probeReading(copy.get(probe.id));assert.equal(sample.temperature,k.probeReading(probe).temperature);assert.equal(sample.depth,k.probeReading(probe).depth);assert.equal(sample.food.id,meat.id);
+ k.detach(meat);meat.food.h*=.8;assert.equal(k.probeReading(probe).depth,meat.food.h*.5);k.discard(meat);assert.equal(probe.probeAttachment,undefined);assert.deepEqual(probe.pos,probe.home);assert.ok(Kitchen.restore(k.snapshot()));
+ const S=require('../js/session'),bad=S.decode(copy.snapshot());bad.entities.find(e=>e.id===probe.id).probeAttachment.foodId=99999;assert.throws(()=>Kitchen.restore(S.encode(bad)),/Invalid attached probe/);
+});
+test('a bottom bun can be placed under a resting patty without moving the burger to the hand',()=>{
+ const k=new Kitchen(),p=patty(k),position=p.pos.slice(),b=k.slice(k.addIngredient('bunWhole',[.4,.96,-.9]));b[0].held=true;b[0].pos=[8,8,8];
+ assert.ok(k.assemble(b[0],p));assert.deepEqual(p.pos,position);assert.equal(b[0].held,false);assert.equal(b[0].stackRoot,p.id);assert.equal(p.food.assembly.length,2);assert.ok(k.assemble(b[1],p));assert.ok(Kitchen.restore(k.snapshot()));
+});
+test('building on a plated bottom bun keeps the complete burger on that plate',()=>{
+ const k=new Kitchen(),p=patty(k),b=k.slice(k.addIngredient('bunWhole',[.4,.96,-.9])),plate=k.entities.find(e=>e.kind==='plate');assert.ok(k.putOnTray(b[0],plate));assert.ok(k.assemble(p,b[0]));assert.deepEqual(plate.cargo,[p.id]);assert.equal(p.trayCarrier,plate.id);assert.equal(b[0].trayCarrier,null);assert.ok(Kitchen.restore(k.snapshot()));
+});
+test('older layouts migrate fixtures and counter items once without losing cooking state',()=>{
+ const S=require('../js/session'),{fixturePoint}=require('../js/real-model'),k=new Kitchen(),p=patty(k);k.doors.oven=true;k.placeFood(p,'oven');const tomato=k.addIngredient('tomato',[-2.6,1.062,-1.3]);
+ const d=S.decode(k.snapshot());delete d.layoutVersion;d.stations.find(s=>s.id==='oven').x=-2.4;d.stations.find(s=>s.id==='charcoal').x=2.5;
+ const spare=d.entities.find(e=>e.panType==='nonstick');spare.home[2]=spare.pos[2]=3.15;
+ const copy=Kitchen.restore(S.encode(d));assert.deepEqual(copy.get(tomato.id).pos,fixturePoint('oven',[0,1.062,0]));assert.equal(copy.get(spare.id).home[2],3.65);assert.equal(copy.get(p.id).food,copy.station('oven').state.patties[0]);assert.equal(copy.station('charcoal').x,3.45);
+ const again=Kitchen.restore(copy.snapshot());assert.deepEqual(again.get(tomato.id).pos,copy.get(tomato.id).pos);assert.deepEqual(again.get(spare.id).home,copy.get(spare.id).home);
+});
+test('eggs lost through the grill retain debris but cannot break kitchen saves',()=>{
+ const k=new Kitchen(),e=k.addIngredient('egg',[0,.95,0]);assert.equal(k.crackEgg(e,'charcoal'),null);k.step(.05);
+ assert.equal(k.get(e.id),undefined);assert.equal(k.station('charcoal').state.grill.droppedEggs.length,1);
+ const restored=Kitchen.restore(k.snapshot());assert.equal(restored.get(e.id),undefined);assert.equal(restored.station('charcoal').state.grill.droppedEggs.length,1);restored.step(.05);
+ // Repair a save from before empty egg inventory shells were retired.
+ e.discarded=false;e.station='charcoal';assert.equal(Kitchen.restore(k.snapshot()).get(e.id),undefined);
+});
+test('a rejected egg crack leaves the egg whole and the cooking state unchanged',()=>{
+ const k=new Kitchen(),e=k.addIngredient('egg',[0,.95,0]),p=patty(k);k.placeFood(p,'gas');p.food.D=k.station('gas').state.pan.floorR*2;
+ assert.match(k.crackEgg(e,'gas'),/space/);assert.equal(e.food,null);assert.equal(k.loose.items.length,0);assert.equal(k.station('gas').state.items.length,0);
+ k.detach(p);assert.equal(k.crackEgg(e,'gas',null,true),null);assert.equal(e.food,null);assert.equal(k.crackEgg(e,'gas'),null);assert.equal(e.station,'gas');assert.equal(k.station('gas').state.items.length,1);
+});
+test('oversized patties cannot be placed through the pan wall',()=>{
+ const k=new Kitchen(),p=patty(k);p.food.D=k.station('gas').state.pan.floorR*2+.01;
+ assert.match(k.placeFood(p,'gas'),/space/);assert.equal(p.station,null);assert.ok(k.loose.patties.includes(p.food));
+});
+test('splitting a bun makes room for both halves without overlap or duplication',()=>{
+ const k=new Kitchen(),whole=k.addIngredient('bunWhole',[0,.95,0]),obstacle=k.addIngredient('bacon',[.05,.95,0]),b=k.slice(whole);
+ assert.equal(b.length,2);assert.ok(Math.hypot(b[0].pos[0]-b[1].pos[0],b[0].pos[2]-b[1].pos[2])>=(b[0].food.D+b[1].food.D)/2);
+ for(const q of b)assert.ok(Math.hypot(q.pos[0]-obstacle.pos[0],q.pos[2]-obstacle.pos[2])>=(q.food.D+obstacle.food.Dcov)/2);
+ assert.equal(b[0].food.pair,b[1].food.pair);assert.deepEqual(k.slice(whole),[]);
+});
+test('parked cookware history is bounded during endless practice',()=>{
+ const k=new Kitchen(),pan=k.get(k.station('gas').panId);k.liftPan(pan);pan.parked.events=Array(200).fill({});pan.parked.trace=Array(400).fill({});k.step(.05);assert.ok(pan.parked.events.length<=80);assert.ok(pan.parked.trace.length<=180);
+});
+test('failed assembly leaves cooked food on its original surface',()=>{
+ const k=new Kitchen(),p=patty(k),b=k.slice(k.addIngredient('bunWhole',[0,.95,0]));k.assemble(p,b[0]);k.assemble(b[1],p);const fresh=k.slice(k.addIngredient('bunWhole',[.3,.95,0]))[0];k.placeFood(fresh,'gas');
+ assert.equal(k.assemble(p,fresh),false);assert.equal(fresh.station,'gas');assert.ok(k.station('gas').state.items.includes(fresh.food));assert.equal(p.food.assembly.length,3);
+});
+test('oven rack rejects overflow atomically and reuses the freed slot',()=>{
+ const k=new Kitchen();k.doors.oven=true;const food=Array.from({length:5},()=>patty(k));for(const p of food.slice(0,4))assert.equal(k.placeFood(p,'oven'),null);
+ assert.match(k.placeFood(food[4],'oven'),/space/);assert.equal(food[4].station,null);assert.ok(k.loose.patties.includes(food[4].food));const slot=food[1].ovenSlot;k.detach(food[1]);assert.equal(k.placeFood(food[4],'oven'),null);assert.equal(food[4].ovenSlot,slot);
+});
+test('tray placement respects food size and loading the oven cannot merge with occupied rack space',()=>{
+ const k=new Kitchen(),tray=k.entities.find(e=>e.kind==='tray');k.portion={mass:340,salt:0,work:0};k.settings.thicknessMm=8;const wide=k.form([0,.95,0]);
+ if(wide.food.D>.25)assert.equal(k.putOnTray(wide,tray),false);else{assert.equal(k.putOnTray(wide,tray),true);assert.equal(k.putOnTray(patty(k),tray),false);k.detach(wide);}
+ k.settings.thicknessMm=20;const p=patty(k);assert.ok(k.putOnTray(p,tray));k.doors.oven=true;const q=patty(k);k.placeFood(q,'oven');assert.match(k.ovenTray(tray),/Clear/);assert.equal(tray.station,null);assert.equal(p.trayCarrier,tray.id);assert.equal(p.station,null);
+ k.detach(q);assert.equal(k.ovenTray(tray),null);assert.match(k.placeFood(q,'oven'),/tray/);
+});
+test('broken ownership and save references are rejected before loading',()=>{
+ const S=require('../js/session'),k=new Kitchen(),p=patty(k),good=k.snapshot();
+ for(const mutate of [d=>d.heldId=999999,d=>d.nextId=1,d=>d.entities.find(e=>e.id===p.id).panCarrier=999999,d=>d.loose.patties.push(d.loose.patties[0]),d=>d.stations[0].panId=999999]){const d=S.decode(good);mutate(d);assert.throws(()=>Kitchen.restore(S.encode(d)),/Invalid/);}
+ assert.ok(Kitchen.restore(good).get(p.id));
+});
+test('tasting a double burger accounts for the second patty crust and texture',()=>{
+ const k=new Kitchen(),p=patty(k),q=patty(k),b=k.slice(k.addIngredient('bunWhole',[0,.95,0]));k.assemble(p,b[0]);k.assemble(q,p);p.food.faceDown.brown=p.food.faceUp.brown=1.5;q.food.faceUp.char=.5;q.food.work=.9;
+ const notes=k.taste(p).notes;assert.ok(notes.includes('Bitter, burnt crust.'));assert.ok(notes.includes('Overworked and dense.'));assert.ok(!notes.includes('A good sear on both sides.'));
+});
+test('successive cuts conserve ingredient mass, and cheese carries its slice mass into cooking',()=>{
+ const k=new Kitchen(),block=k.addIngredient('cheeseBlock',[0,.95,0]);let total=0,count=0;
+ while(!block.discarded&&count<30){const [slice]=k.cut(block,3);assert.ok(slice);total+=slice.massG;count++;slice.pos[0]=2+count*.1;}
+ assert.ok(Math.abs(total-400)<1e-8);assert.equal(count,10);assert.deepEqual(k.cut(block),[]);
+ const p=patty(k),slice=k.entities.find(e=>e.kind==='cheese');k.placeFood(p,'gas');assert.ok(k.addCheese(slice,p));assert.equal(p.food.cheeses[0].mass,slice.massG/1000);assert.equal(k.addCheese(slice,p),false);k.step(.05);assert.ok(Number.isFinite(p.food.cheeses[0].T));
+ const onion=k.addIngredient('onion',[-1,.95,0]),[cut]=k.cut(onion,8);assert.equal(cut.massG,8);assert.ok(Math.abs(P.itemMass(cut.food)-.008)<1e-8);assert.ok(cut.food.D<.1);assert.equal(cut.food.Dcov,cut.food.D);
+});
+test('mince blends and patty thickness survive portion return and saves',()=>{
+ const k=new Kitchen();k.addMince(k.addIngredient('meatLean',[0,1,0]));k.addMince(k.addIngredient('meatRich',[0,1,0]));assert.equal(k.bowl.fatFrac,.2);
+ k.scoop(2);k.scoop(.5,true);assert.equal(k.bowl.mass+k.portion.mass,1000);assert.equal(k.portion.fatFrac,.2);
+ k.settings.thicknessMm=10;const p=k.form([0,.95,0]);k.scoop(1.5);k.settings.thicknessMm=30;const q=k.form([.3,.95,0]);assert.equal(p.food.massKg0,q.food.massKg0);assert.ok(q.food.h>p.food.h*2);assert.ok(q.food.D<p.food.D);
+ const saved=Kitchen.restore(k.snapshot());assert.equal(saved.settings.thicknessMm,30);assert.equal(saved.bowl.fatFrac,.2);
+});
+test('seasoning quantity has a bounded response and excess is recognised at tasting',()=>{
+ const k=new Kitchen();k.bowl={mass:500,salt:0,work:0};k.scoop(2);const p=k.form([0,.95,0]),plain=p.food.whc0;
+ k.applySeasoning(p,.01);assert.ok(p.food.whc0>plain&&p.food.whc0<plain+.001);
+ k.applySeasoning(p,1.43);const useful=p.food.whc0;k.applySeasoning(p,10);assert.equal(p.food.whc0,useful);assert.ok(k.taste(p).notes.includes('Far too salty.'));
+ const copy=Kitchen.restore(k.snapshot());assert.deepEqual(copy.get(p.id).food.saltGrams,p.food.saltGrams);
+});
+test('probe samples both radial position and actual depth without altering the grid',()=>{
+ const k=new Kitchen(),e=patty(k),p=e.food;for(let z=0;z<p.Nz;z++)for(let r=0;r<p.Nr;r++)p.T[z*p.Nr+r]=10+z*2+r*3;
+ const before=p.T.slice();assert.equal(k.probe(e,0,p.h),10);assert.equal(k.probe(e,p.D/2,0),10+(p.Nz-1)*2+(p.Nr-1)*3);
+ assert.ok(Math.abs(k.probe(e,p.D/4,p.h/2)-(10+(p.Nz-1)+(p.Nr-1)*1.5))<1e-8);assert.deepEqual(p.T,before);
+ assert.ok(Math.abs(k.probe(e,p.D/2*3.5/p.Nr,p.h*(1-4.5/p.Nz))-(10+4*2+3*3))<1e-8);
+});
+test('aimed heat-zone placement preserves the chosen point and a blocked transfer is atomic',()=>{
+ const k=new Kitchen(),p=patty(k);assert.equal(k.placeFood(p,'gas',{x:.025,y:0}),null);assert.ok(Math.abs(p.food.pos.x-.025)<1e-6);
+ k.station('induction').state.lid=true;assert.match(k.placeFood(p,'induction',{x:0,y:0}),/lid/);assert.equal(p.station,'gas');assert.equal(k.station('gas').state.patties[0],p.food);
+});
+test('burger reworking preserves layer state, then a plate carries and saves the whole build',()=>{
+ const k=new Kitchen(),p=patty(k),b=k.slice(k.addIngredient('bunWhole',[0,.95,0])),[tomato]=k.cut(k.addIngredient('tomato',[.3,.95,0]),9);
+ assert.ok(k.assemble(p,b[0]));assert.ok(k.assemble(tomato,p));const layer=p.food.assembly.at(-1);A.coldNode(layer);layer.T=44;layer.wilt=.7;
+ assert.ok(k.assemble(b[1],p));assert.equal(k.peel(p),b[1]);assert.equal(k.peel(p),tomato);assert.equal(tomato.coldState.T,44);assert.equal(tomato.coldState.wilt,.7);
+ assert.ok(k.assemble(tomato,p));assert.equal(p.food.assembly.at(-1).height,.009);assert.equal(p.food.assembly.at(-1).T,44);assert.ok(k.assemble(b[1],p));
+ const plate=k.entities.find(e=>e.kind==='plate');assert.ok(k.putOnTray(p,plate));assert.equal(k.peel(p),b[1]);assert.equal(p.trayCarrier,plate.id);assert.ok(k.assemble(b[1],p));const copy=Kitchen.restore(k.snapshot());assert.equal(copy.get(p.id).trayCarrier,plate.id);assert.equal(copy.get(p.id).food.assembly[0].item,copy.get(b[0].id).food);
+ p.food.peakCenter=75;p.food.T.fill(20);const report=k.taste(p);assert.ok(report.notes.includes('Cold at the centre.'));assert.ok(report.notes.includes('The fresh toppings have wilted.'));assert.ok(!('score' in report));
+});
+test('peeling a double burger releases each patty and the original bun exactly once',()=>{
+ const k=new Kitchen(),p=patty(k),q=patty(k),b=k.slice(k.addIngredient('bunWhole',[0,.95,0]));k.assemble(p,b[0]);k.assemble(q,p);const grid=q.food.T;
+ assert.equal(k.peel(p),q);assert.equal(q.food.T,grid);assert.equal(q.food.assembledTo,null);assert.equal(q.stackRoot,null);assert.equal(k.peel(p),p);assert.equal(b[0].stackRoot,null);assert.equal(b[0].food.assembledTo,null);assert.equal(p.food.assembly.length,0);
+ assert.equal(k.loose.patties.filter(e=>e===p.food||e===q.food).length,2);assert.ok(k.assemble(p,b[0]));
+});
+test('Real portions conserve mince and salt when taking and returning meat',()=>{
+ const k=new Kitchen();k.bowl={mass:500,salt:5,work:.3};k.scoop(2);assert.equal(k.portion.mass,180);assert.equal(k.portion.salt,1.8);k.scoop(.5,true);assert.equal(k.portion.mass,135);assert.equal(k.bowl.mass+k.portion.mass,500);assert.equal(k.bowl.salt+k.portion.salt,5);const e=k.form([0,.95,0]);assert.equal(e.food.massKg0,.135);assert.equal(e.food.salt,'mixed');assert.equal(k.portion.mass,0);
+});
+test('Real stations heat independently and food transfer retains its exact grid',()=>{
+ const k=new Kitchen(),e=patty(k);P.setKnob(k.station('gas').state,10);P.setKnob(k.station('electric').state,4);
+ for(let i=0;i<200;i++)k.step(.05);
+ assert.ok(k.station('gas').state.pan.Tcenter>k.station('induction').state.pan.Tcenter);assert.ok(k.station('electric').state.pan.Tcenter>21);
+ assert.equal(k.placeFood(e,'gas'),null);const grid=e.food.T;k.detach(e);assert.equal(k.placeFood(e,'induction'),null);assert.equal(e.food.T,grid);assert.equal(k.station('gas').state.patties.length,0);assert.equal(k.loose.patties.length,0);assert.equal(k.station('induction').state.patties[0],e.food);
+});
+test('a loaded pan carries its thermal state and food between stations without duplicating either',()=>{
+ const k=new Kitchen(),e=patty(k);k.placeFood(e,'gas');const pan=k.get(k.station('gas').panId),other=k.get(k.station('electric').panId),metal=pan.pan;
+ k.liftPan(other);k.liftPan(pan);assert.equal(e.panCarrier,pan.id);assert.equal(k.owner(e),pan.parked);assert.equal(k.station('gas').state.patties.length,0);k.step(.05);assert.equal(k.dockPan(pan,'electric'),null);assert.equal(k.station('electric').state.pan,metal);assert.equal(e.station,'electric');assert.equal(e.panCarrier,null);assert.equal(k.station('electric').state.patties[0],e.food);
+});
+test('Real saves preserve loaded-pan references and resume identical simulation',()=>{
+ const k=new Kitchen(),e=patty(k);k.placeFood(e,'gas');const pan=k.get(k.station('gas').panId);k.liftPan(pan);const copy=Kitchen.restore(k.snapshot());assert.equal(copy.get(e.id).food,copy.get(pan.id).parked.patties[0]);k.step(.05);copy.step(.05);assert.deepEqual(copy.get(e.id).food,k.get(e.id).food);
+});
+test('preparation is required and the oven door gates placing food',()=>{
+ const k=new Kitchen(),tomato=k.addIngredient('tomato',[0,.95,0]);assert.match(k.placeFood(tomato,'gas'),/Prepare/);assert.equal(k.slice(tomato).length,4);assert.ok(tomato.discarded);const e=patty(k);assert.match(k.placeFood(e,'oven'),/Open/);k.doors.oven=true;assert.equal(k.placeFood(e,'oven'),null);assert.equal(e.food.where,'oven');k.detach(e);assert.equal(e.food.where,'rest');
+});
+test('physical assembly retains cooking state, and discarding removes its ingredient references',()=>{
+ const k=new Kitchen(),p=patty(k),buns=k.slice(k.addIngredient('bunWhole',[0,.96,0])),tomato=k.slice(k.addIngredient('tomato',[0,.96,0]))[0];
+ assert.ok(k.assemble(p,buns[0]));assert.ok(k.assemble(tomato,p));assert.ok(k.assemble(buns[1],p));assert.equal(p.food.assembly.length,4);assert.equal(p.food.assembly[0].item,buns[0].food);assert.match(k.placeFood(p,'gas'),/assembled/);
+ const restored=Kitchen.restore(k.snapshot());assert.equal(restored.get(p.id).food.assembly[0].item,restored.get(buns[0].id).food);k.discard(p);assert.equal(k.loose.patties.length,0);assert.equal(k.loose.items.length,0);assert.equal(k.get(buns[0].id),undefined);
+});
+test('a loaded oven tray carries its patties out together without duplicate ownership',()=>{
+ const k=new Kitchen(),p=patty(k),tray=k.entities.find(e=>e.kind==='tray');assert.ok(k.putOnTray(p,tray));assert.match(k.ovenTray(tray),/Open/);k.doors.oven=true;assert.equal(k.ovenTray(tray),null);assert.equal(p.food.where,'oven');k.liftTray(tray);assert.equal(p.food.where,'rest');assert.equal(p.trayCarrier,tray.id);assert.deepEqual(tray.cargo,[p.id]);assert.equal(k.station('oven').state.patties.length,0);assert.equal(k.loose.patties.length,1);
+});
+test('pan lids travel with cookware and do not reappear after removal',()=>{
+ const k=new Kitchen(),gas=k.station('gas'),pan=k.get(gas.panId),lid=k.entities.find(e=>e.kind==='lid');lid.station='gas';gas.state.lid=true;
+ k.liftPan(pan);assert.equal(pan.parked.lid,true);assert.equal(lid.panCarrier,pan.id);assert.equal(gas.state.lid,false);
+ assert.equal(k.dockPan(pan,'gas'),null);assert.equal(lid.station,'gas');assert.equal(gas.state.lid,true);
+ lid.station=null;gas.state.lid=false;k.liftPan(pan);assert.equal(pan.lidId,null);assert.equal(k.dockPan(pan,'gas'),null);assert.equal(lid.station,null);assert.equal(gas.state.lid,false);
+});
+test('the spare non-stick pan starts on its own rack slot with a live cooling state',()=>{
+ const k=new Kitchen(),pan=k.entities.find(e=>e.panType==='nonstick');assert.deepEqual(pan.pos,pan.home);assert.equal(pan.station,null);assert.equal(pan.pan,pan.parked.pan);k.step(.05);assert.ok(Number.isFinite(pan.pan.Tcenter));
+});
+test('a closed lid rejects placement without detaching food and cracking is idempotent',()=>{
+ const k=new Kitchen(),p=patty(k);k.station('gas').state.lid=true;assert.match(k.placeFood(p,'gas'),/lid/);assert.equal(k.loose.patties[0],p.food);assert.equal(p.station,null);
+ const egg=k.addIngredient('egg',[0,.95,0]);k.makeFood(egg,'egg');const food=egg.food;k.makeFood(egg,'egg');assert.equal(egg.food,food);assert.equal(k.loose.items.length,1);
+});
+test('free placement keeps an unobstructed choice and finds nearby space instead of intersecting food',()=>{
+ const {clearPlacement}=require('../js/real-model'),f={minX:-.05,maxX:.05,minZ:-.05,maxZ:.05},surface={x:0,z:0,w:1,d:1};
+ assert.deepEqual(clearPlacement([.48,.94,0],f,surface,[]),[.48,.94,0]);
+ const blocker={minX:-.06,maxX:.06,minZ:-.06,maxZ:.06},pos=clearPlacement([0,.94,0],f,surface,[blocker]);assert.ok(pos);assert.ok(Math.abs(pos[0])>=.116||Math.abs(pos[2])>=.116);assert.equal(pos[1],.94);
+ assert.equal(clearPlacement([0,.94,0],f,surface,[{minX:-1,maxX:1,minZ:-1,maxZ:1}]),null);
+});
+
+test('plated burgers can be rebuilt down to their bottom bun without losing ownership',()=>{
+ const k=new Kitchen(),p=patty(k),q=patty(k),b=k.slice(k.addIngredient('bunWhole',[0,.95,0])),plate=k.entities.find(e=>e.kind==='plate');
+ assert.ok(k.assemble(p,b[0]));assert.ok(k.assemble(q,p));assert.ok(k.assemble(b[1],p));assert.ok(k.putOnTray(p,plate));
+ assert.equal(k.peel(p),b[1]);assert.equal(k.peel(p),q);assert.equal(p.trayCarrier,plate.id);Kitchen.restore(k.snapshot());
+ assert.equal(k.peel(p),p);assert.deepEqual(plate.cargo,[b[0].id]);assert.equal(b[0].trayCarrier,plate.id);assert.equal(p.trayCarrier,null);assert.equal(q.stackRoot,null);
+ assert.ok(k.assemble(p,b[0]));assert.deepEqual(plate.cargo,[p.id]);Kitchen.restore(k.snapshot());
+});
+
+test('cheese and surface salt address exposed meat, including the second patty',()=>{
+ const k=new Kitchen(),p=patty(k),q=patty(k),b=k.slice(k.addIngredient('bunWhole',[0,.95,0]));k.assemble(p,b[0]);k.assemble(q,p);
+ assert.equal(k.exposedPatty(p),q);for(let i=0;i<4;i++){const cheese=k.entity('cheese','cheese',[0,.95,0]);cheese.massG=12;assert.ok(k.addCheese(cheese,p));assert.equal(cheese.cheeseCarrier,q.id);assert.equal(cheese.discarded,false);}
+ assert.equal(p.food.cheeses.length,0);assert.equal(q.food.cheeses.length,4);assert.equal(q.food.cheeses[0].mass,.012);assert.equal(k.cheeseTarget(p),null);
+ k.assemble(b[1],p);assert.equal(k.exposedPatty(p),null);assert.equal(k.addCheese(k.entity('cheese','cheese',[0,.95,0]),p),false);Kitchen.restore(k.snapshot());
+});
+
+test('placement preflights leave cooking, plate and assembly state unchanged',()=>{
+ const k=new Kitchen(),p=patty(k),plate=k.entities.find(e=>e.kind==='plate'),b=k.slice(k.addIngredient('bunWhole',[0,.95,0]));const before=JSON.stringify(k.snapshot());
+ assert.ok(!k.foodPlacement(p,'gas',{x:0,y:0}).error);assert.ok(k.foodPlacement(p,'oven').error);assert.ok(k.trayPlacement(p,plate));assert.equal(k.assemblyProblem(p,b[0]),null);assert.match(k.assemblyProblem(b[1],p),/bottom bun/);
+ assert.equal(JSON.stringify(k.snapshot()),before);
+});
+
+test('prepared slices stay on a small support and failure retains the whole ingredient',()=>{
+ const k=new Kitchen(),e=k.addIngredient('tomato',[0,.95,0]),area={x:0,z:0,w:.32,d:.22};
+ for(let i=0;i<3;i++){const out=k.cut(e,6,area);for(const q of out){assert.ok(Math.abs(q.pos[0])+.042<=area.w/2+1e-9);assert.ok(Math.abs(q.pos[2])+.042<=area.d/2+1e-9);}}
+ const tiny={x:0,z:0,w:.05,d:.05},before=e.remainingMm;assert.deepEqual(k.cut(e,6,tiny),[]);assert.equal(e.remainingMm,before);
+});
+
+test('tool-home migration preserves moved tools while updating their return slots',()=>{
+ const k=new Kitchen(),spoon=k.entities.find(e=>e.kind==='spoon'),knife=k.entities.find(e=>e.kind==='knife');spoon.pos=[.3,.94,2];knife.home=knife.pos=[1.4,.936,-1];const S=require('../js/session'),old=S.decode(k.snapshot());old.layoutVersion=2;
+ const copy=Kitchen.restore(S.encode(old)),homes=require('../js/real-model').toolHomes;assert.deepEqual(copy.get(spoon.id).pos,[.3,.94,2]);assert.deepEqual(copy.get(spoon.id).home,homes.spoon);assert.deepEqual(copy.get(knife.id).pos,homes.knife);
+});
+test('oven power retains its temperature dial through switching and save continuation',()=>{
+ const k=new Kitchen(),oven=k.station('oven').state.oven;k.setOvenTemperature(205);assert.equal(oven.target,0);k.setOvenPower(true);assert.equal(oven.target,205);
+ k.setOvenTemperature(220);assert.equal(oven.target,220);k.setOvenPower(false);assert.equal(oven.target,0);
+ const copy=Kitchen.restore(k.snapshot());copy.setOvenPower(true);assert.equal(copy.station('oven').state.oven.target,220);
+ const S=require('../js/session'),old=S.decode(copy.snapshot());delete old.settings.ovenSetpoint;assert.equal(Kitchen.restore(S.encode(old)).settings.ovenSetpoint,220);
+});
+
+test('chef palms have finite outward-facing surfaces rather than inside-out faces',()=>{
+ const previous=global.window;try{
+  const T=require('../js/vendor/three.min.js');global.window={THREE:T};require('../js/visual-assets');require('../js/chef-rig');
+  for(const side of [-1,1]){const hand=window.ChefRig.hand(side),g=hand.children[0].geometry,p=g.attributes.position,n=g.attributes.normal;let checked=0;
+   for(let i=0;i<p.count;i++){assert.ok(Number.isFinite(n.getX(i)+n.getY(i)+n.getZ(i)));if(Math.hypot(p.getX(i),p.getY(i))>.005){assert.ok(p.getX(i)*n.getX(i)+p.getY(i)*n.getY(i)>0);checked++;}}
+   assert.ok(checked>100);
+  }
+ }finally{if(previous===undefined)delete global.window;else global.window=previous;}
+});

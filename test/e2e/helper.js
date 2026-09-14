@@ -2,11 +2,10 @@
  * test/e2e/helper.js — the shared machinery behind the end-to-end scenarios.
  *
  * A scenario gets a real browser with a real WebGL context, a real HTTP server on a free port,
- * and a handle that drives the game the way a cook does: by clicking the buttons in the panel and
- * dragging the sliders. Nothing reaches into the model to change it; the only test-only hooks are
- * the ones the game already exposes for headless runs — `game.fastForward(seconds)` to advance the
- * physics without waiting for wall-clock time, and `game.newOrder(ticket)` to force a ticket
- * instead of taking a random one.
+ * and a handle for UI interaction. Legacy scenarios use buttons, sliders, game.fastForward and
+ * game.newOrder. The main Real scenario drives pointer and keyboard input with positioned camera
+ * fixtures. Focused Real scenarios also set up model state and call interaction handlers directly
+ * to cover transfers, gripping, rendering and restoration without long manual preparation.
  *
  * Playwright is not a dependency of this project (there is no build step and no node_modules); it
  * is expected to be installed globally. Run the suite as
@@ -23,7 +22,7 @@ const OUT = process.env.E2E_OUT || path.join(__dirname, 'out');
 
 // Chromium in a container has no GPU: SwiftShader is the software rasteriser that gives us a real
 // WebGL context, which the whole viewport depends on.
-const CHROME_ARGS = ['--use-gl=swiftshader', '--enable-webgl', '--ignore-gpu-blocklist', '--enable-unsafe-swiftshader'];
+const CHROME_ARGS = ['--use-angle=swiftshader', '--enable-webgl', '--ignore-gpu-blocklist', '--enable-unsafe-swiftshader'];
 const VIEWPORT = { width: 1400, height: 860 };
 
 function loadPlaywright() {
@@ -64,7 +63,11 @@ class Kitchen {
     this.pageErrors = []; this.consoleErrors = []; this.shots = []; this.steps = [];
   }
   // ---- driving the real controls
-  async click(sel) { await this.page.click(sel); await this.page.waitForTimeout(20); }
+  async reveal(sel) {
+    const drawer = await this.page.$eval(sel, el => el.closest('.drawer[hidden]')?.id);
+    if (drawer) await this.page.locator(`[aria-controls="${drawer}"]`).click();
+  }
+  async click(sel) { await this.reveal(sel); await this.page.click(sel); await this.page.waitForTimeout(20); }
   /**
    * Click something the game re-renders as the clock ticks. Playwright's own click resolves the
    * element and then presses it in a second round trip, which loses the race against a chip list
@@ -73,6 +76,7 @@ class Kitchen {
    * handler doing the work.
    */
   async clickLive(sel) {
+    await this.reveal(sel);
     const hit = await this.page.evaluate((s) => { const el = document.querySelector(s); if (!el) return false; el.click(); return true; }, sel);
     if (!hit) throw new Error(`${this.name}: nothing matches ${sel}`);
     await this.page.waitForTimeout(10);
@@ -92,10 +96,12 @@ class Kitchen {
   }
   /** Move a slider the way a pointer does: set the value and fire the input event the page listens for. */
   async range(sel, value) {
+    await this.reveal(sel);
     await this.page.$eval(sel, (el, v) => { el.value = String(v); el.dispatchEvent(new Event('input', { bubbles: true })); }, value);
     await this.page.waitForTimeout(10);
   }
   async choose(sel, value) {
+    await this.reveal(sel);
     await this.page.$eval(sel, (el, v) => { el.value = String(v); el.dispatchEvent(new Event('change', { bubbles: true })); }, value);
     await this.page.waitForTimeout(10);
   }
@@ -140,11 +146,11 @@ class Kitchen {
 }
 
 /** Boot a browser + server, hand the scenario a Kitchen, and tear everything down again. */
-async function runScenario(name, fn) {
+async function runScenario(name, fn, experience = 'legacy') {
   const { chromium } = loadPlaywright();
   fs.mkdirSync(OUT, { recursive: true });
   const { server, url } = await serve();
-  const browser = await chromium.launch({ args: CHROME_ARGS });
+  const browser = await chromium.launch({ args: CHROME_ARGS, ...(process.env.CHROME_PATH ? {executablePath:process.env.CHROME_PATH} : {}) });
   const page = await browser.newPage({ viewport: VIEWPORT });
   const k = new Kitchen(page, name);
   page.on('pageerror', (e) => k.pageErrors.push(String(e && e.stack ? e.stack : e)));
@@ -154,6 +160,7 @@ async function runScenario(name, fn) {
   try {
     await page.goto(url, { waitUntil: 'load' });
     await page.waitForFunction(() => window.game && window.game.state, null, { timeout: 30000 });
+    await page.locator('#choose-'+experience).click();
     await fn(k);
   } catch (e) {
     error = e;

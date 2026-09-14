@@ -8,6 +8,8 @@ Work a six-ticket shift, if you have the patience because this shit is real time
 
 Desktop browser, mouse and keyboard. No mobile support.
 
+Choose **Legacy** for the original game or **Real** for first-person practice: walk the kitchen, prepare ingredients and cook with physical tools. Real saves separately.
+
 ## Play locally
 
 With Node.js 22+ and Python 3 installed:
@@ -19,6 +21,10 @@ npm start
 Open [localhost:8000](http://localhost:8000). GG
 
 ## Controls
+
+**Real:** WASD to walk, Shift to jog, Space to jump, C to crouch. Hold left click to interact or use a tool; right click to pick up, lift food with a tool, or place it. Scroll adjusts slice/patty thickness, probe depth or placement rotation. Dress the bottom bun in any order. E lifts a layer; the cloth wipes sauce. Release the probe to leave it in the patty; right click removes it. Put your cook on the plate and left click to taste; H shows or hides the notes. Hold a pan and left-drag down to pour. Esc pauses. Open the fridge to get started.
+
+**Legacy:**
 
 | Input | Action |
 |---|---|
@@ -44,4 +50,8 @@ npm run perf      # simulation performance
 
 ## You got a loicense for that burger mate?
 
-You may not sell this or repurpose/reuse it in any way with the intention of selling it. Beyond that I don’t care.
+Copyright © 2026 f1zz1ec0ke. **All rights reserved.**
+
+You may read the source and play the unmodified game, locally or on the official site. Any other copying, modification, redistribution, sale, sublicensing or reuse of Griddle's original code or assets requires prior written permission from the copyright holder.
+
+Third-party components, including Three.js, retain their own licenses. These terms do not restrict rights granted by law, [GitHub's Terms of Service](https://docs.github.com/en/site-policy/github-terms/github-terms-of-service#d-user-generated-content) or licenses previously granted for earlier versions.

@@ -63,6 +63,38 @@
     g.computeVertexNormals();return g;
   }
 
+  // One cold-topping asset builder for both game modes.
+  function coldLayer(kind,R,index=0,single=false) {
+  const spec = root.BurgerAssembly.cold[kind], layer = new T.Group();
+  const material = new T.MeshPhysicalMaterial({color:kind==='lettuce'?0xffffff:spec.color,vertexColors:kind==='lettuce',roughness:spec.sauce?.27:.48,clearcoat:spec.sauce?.65:.25,side:T.DoubleSide});
+  if(kind!=='lettuce')material.color.convertSRGBToLinear();
+  const count = kind==='pickles'?(single?1:5):kind==='lettuce'?7:1;
+  for(let j=0;j<count;j++) {
+    const r = count>1||kind==='pickles' ? R*.40 : R*.94;
+    const geometry=kind==='lettuce'?lettuceGeometry(r,j*1.7):spec.sauce?sauceGeometry(r,spec.height,index*2.4):new T.CylinderGeometry(r,r,spec.height,40);
+    const mesh = new T.Mesh(geometry,material);
+    mesh.position.set(count>1?Math.cos(j*2.4)*R*.57:0,spec.height/2,count>1?Math.sin(j*2.4)*R*.57:0);
+    if(kind==='lettuce') { mesh.rotation.y=j*2.4; mesh.rotation.x=(j%2?1:-1)*.15; }
+    mesh.castShadow=true; mesh.receiveShadow=true; layer.add(mesh);
+    if(kind==='pickles'){
+      const flesh=new T.MeshPhysicalMaterial({map:VA.texture('pickle').map,roughness:.3,clearcoat:.45});
+      for(const side of [-1,1]){const cut=new T.Mesh(new T.CircleGeometry(r*.995,48),flesh);cut.rotation.x=-side*Math.PI/2;cut.position.y=side*(spec.height/2+.00002);mesh.add(cut);}
+    }
+    if(kind==='tomato') {
+      const seedMat=new T.MeshStandardMaterial({color:0xcab15f,roughness:.45});seedMat.color.convertSRGBToLinear();
+      const gelMat=new T.MeshPhysicalMaterial({color:0xa95a29,roughness:.21,clearcoat:.8});gelMat.color.convertSRGBToLinear();
+      const skinMat=new T.MeshStandardMaterial({color:0x9f281b,roughness:.4});skinMat.color.convertSRGBToLinear();
+      const skin=new T.Mesh(new T.RingGeometry(R*.86,R*.94,64),skinMat);skin.rotation.x=-Math.PI/2;skin.position.y=spec.height+.00008;layer.add(skin);
+      for(let k=0;k<5;k++) {
+        const a=k*Math.PI*2/5,cx=Math.cos(a)*R*.53,cz=Math.sin(a)*R*.53;
+        const gel=new T.Mesh(new T.CircleGeometry(R*.23,20),gelMat);gel.rotation.x=-Math.PI/2;gel.rotation.z=-a;gel.scale.y=.68;gel.position.set(cx,spec.height+.00013,cz);layer.add(gel);
+        for(let n=0;n<3;n++) {const seed=new T.Mesh(new T.SphereGeometry(.0018,6,4),seedMat);seed.scale.set(1,.22,.55);seed.rotation.y=a;seed.position.set(cx+Math.cos(a+n*2.1)*R*.12,spec.height+.00035,cz+Math.sin(a+n*2.1)*R*.12);layer.add(seed);}
+      }
+    }
+  }
+    return layer;
+  }
+
   // ------------------------------------------------------------ colour model
   const COL = {
     frozen: [190, 120, 130], raw: [177, 53, 61], rawWarm: [184, 65, 70], pink: [205, 118, 118],
@@ -904,6 +936,7 @@
       this.baconGeo.attributes.position.needsUpdate = true;
       this.baconGeo.attributes.color.needsUpdate = true;
       this.baconGeo.computeVertexNormals();
+      this.baconGeo.computeBoundingBox();this.baconGeo.computeBoundingSphere();
       this.baconMesh.material.roughness = clamp(0.25 + 0.5 * it.crisp - 0.2 * fatLeft, 0.15, 0.9);
       this.baconMesh.material.clearcoat = clamp(0.8 * fatLeft + 0.3 * (1 - it.crisp), 0, 1); // wet with its own fat until it is crisp
       this.group.rotation.y = 0.5 + 0.2 * it.id;
@@ -924,6 +957,7 @@
       pos[0] = 0; pos[1] = 0.0032 * (1 - 0.3 * set); pos[2] = 0;
       this.whiteGeo.attributes.position.needsUpdate = true;
       this.whiteGeo.computeVertexNormals();
+      this.whiteGeo.computeBoundingBox();this.whiteGeo.computeBoundingSphere();
       const wc = mix3(ICOL.whiteRaw, ICOL.whiteSet, set);
       const under = itemFaceColour(it.faceDown, wc, 0.5);
       setLin(this.whiteMat, mix3(wc, under, 0.35)); // some of the browned underside shows through at the edges
@@ -977,9 +1011,10 @@
 
   // ------------------------------------------------------------ the viewport
   class Viewport {
-    constructor(canvas) {
+    constructor(canvas, embedded = null) {
+      this.embedded=embedded;
       this.canvas = canvas;
-      this.renderer = new T.WebGLRenderer({ canvas, antialias: true, alpha: false });
+      this.renderer = embedded?.renderer || new T.WebGLRenderer({ canvas, antialias: true, alpha: false });
       this.renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
       this.renderer.shadowMap.enabled = true; this.renderer.shadowMap.type = T.PCFSoftShadowMap;
       this.renderer.localClippingEnabled = true; // the toppings on a served burger are cut with the same plane the patty is
@@ -990,16 +1025,19 @@
       this.clock = 0; this.texBudget = 0;
       this.mode = 'board'; // 'board' | 'stove'
       this.cutaway = false;
-      this._buildLights(); this._buildKitchen(); this._buildReflections(); this._buildRoomSmoke(); this._buildStove(); this._buildBoard(); this._buildParticles(); this._buildProbe();
-      this._buildTextures();
+      if(embedded){this.flameLight=new T.PointLight(0xff8a2a,0,.6,2);this.scene.add(this.flameLight);}
+      else{this._buildLights(); this._buildKitchen(); this._buildReflections(); this._buildRoomSmoke();}
+      this._buildStove(); this._buildBoard(); this._buildParticles(); this._buildProbe();
+      if(embedded?.textures)for(const k of ['noise','noiseFine','marble','marbleCut','spots','blotch'])this[k]=embedded.textures[k];else this._buildTextures();
       this.views = new Map(); this.itemViews = new Map(); this.selected = null; this.selectedItem = null; this.previewPatty = null;
       this.peeks = new Map(); // patty → when the cut the cook made in it closes again (wall clock, ms)
-      this.controls = new Orbit(this);
+      this.controls = embedded?{goal:{azimuth:0},azimuth:0,reset(){},update(){}}:new Orbit(this);
       this.resize();
-      window.addEventListener('resize', () => this.resize());
+      if(!embedded)window.addEventListener('resize', () => this.resize());
       this.setMode('board');
     }
     resize() {
+      if(this.embedded)return;
       const w = this.canvas.clientWidth || 800, h = this.canvas.clientHeight || 600;
       this.renderer.setSize(w, h, false); this.camera.aspect = w / h;
       // Preserve horizontal framing on smaller desktop windows.
@@ -1045,6 +1083,7 @@
       this.cleanFog=this.scene.fog;this.smokeFog=new T.FogExp2(0x8f9891,.02);
     }
     _updateRoomAir(state) {
+      if(this.embedded)return;
       const air=state.room||{opening:0,upper:0,lower:0},time=state.t||0;
       for(const w of this.room.userData.windows)w.hinge.rotation.y=w.side*air.opening*1.05;
       const burden=air.lower*.7+air.upper*.3;
@@ -1074,6 +1113,7 @@
       target.dispose(); pmrem.dispose();
     }
     _buildOil() {
+      this.waterView=new root.PanWaterView(this.panGroup);
       const n=33;
       this.oilPixels=new Uint8Array(n*n*4);
       this.oilTexture=new T.DataTexture(this.oilPixels,n,n,T.RGBAFormat);
@@ -1098,6 +1138,7 @@
     }
     _updateOil(state) {
       const pan=state.pan,f=root.BurgerOilFilm.ensure(pan),n=f.n;
+      this.waterView.update(pan,state.t,this.panFloorY,this.stoveType!=='charcoal');
       this.oil.visible=pan.oil>1e-6 && this.stoveType!=='charcoal';
       if(!this.oil.visible)return;
       this.oil.position.y=this.panFloorY+.00018;
@@ -1106,7 +1147,8 @@
       for(let k=0;k<f.mass.length;k++) max=Math.max(max,f.mass[k]/scale);
       for(let j=0;j<n;j++)for(let i=0;i<n;i++) {
         const k=j*n+i,depth=f.mass[k]/scale;
-        a.setXYZ(k,i*f.cell-f.r,f.r-j*f.cell,depth);
+        const x=i*f.cell-f.r,z=j*f.cell-f.r;
+        a.setXYZ(k,x,-z,depth+this.waterView.heightAt(x,z));
         this.oilPixels[k*4]=Math.round(255*depth/max);this.oilPixels[k*4+3]=255;
       }
       a.needsUpdate=true;this.oil.geometry.computeVertexNormals();this.oilTexture.needsUpdate=true;
@@ -1605,33 +1647,7 @@
               cap.userData.cutCap=true; group.add(cap); group.userData.caps.set(i,cap);
             }
             if (!l.cold) return;
-            const spec = A.cold[l.cold], layer = new T.Group(), R = Math.max(.048,p.D/2);
-            const material = new T.MeshPhysicalMaterial({color:l.cold==='lettuce'?0xffffff:spec.color,vertexColors:l.cold==='lettuce',roughness:spec.sauce?.27:.48,clearcoat:spec.sauce?.65:.25,side:T.DoubleSide});
-            if(l.cold!=='lettuce')material.color.convertSRGBToLinear();
-            const count = l.cold==='pickles'?5:l.cold==='lettuce'?7:1;
-            for(let j=0;j<count;j++) {
-              const r = count>1 ? R*.40 : R*.94;
-              const geometry=l.cold==='lettuce'?lettuceGeometry(r,j*1.7):spec.sauce?sauceGeometry(r,spec.height,i*2.4):new T.CylinderGeometry(r,r,spec.height,40);
-              const mesh = new T.Mesh(geometry,material);
-              mesh.position.set(count>1?Math.cos(j*2.4)*R*.57:0,spec.height/2,count>1?Math.sin(j*2.4)*R*.57:0);
-              if(l.cold==='lettuce') { mesh.rotation.y=j*2.4; mesh.rotation.x=(j%2?1:-1)*.15; }
-              mesh.castShadow=true; mesh.receiveShadow=true; layer.add(mesh);
-              if(l.cold==='pickles'){
-                const flesh=new T.MeshPhysicalMaterial({map:VA.texture('pickle').map,roughness:.3,clearcoat:.45});
-                for(const side of [-1,1]){const cut=new T.Mesh(new T.CircleGeometry(r*.995,48),flesh);cut.rotation.x=-side*Math.PI/2;cut.position.y=side*(spec.height/2+.00002);mesh.add(cut);}
-              }
-              if(l.cold==='tomato') {
-                const seedMat=new T.MeshStandardMaterial({color:0xcab15f,roughness:.45});seedMat.color.convertSRGBToLinear();
-                const gelMat=new T.MeshPhysicalMaterial({color:0xa95a29,roughness:.21,clearcoat:.8});gelMat.color.convertSRGBToLinear();
-                const skinMat=new T.MeshStandardMaterial({color:0x9f281b,roughness:.4});skinMat.color.convertSRGBToLinear();
-                const skin=new T.Mesh(new T.RingGeometry(R*.86,R*.94,64),skinMat);skin.rotation.x=-Math.PI/2;skin.position.y=spec.height+.00008;layer.add(skin);
-                for(let k=0;k<5;k++) {
-                  const a=k*Math.PI*2/5,cx=Math.cos(a)*R*.53,cz=Math.sin(a)*R*.53;
-                  const gel=new T.Mesh(new T.CircleGeometry(R*.23,20),gelMat);gel.rotation.x=-Math.PI/2;gel.rotation.z=-a;gel.scale.y=.68;gel.position.set(cx,spec.height+.00013,cz);layer.add(gel);
-                  for(let n=0;n<3;n++) {const seed=new T.Mesh(new T.SphereGeometry(.0018,6,4),seedMat);seed.scale.set(1,.22,.55);seed.rotation.y=a;seed.position.set(cx+Math.cos(a+n*2.1)*R*.12,spec.height+.00035,cz+Math.sin(a+n*2.1)*R*.12);layer.add(seed);}
-                }
-              }
-            }
+            const layer=coldLayer(l.cold,Math.max(.048,p.D/2),i);
             group.add(layer); group.userData.layers.set(i,layer);
           });
         }
@@ -2028,7 +2044,7 @@
       this.controls.update(cameraDt);
       // Keep bounced light subtle; explicit wet-surface reflection strengths survive.
       this.scene.traverse(o=>{if(o.isMesh && o.material?.envMapIntensity===1)o.material.envMapIntensity=.22;});
-      this.renderer.render(this.scene, this.camera);
+      if(!this.embedded)this.renderer.render(this.scene, this.camera);
     }
     /** Sizzle, steam, smoke, spatter, juice beads and fat drips around every patty on the pan. */
     _updateParticles(state, dt, list, stoveOn) {
@@ -2286,5 +2302,5 @@
     }
   }
 
-  root.BurgerRender = { Viewport, PattyView, ItemView, nodeColour, faceColour, COL, ICOL };
+  root.BurgerRender = { coldLayer, Viewport, PattyView, ItemView, nodeColour, faceColour, COL, ICOL };
 })(window);

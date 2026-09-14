@@ -150,7 +150,7 @@ async function main() {
   const bad = total.fail > 0 || total.cancelled > 0 || results.some((r) => r.timedOut || r.code !== 0);
   console.log(`# result ${bad ? 'FAIL' : 'pass'}`);
   if (bad) process.exit(1);
-  const features = await runProcess(['--test', '--test-reporter=spec', require.resolve('./features.test.js'), require.resolve('./cues.test.js'), require.resolve('./dynamics.test.js'), require.resolve('./cheese-mesh.test.js')]);
+  const features = await runProcess(['--test', '--test-reporter=spec', require.resolve('./features.test.js'), require.resolve('./cues.test.js'), require.resolve('./dynamics.test.js'), require.resolve('./cheese-mesh.test.js'), require.resolve('./real.test.js')]);
   process.stdout.write(features.out);
   if (features.timedOut) console.error('Gameplay/session regression tests exceeded TEST_TIMEOUT.');
   process.exit(features.code === 0 && !features.timedOut ? 0 : 1);

@@ -58,7 +58,7 @@
     const mobility=.25+1.75*Math.min(1,Math.max(0,(pan.T-20)/160));
     const sweeps=Math.max(1,Math.ceil(dt/.05)), h=dt/sweeps, scale=RHO*f.area;
     for(let pass=0;pass<sweeps;pass++) {
-      for(let k=0;k<f.mass.length;k++) f.head[k]=f.mass[k]/scale+f.floor[k]+f.obstacle[k];
+      for(let k=0;k<f.mass.length;k++) f.head[k]=f.mass[k]/scale+f.floor[k]+f.obstacle[k]+(k%N*f.cell-f.r)*(pan.slopeX||0)+(Math.floor(k/N)*f.cell-f.r)*(pan.slopeZ||0);
       for(let j=0;j<N;j++) for(let i=0;i<N;i++) {
         const a=j*N+i; if(!f.mask[a]) continue;
         for(let direction=0;direction<2;direction++) {

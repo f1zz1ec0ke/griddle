@@ -566,17 +566,17 @@
     return true;
   }
 
-  function addFat(s, kind, grams) {
+  function addFat(s, kind, grams, temperature = s.env.Tamb, quiet = false) {
     const f = FATS[kind] || FATS.none;
     if (kind === 'none' || !grams) return;
     if (s.grill) { logEvent(s, 'There is no pan on a grill. Fat goes on the meat, not the grate, and whatever renders out falls on the coals.', 'info'); return; }
     const m = grams / 1000;
-    PanWater.add(s.pan,m*f.water,s.env.Tamb);
+    PanWater.add(s.pan,m*f.water,temperature);
     const pan=s.pan,addedOil=m*(1-f.water-f.solids),area=Math.PI*pan.floorR**2;
     let mean=0;
     for(let j=0;j<pan.Np;j++){
       const oldC=pan.ringM[j]*pan.cp+pan.oil*C.cpF*pan.ringA[j]/area,newC=addedOil*C.cpF*pan.ringA[j]/area;
-      pan.Tr[j]=(oldC*pan.Tr[j]+newC*s.env.Tamb)/(oldC+newC);mean+=pan.Tr[j]*pan.ringA[j];
+      pan.Tr[j]=(oldC*pan.Tr[j]+newC*temperature)/(oldC+newC);mean+=pan.Tr[j]*pan.ringA[j];
     }
     pan.oil+=addedOil;pan.T=mean/area;pan.Tcenter=pan.Tr[0];pan.Tedge=pan.Tr[pan.Np-1];
     s.pan.fond += m * f.solids;
@@ -584,7 +584,7 @@
     s.pan.oilSmoke = Math.min(s.pan.oilSmoke, f.smoke);
     Oil.sync(s.pan);
     const depth = s.pan.oil / 920 / (Math.PI * s.pan.floorR ** 2);
-    logEvent(s, `Added ${grams} g ${f.name.split(' (')[0].toLowerCase()} to the pan` + (s.pan.T > f.smoke ? ' — it is smoking immediately, the pan is above its smoke point.' : '.') + (depth > 0.002 ? ` Fat is now ${(depth * 1000).toFixed(0)} mm deep.` : ''), 'action');
+    if(!quiet)logEvent(s, `Added ${grams} g ${f.name.split(' (')[0].toLowerCase()} to the pan` + (s.pan.T > f.smoke ? ' — it is smoking immediately, the pan is above its smoke point.' : '.') + (depth > 0.002 ? ` Fat is now ${(depth * 1000).toFixed(0)} mm deep.` : ''), 'action');
   }
 
   /** Standard spots for n patties in a pan of floor radius R: centre, a pair, a triangle, a square. */
@@ -1354,12 +1354,17 @@
         Q[c] += q; qTop += q;
       }
     }
-    if (s.baste > 0) { const q = 150 * A * ((bb.T || 150) - 40 - TtopMean); for (let j = 0; j < Nr; j++) Q[topRow + j] += Math.max(0, q) * aj[j]; }
+    if (s.baste > 0&&(!s.bastePatty||s.bastePatty===p.id)) {
+      let q=Math.max(0,150*A*((bb.T||150)-40-TtopMean));
+      if(s.bastePatty)q=Math.min(q,s.pan.oil*2000*Math.max(0,s.pan.T-40-TtopMean)/dt);
+      for(let j=0;j<Nr;j++){Q[topRow+j]+=q*aj[j];if(s.bastePatty)qPanR[j]+=q*aj[j];}
+      if(s.bastePatty)qPan+=q;
+    }
 
     // ---- edge boundary (outer ring of every layer)
     const bs = bc.side, per = 2 * Math.PI * R, perDz = per * dz;
     const sideH = bs.h || C.hAirSide, sideRadK = bs.rad ? perDz * 0.9 * C.sigma * bs.radView : 0, sideRadT4 = bs.rad ? p4(bs.radT + 273.15) : 0;
-    let qSide = 0;
+    let qSide = 0, qOil = bt.oil ? qTop : 0;
     for (let k = 0; k < Nz; k++) {
       const c = k * Nr + Nr - 1, z = (k + 0.5) * dz;
       const inOil = bs.oilDepth > z;
@@ -1369,7 +1374,7 @@
         q = sideH * perDz * (bs.T - T[c]);
         if (bs.rad) q += sideRadK * (sideRadT4 - p4(T[c] + 273.15));
       }
-      Q[c] += q; qSide += q;
+      Q[c] += q; qSide += q;if(inOil)qOil+=q;
     }
 
     // ---- top evaporation (Magnus): from pooled juice first, then tissue, per ring
@@ -1577,7 +1582,7 @@
       fu.crisp = clamp(fu.crisp + 0.01 * dt, 0, 1);
     }
     if (bt.RH > 0.9) fu.crisp = clamp(fu.crisp - 0.03 * dt, 0, 1);
-    if (s.baste > 0) { for (let j = 0; j < Nr; j++) fu.brownR[j] += 0.004 * dt; faceMean(p, fu); }
+    if (s.baste > 0&&!s.bastePatty) { for (let j = 0; j < Nr; j++) fu.brownR[j] += 0.004 * dt; faceMean(p, fu); }
     // the edge: browns from radiant heat on a grill, barely at all in a pan
     if (bs.rad) {
       let Te = 0; for (let k = 0; k < Nz; k++) Te += T[k * Nr + Nr - 1] / Nz;
@@ -1622,7 +1627,7 @@
     for(let j=0;j<Nr;j++)qPanR[j]+=p._cheesePanQ*aj[j];
     evapTop+=p._cheeseEvap/dt;
     res.qTop = qTop+p._cheeseAirQ; res.qBot = qPan+p._cheesePanQ; res.hc = hc; res.boilBottom = boilBottom / dt; res.evapTop = evapTop;
-    res.fatDrip = fatDrip / dt; res.fatSide = fatSide / dt; res.juiceSide = juiceSide / dt; res.Ts = surfT; res.qSide = qSide;
+    res.fatDrip = fatDrip / dt; res.fatSide = fatSide / dt; res.juiceSide = juiceSide / dt; res.Ts = surfT; res.qSide = qSide;res.qOil=qOil;
     res.cheeseDrip = p.cheeseDrip / dt;
     return res;
   }
@@ -1649,17 +1654,17 @@
     p.subSteps = n;
     if (n === 1) return stepPatty(s, p, dt, bc);
     const h = dt / n, Nr = p.Nr, acc = p.sc.acc, accR = acc.qBotR, accP = acc.qPanR;
-    acc.qTop = 0; acc.qBot = 0; acc.hc = 0; acc.boilBottom = 0; acc.evapTop = 0; acc.fatDrip = 0; acc.fatSide = 0; acc.juiceSide = 0; acc.cheeseDrip = 0; acc.Ts = 0; acc.qSide = 0;
+    acc.qTop = 0; acc.qBot = 0; acc.hc = 0; acc.boilBottom = 0; acc.evapTop = 0; acc.fatDrip = 0; acc.fatSide = 0; acc.juiceSide = 0; acc.cheeseDrip = 0; acc.Ts = 0; acc.qSide = 0;acc.qOil=0;
     accR.fill(0); accP.fill(0);
     for (let k = 0; k < n; k++) {
       const r = stepPatty(s, p, h, bc);
       acc.qTop += r.qTop; acc.qBot += r.qBot; acc.hc += r.hc; acc.boilBottom += r.boilBottom; acc.evapTop += r.evapTop;
-      acc.fatDrip += r.fatDrip; acc.fatSide += r.fatSide; acc.juiceSide += r.juiceSide; acc.cheeseDrip += r.cheeseDrip; acc.Ts += r.Ts; acc.qSide += r.qSide;
+      acc.fatDrip += r.fatDrip; acc.fatSide += r.fatSide; acc.juiceSide += r.juiceSide; acc.cheeseDrip += r.cheeseDrip; acc.Ts += r.Ts; acc.qSide += r.qSide;acc.qOil+=r.qOil;
       for (let j = 0; j < Nr; j++) { accR[j] += r.qBotR[j]; accP[j] += r.qPanR[j]; }
     }
     // the caller wants rates and temperatures, so the sub-steps are averaged, not summed
     acc.qTop /= n; acc.qBot /= n; acc.hc /= n; acc.boilBottom /= n; acc.evapTop /= n;
-    acc.fatDrip /= n; acc.fatSide /= n; acc.juiceSide /= n; acc.cheeseDrip /= n; acc.Ts /= n; acc.qSide /= n;
+    acc.fatDrip /= n; acc.fatSide /= n; acc.juiceSide /= n; acc.cheeseDrip /= n; acc.Ts /= n; acc.qSide /= n;acc.qOil/=n;
     for (let j = 0; j < Nr; j++) { accR[j] /= n; accP[j] /= n; }
     return acc;
   }
@@ -2557,7 +2562,7 @@
       const open = (1 - bb.barFrac) * (0.9 * C.sigma * bb.view * (p4(bb.Tfire + 273.15) - p4(Tf + 273.15)) + 25 * (bb.Tair - Tf));
       return (bar + open) * A;
     }
-    if (bb.type === 'air') return bb.h * A * (bb.T - Tf);
+    if (bb.type === 'air') return bb.h * A * (bb.T - Tf)+(bb.rad?A*0.9*C.sigma*(bb.radView??1)*(p4(bb.radT+273.15)-p4(Tf+273.15)):0);
     return hc * A * (bb.T - Tf);
   }
   /**
@@ -2591,6 +2596,7 @@
     const qFB = Gd * (face.T - body.T), qBU = Gu * (body.T - up.T);
     const bt = bc.top;
     const qTop = topH(bt, up.T) * A * (bt.T - up.T) + (bt.rad ? A * 0.9 * C.sigma * bt.radView * (p4(bt.radT + 273.15) - p4(up.T + 273.15)) : 0);
+    it.qTop=qTop;
     const cap = bottomCap(bc);
     const bF = heatNode(face, q - qFB, dt, sp.cpDry, cap);
     const bB = heatNode(body, qFB - qBU, dt, sp.cpDry, Math.max(cap, bt.T));
@@ -2632,6 +2638,7 @@
     const q = itemQBottom(it, bc, hc, A, b.T);
     const bt = bc.top;
     const qTop = topH(bt, b.T) * Atop * (bt.T - b.T) + (bt.rad ? Atop * 0.9 * C.sigma * bt.radView * (p4(bt.radT + 273.15) - p4(b.T + 273.15)) : 0);
+    it.qTop=qTop;
     const cap = Math.max(bottomCap(bc), bt.T);
     const boiled = heatNode(b, q + qTop, dt, sp.cpDry, cap, b.w - wBound);
     it.lostWater += boiled; it.steam = boiled / dt;
@@ -2681,6 +2688,7 @@
     const qwt = Gw * (wb.T - wt.T), qy = Gy * (wb.T - y.T), qyTop = GyTop * (wt.T - y.T);
     const qTopAir = topH(bt, wt.T) * Awhite * (bt.T - wt.T) + (radTop ? Awhite * radTop * (p4(bt.radT + 273.15) - p4(wt.T + 273.15)) : 0);
     const qYolkAir = topH(bt, y.T) * sp.yolkA * 2 * (bt.T - y.T) + (radTop ? sp.yolkA * 2 * radTop * (p4(bt.radT + 273.15) - p4(y.T + 273.15)) : 0);
+    it.qTop=qTopAir+qYolkAir;
     // the top of a frying egg steams: Magnus again, and it is worth 20–30 W of cooling
     let evap = 0;
     if (bt.RH < 0.99 && wt.w - wtBound > 1e-9) {
@@ -2755,6 +2763,7 @@
     const qBT = G * (b.T - t.T);
     const bt = bc.top, Atop = A * 1.4; // a heap's exposed surface is bigger than its footprint
     const qTop = topH(bt, t.T) * Atop * (bt.T - t.T) + (bt.rad ? Atop * 0.9 * C.sigma * bt.radView * (p4(bt.radT + 273.15) - p4(t.T + 273.15)) : 0);
+    it.qTop=qTop;
     let evap = 0;
     if (bt.RH < 0.99 && t.w > 1e-9 && t.T > 25) {
       const drive = Math.max(0, rhoVapSat(t.T) - bt.RH * rhoVapSat(bt.T));
@@ -2864,8 +2873,9 @@
       ensureRegions(it);
       for(const r of it.regions){r.where=it.where;r.contactF=it.contactF;r.dFat=r.dJuice=0;fn(s,r,dt,bc);}
       Moisture.syncRegions(it);
+      it.qTop=it.regions.reduce((q,r)=>q+(r.qTop||0),0);
     } else fn(s, it, dt, bc);
-    if (it.where === 'pan') { it.cookTime += dt; it.timeDown += dt; } else it.restT += dt;
+    if (it.where === 'pan'||it.where==='oven') { it.cookTime += dt; it.timeDown += dt; } else it.restT += dt;
   }
 
   /**
@@ -2996,6 +3006,7 @@
     for (let i = 0; i < s.items.length; i++) if (s.items[i].where === 'pan') itemsOn.push(s.items[i]);
     s.t += dt;
     let ovenLoad = 0;
+    const external=s.externalOven,panAmbient=external?external.T:Tamb;if(external)external.loadW=0;
     // Lumped cavity/wall capacity and finite 3.5 kW thermostat. Retains the
     // empty-oven ramp; food's actual boundary heat now leaves the oven.
     if (s.oven) {
@@ -3015,7 +3026,7 @@
       grill.Tdome += ((domeTarget - grill.Tdome) * dt) / (s.lid ? 60 : 20);
       s.lidAirT = grill.Tdome;
     } else {
-      const lidTarget = s.lid ? Math.min(104, 0.75 * pan.T + 25) : Tamb + 0.25 * (pan.T - Tamb);
+      const lidTarget = external?external.T:s.lid ? Math.min(104, 0.75 * pan.T + 25) : Tamb + 0.25 * (pan.T - Tamb);
       s.lidAirT += ((lidTarget - s.lidAirT) * dt) / (s.lid ? 12 : 4);
     }
 
@@ -3049,17 +3060,18 @@
         for (let j = 0; j < Np; j++) { weights[j] = st.profile((j + 0.5) * pan.dr, st.knob / 10) * pan.ringA[j]; wsum += weights[j]; }
         sc.wsum = wsum;
       }
-      const wsum = sc.wsum, Tak4 = p4(Tamb + 273.15), lidConv = s.lid ? 0.4 : 1, lidRad = s.lid ? 0.3 : 1, emissSig = pan.emiss * C.sigma;
+      const wsum = sc.wsum, Tak4 = p4(panAmbient + 273.15), lidConv = s.lid ? 0.4 : 1, lidRad = s.lid ? 0.3 : 1, emissSig = pan.emiss * C.sigma;
       for (let j = 0; j < Np; j++) {
         qRing[j] += wsum > 0 ? (st.pDelivered * weights[j]) / wsum : 0;
         const Tk = Tr[j] + 273.15;
-        const hNat = 1.32 * Math.sqrt(Math.sqrt(Math.max(1, Tr[j] - Tamb) / pan.diam)) + 3; // x^¼, two square roots being far cheaper than a pow()
+        const hNat = external?18:1.32 * Math.sqrt(Math.sqrt(Math.max(1, Tr[j] - Tamb) / pan.diam)) + 3; // x^¼, two square roots being far cheaper than a pow()
         const freeA = pan.ringA[j] * (1 - cov[j]);
-        qRing[j] -= hNat * freeA * (Tr[j] - Tamb) * lidConv + emissSig * (p4(Tk) - Tak4) * freeA * lidRad + 3 * pan.ringA[j] * (Tr[j] - Tamb);
+        qRing[j] -= hNat * freeA * (Tr[j] - panAmbient) * lidConv + emissSig * (p4(Tk) - Tak4) * freeA * lidRad + (external?18:3) * pan.ringA[j] * (Tr[j] - panAmbient);
       }
       const hNatE = 1.32 * Math.sqrt(Math.sqrt(Math.max(1, Tr[Np - 1] - Tamb) / pan.diam)) + 3;
-      qRing[Np - 1] -= (0.25 * Math.PI * pan.diam * 0.05 * hNatE + 4 * Math.PI * pan.diam * pan.wall) * (Tr[Np - 1] - Tamb); // rim and wall
+      qRing[Np - 1] -= (0.25 * Math.PI * pan.diam * 0.05 * hNatE + 4 * Math.PI * pan.diam * pan.wall) * (Tr[Np - 1] - panAmbient); // rim and wall
     }
+    if(external)for(const q of qRing)external.loadW+=q;
     // Water warms separately, then boils using heat actually taken from the metal/oil.
     const water=grill?{heat:0,evap:0,boiled:0}:PanWater.step(pan,s.env,s.lid,dt),evapPan=water.evap/dt;
     for(let j=0;j<Np;j++)qRing[j]-=water.heat/dt*pan.ringA[j]/(Math.PI*pan.floorR**2);
@@ -3168,8 +3180,15 @@
           if (submerged) { bt.h = C.hOil; bt.T = Tunder; bt.RH = 1; bt.oil = true; }
           else { bt.h = s.lid ? C.hLid : C.hAirTop; bt.T = s.lidAirT; bt.RH = s.lid ? clamp((s.lidAirT - 60) / 40, s.env.RH, 1) : s.env.RH; bt.oil = false; }
           bs.T = Tamb + 0.25 * (Tedge - Tamb); bs.oilDepth = pan.oilDepth; bs.oilT = Tunder;
+          bt.rad=bs.rad=false;bs.h=0;
+          if(external&&!submerged){bt.h=18;bt.T=external.T;bt.RH=s.env.RH*rhoVapSat(Tamb)/rhoVapSat(external.T);bt.rad=true;bt.radT=external.T;bt.radView=1;bs.T=external.T;bs.h=18;bs.rad=true;bs.radT=external.T;bs.radView=1;}
         }
         const pr = stepPattyGuarded(s, p, dt, bc);
+        if(external){
+          // Submerged surfaces take heat from the oil bath, not the oven air.
+          const fromOil=pr.qOil||0;external.loadW+=pr.qTop+pr.qSide-fromOil;
+          for(let j=0;j<Np;j++)qRing[j]-=fromOil*pan.ringA[j]/(Math.PI*pan.floorR**2);
+        }
         p.cookTime += dt; p.timeDown += dt;
         if (p.scrapeT > 0) p.scrapeT = Math.max(0, p.scrapeT - dt); // the second of spatula work runs down in simulated time, like everything else
         // heat drawn from the rings under each patty ring, in the same proportions it was read from
@@ -3259,8 +3278,10 @@
           const bb = bc.bottom, bt = bc.top;
           bb.T = it.Tat; bb.oil = Oil.contactMass(pan, it);
           bt.h = s.lid ? C.hLid : C.hAirTop; bt.T = s.lidAirT; bt.RH = s.lid ? clamp((s.lidAirT - 60) / 40, s.env.RH, 1) : s.env.RH; bt.rad = false;
+          if(external){bt.h=18;bt.T=external.T;bt.RH=s.env.RH*rhoVapSat(Tamb)/rhoVapSat(external.T);bt.rad=true;bt.radT=external.T;bt.radView=1;}
         }
         stepItem(s, it, dt, bc);
+        if(external)external.loadW+=it.qTop||0;
         // the metal under it gives up that heat; over coals only the bar contact comes out of the
         // bars, the rest was radiation from the fire (the same 0.35 share the patties use)
         const share = grill ? 0.35 : 1;
@@ -3280,16 +3301,21 @@
         contactAll += it.contactF == null ? 1 : it.contactF;
         dryDownAll += itemDryness(it);
         nOnPan++;
+      } else if(it.where==='oven'){
+        const temp=s.oven?.T??Tamb,bc=it._bcOven||(it._bcOven={bottom:{type:'air',h:18,rad:true,radView:1},top:{h:18,rad:true,radView:1}});
+        for(const face of [bc.bottom,bc.top]){face.T=temp;face.radT=temp;}bc.top.RH=s.env.RH*rhoVapSat(Tamb)/rhoVapSat(temp);
+        stepItem(s,it,dt,bc);ovenLoad+=(it.qBot||0)+(it.qTop||0);itemBoil+=it.steam;itemSmoke+=it.smoke;
       } else if (it.where === 'rest' || it.where === 'cut') {
         const bc = it._bcAir || (it._bcAir = { bottom: { type: 'air', h: 15, T: 0 }, top: { h: C.hAirTop, T: 0, RH: 0, rad: false } });
         bc.bottom.h=15; bc.top.h=C.hAirTop; bc.top.insulated=false;
         bc.bottom.T = Tamb + 8; bc.top.T = Tamb; bc.top.RH = s.env.RH;
         bc.bottom.internalCap=it.assembledTo!=null?Math.max(...['face','up','body','bot','top','wBot','wTop','yolk'].map(k=>it[k]?.T||0)):0;
-        if(it.assembledTo!=null) {const owner=s.patties.find(p=>p.id===it.assembledTo); if(owner) Assembly.cover(owner,bc,it);}
+        if(it.assembledTo!=null) {const owner=s.patties.find(p=>p.id===it.assembledTo)||s.items.find(p=>p.id===it.assembledTo&&p.prepAssembly); if(owner) Assembly.cover(owner.prepAssembly?{assembly:owner.prepAssembly}:owner,bc,it);}
         stepItem(s, it, dt, bc);
       }
     }
     for(const p of s.patties) steamAll+=Assembly.stepHeat(s,p,dt)||0;
+    for(const it of s.items)if(it.prepAssembly)steamAll+=Assembly.stepHeat(s,{...it,assembly:it.prepAssembly},dt)||0;
     if(s.oven) { const o=s.oven; o.loadW=ovenLoad; o.T+=(o.heaterW-6*(o.T-Tamb)-ovenLoad)*dt/1800; }
     if(!grill) Oil.sync(pan);
     pan.smokeItems = clamp(itemSmoke, 0, 2);
@@ -3453,6 +3479,7 @@
       return true;
     }
     const wasHot = pan.T > 90, dirt = panDirt(pan);
+    if(pan.butter)pan.butter=[];
     pan.oil = 0; pan.oilKind = 'none'; pan.oilSmoke = Infinity; pan.oilDepth = 0; pan.fond = 0; pan.fondBurnt = 0; pan.cheeseBits = 0; pan.meatBits = 0; pan.flare = 0;
     Oil.sync(pan);
     pan.carbon *= pan.id === 'castiron' || pan.id === 'carbonsteel' ? 0.55 : 0.02;
@@ -3536,7 +3563,7 @@
       items.push({kind:layer.cold,label:Assembly.cold[layer.cold].label,state:wilted?'wilted':'added',note:wilted?'The lettuce has wilted against the hot filling.':'Added during assembly',score:0});
     }
     if (patty.manualAssembly) {
-      const order = Assembly.layers(patty).filter(l=>!l.patty).map(l=>l.item?l.item.label:Assembly.cold[l.cold].label);
+      const order = Assembly.layers(patty).filter(l=>!l.patty).map(l=>l.item?l.item.label:l.cheese?'cheese':Assembly.cold[l.cold].label);
       items.sort((a,b)=>order.indexOf(a.label)-order.indexOf(b.label));
     }
     let pen = 0, bon = 0;

@@ -3,6 +3,11 @@
   'use strict';
   root.buildKitchenRoom = function (T, scene) {
     const room = new T.Group(); room.name = 'Daylight kitchen'; scene.add(room);
+    // Asset references let the first-person kitchen reuse these exact meshes and materials.
+    const assets=room.userData.assets={};
+    const mark=()=>room.children.length;
+    const asset=(name,start,origin)=>assets[name]={nodes:room.children.slice(start),origin};
+    let part;
     const A=root.KitchenAssets,cube = new T.BoxGeometry(1, 1, 1), materials = new Map(),shapes=new Map();
     const mat = (color, metalness = 0) => {
       const key = color + ':' + metalness;
@@ -82,18 +87,21 @@
     box(3.6,2.65,.09,1.0,.425,-2.8,0xe5d9c3);
     box(.85,.53,.09,-1.225,1.485,-2.8,0xe5d9c3);
     // A full-height oak door, inset panels and a brass lever.
+    part=mark();
     box(.83,2.08,.045,-1.225,.17,-2.8,oak);
     for(const x of [-1.675,-.775])box(.065,2.17,.09,x,.205,-2.74,0xf9f0dc);
     box(.97,.065,.09,-1.225,1.30,-2.74,0xf9f0dc);
     for(const y of [-.36,.59])box(.62,.75,.018,-1.225,y,-2.765,0xc79b66);
     box(.04,.12,.025,-.94,.13,-2.745,brass,.65);
     box(.13,.022,.04,-.98,.15,-2.72,brass,.65);
+    asset('door',part,[-1.225,-.87,-2.8]);
     box(1.95,2.65,.09,-1.825,.425,1.95,cream);box(1.95,2.65,.09,1.825,.425,1.95,cream);
     box(1.7,1,.09,0,-.4,1.95,cream);box(1.7,.48,.09,0,1.51,1.95,cream);
     for(const x of [-2.75,2.75])box(.018,.10,5.5,x,-.81,0,0xf8efd9);
     box(5.5,.10,.022,0,-.81,-2.745,0xf8efd9);box(5.5,.10,.022,0,-.81,1.895,0xf8efd9);
     // A real garden beyond the walls. Distinct depths provide parallax through
     // either window; no scenery card is attached to the glass.
+    part=mark();
     box(8,.07,7,0,-.87,5.5,0x77915c);
     box(4,.07,5,4.85,-.87,0,0x77915c);
     box(2.2,.04,1.05,0,-.81,2.56,0xc8b997);
@@ -117,6 +125,7 @@
     for(let i=0;i<12;i++) {
       const bush=foliage(-3.1+i*.56,-.56,6.35+(i%3)*.17,.32,i%2?0x94a46a:0x69875b,i);bush.scale.set(1.3,.9,1);
     }
+    asset('garden',part,[0,-.87,1.95]);
     const windows=[];
     function windowFrame(x,y,z,w,h,rotation=0) {
       const frame=new T.Group();frame.position.set(x,y,z);frame.rotation.y=rotation;room.add(frame);
@@ -125,7 +134,7 @@
       for(const y of [-h/2,h/2])beam(w+.08,.055,.18,0,y,0,0xf9f0dc);
       beam(w+.18,.045,.22,0,-h/2-.035,-.03,oak);
       for(const side of [-1,1]) {
-        const hinge=new T.Group();hinge.position.x=side*(w/2-.035);frame.add(hinge);
+        const hinge=new T.Group();hinge.name='Window leaf hinge';hinge.userData.side=side;hinge.position.x=side*(w/2-.035);frame.add(hinge);
         const leaf=new T.Group();leaf.position.x=-side*(w/4-.025);hinge.add(leaf);
         const part=(ww,hh,dd,xx,yy,color)=>{const m=new T.Mesh(cube,mat(color));m.scale.set(ww,hh,dd);m.position.set(xx,yy,-.045);m.castShadow=true;leaf.add(m);};
         for(const xx of [-w/4+.025,w/4-.025])part(.035,h-.04,.045,xx,0,0xf9f0dc);
@@ -135,12 +144,13 @@
         glass.position.z=-.04;leaf.add(glass);windows.push({hinge,side});
       }
     }
-    windowFrame(0,.70,1.95,1.7,1.2);
+    part=mark();windowFrame(0,.70,1.95,1.7,1.2);asset('window',part,[0,.70,1.95]);
     windowFrame(2.8,.65,-.65,1.3,1.18,Math.PI/2);
     room.userData.windows=windows;
-    plant(-.63,.088,1.79,.85);plant(.64,.088,1.79,.65);
+    part=mark();plant(-.63,.088,1.79,.85);asset('herb',part,[-.63,.088,1.79]);plant(.64,.088,1.79,.65);
     // Small framed prints keep the other orbit directions from becoming blank walls.
     for(const z of [-.65,.05]) {
+      part=mark();
       box(.035,.57,.43,-2.735,.65,z,oak);
       box(.015,.50,.36,-2.711,.65,z,0xf4e7c8);
       // Raised botanical artwork: a curved stem and tapered leaves over warm paper.
@@ -150,14 +160,17 @@
         const leaf=new T.Mesh(new T.ShapeGeometry(shape,12),mat(z<0?0xb86f4b:0x82946c));leaf.material.side=T.DoubleSide;
         leaf.rotation.set(0,Math.PI/2,(i%2?1:-1)*.8);leaf.position.set(-2.692,.49+i*.045,z+.04-i*.012);room.add(leaf);
       }
+      asset(z<0?'print-warm':'print-green',part,[-2.735,.65,z]);
     }
     // Cabinets sit against the wall, leaving a clear walking aisle around the island.
     for(let i=0;i<6;i++) {
       const x=-1.5+i*.60;
+      part=mark();
       box(.594,i === 3 ? .56 : .78,.52,x,i === 3 ? -.57 : -.46,1.58,sage);
       box(.55,.66,.025,x,-.42,1.303,darkSage);
       box(.49,.60,.029,x,-.42,1.284,sage);
       box(.14,.013,.023,x,-.15,1.258,brass,.65);
+      asset('cabinet'+i,part,[x,-.87,1.58]);
     }
     // Four countertop sections leave an actual opening over the basin.
     box(1.87,.05,.64,-.905,-.045,1.57,0xf3e8d1);
@@ -166,6 +179,7 @@
     box(.50,.05,.19,.28,-.045,1.795,0xf3e8d1);
     box(3.6,.11,.035,0,.035,1.865,0xd5ddd0);
     // Continuous drawn basin with rounded corners and a gently sloping floor.
+    part=mark();
     const basinPos=[],basinIdx=[],basinRings=9,basinSegments=96;
     for(let j=0;j<basinRings;j++){
       const t=j/(basinRings-1),w=.205+.04*Math.sin(t*Math.PI/2),d=.112+.043*Math.sin(t*Math.PI/2),y=-.159+.141*t*t;
@@ -192,7 +206,8 @@
     cylinder(.023,.025,.012,.215,-.009,1.74,brass);
     tube([[.215,0,1.74],[.215,.16,1.74],[.215,.22,1.69],[.215,.20,1.59],[.215,.16,1.58]],.010,brass,1);
     cylinder(.013,.013,.015,.215,.154,1.58,brass);
-    tube([[.239,.035,1.74],[.262,.046,1.74],[.277,.085,1.74]],.005,brass,1);
+    const tapLever=tube([[.239,.035,1.74],[.262,.046,1.74],[.277,.085,1.74]],.005,brass,1);tapLever.name='Tap lever';
+    asset('sink',part,[.28,-.018,1.54]);
     for(const x of [-1.34,1.34]) {
       box(.70,.62,.30,x,.83,1.72,sage);
       for(const dx of [-.17,.17]) {
@@ -202,14 +217,22 @@
       }
     }
     // Tall fridge and a little open shelf on the opposite wall.
-    const fridge=new T.Mesh(A.roundedBox(.61,1.43,.58,.045,6),A.material('paint',0xece4d1));fridge.position.set(-2.20,-.12,1.52);fridge.castShadow=true;room.add(fridge);
+    part=mark();
+    // Same rounded enclosure, now hollow so the shared doors can open in Real mode.
+    for(const x of [-2.49,-1.91]){const side=new T.Mesh(A.roundedBox(.03,1.43,.58,.006,4),A.material('paint',0xece4d1));side.position.set(x,-.12,1.52);side.castShadow=true;room.add(side);}
+    for(const y of [-.82,.58]){const cap=new T.Mesh(A.roundedBox(.58,.03,.58,.006,4),A.material('paint',0xece4d1));cap.position.set(-2.20,y,1.52);cap.castShadow=true;room.add(cap);}
+    box(.58,1.4,.025,-2.2,-.12,1.798,0xece4d1);
+    asset('fridge-shell',part,[-2.20,-.835,1.52]);part=mark();
     for(const [y,h] of [[.18,.80],[-.49,.49]]){
       const door=new T.Mesh(A.roundedBox(.57,h,.055,.025,5),A.material('paint',0xfaf0da));door.position.set(-2.20,y,1.207);door.castShadow=true;room.add(door);
       tube([[-1.98,y-.10,1.176],[-1.98,y-.08,1.14],[-1.98,y+.08,1.14],[-1.98,y+.10,1.176]],.009,brass,1);
     }
+    asset('fridge-doors',part,[-2.20,-.835,1.52]);part=mark();
     box(.52,.043,.025,-2.20,-.79,1.213,0x496058);
     for(let i=0;i<9;i++)box(.026,.004,.005,-2.39+i*.046,-.788,1.197,0x303b38);
+    asset('fridge-trim',part,[-2.20,-.835,1.52]);part=mark();
     box(.095,.018,.006,-2.35,.46,1.176,brass,1);
+    asset('fridge-badge',part,[-2.20,-.835,1.52]);
     box(1.18,.035,.23,.75,.55,-2.63,oak);
     for(let i=0;i<5;i++){
       const x=.40+i*.063,h=.20+(i%2)*.04,y=.57+h/2,c=[0xb9694a,0x8da293,0xd9b56b][i%3];
@@ -234,6 +257,7 @@
     }
     for(const x of [-.614,.814])box(.018,.72,.95,x,-.443,0,oak);
     // Built-in oven: open cavity, glazed front and a rack holding up to four patties.
+    part=mark();
     box(.45,.085,.04,.10,-.125,-.497,0x484d47);
     for(const [i,x] of [-.035,.235].entries()){
       const bezel=cylinder(.025,.025,.005,x,-.125,-.525,brass);bezel.rotation.x=Math.PI/2;
@@ -251,19 +275,24 @@
     box(.44,.52,.012,.10,-.435,.422,0x333c3b);
     box(.012,.52,.88,-.122,-.435,-.02,0x414b49);box(.012,.52,.88,.322,-.435,-.02,0x414b49);
     box(.44,.012,.88,.10,-.698,-.02,0x333c3b);box(.44,.012,.88,.10,-.175,-.02,0x333c3b);
+    asset('oven-shell',part,[.10,-.935,0]);part=mark();
     const glass=new T.Mesh(cube,new T.MeshPhysicalMaterial({color:0xaaa899,transparent:true,opacity:.20,roughness:.1,depthWrite:false}));
     glass.scale.set(.435,.50,.009);glass.position.set(.10,-.435,-.51);room.add(glass);
     tube([[-.07,-.225,-.526],[-.05,-.225,-.56],[.25,-.225,-.56],[.27,-.225,-.526]],.011,brass,1);
     for(const y of [-.29,-.62])box(.42,.018,.014,.10,y,-.52,0x303b38);
+    asset('oven-door',part,[.10,-.935,0]);part=mark();
     for(let i=0;i<5;i++)for(const x of [-.11,.31])tube([[x,-.36-i*.056,-.4],[x,-.36-i*.056,.35]],.004,0x777b76,1);
     for(let i=0;i<10;i++)tube([[-.10+i*.044,-.488,-.415],[-.10+i*.044,-.488,.385]],.004,0x777b76,1);
     box(.44,.012,.014,.10,-.492,-.43,0x777b76,.7);
+    asset('oven-rack',part,[.10,-.935,0]);
     // Small props stay outside the pan, food-drag and plating areas.
     plant(-.55,0,.39,.6);
     for(let i=0;i<2;i++) {
       const x=-.44+i*.065;
+      part=mark();
       turned([[0,0],[.024,0],[.027,.005],[.025,.018],[.017,.039],[.015,.057],[.022,.07],[.025,.083],[.02,.095],[0,.10]],x,0,.40,i?0xdbbb8a:0x574b3b);
       cylinder(.004,.004,.005,x,.103,.40,brass);
+      asset(i?'salt-mill':'pepper-mill',part,[x,0,.40]);
     }
     // Two tucked-in stools give the island a readable human scale.
     for(const x of [-.32,.48]) {
@@ -273,6 +302,7 @@
     }
     // No ceiling slab: overhead camera stays useful. Pendant shades sit off the cooking axis.
     for(const x of [-.50,.65]) {
+      part=mark();
       cylinder(.003,.003,.34,x,1.43,.22,0x63574a);
       const shade=turned([[.128,0],[.131,.008],[.124,.023],[.099,.043],[.077,.071],[.044,.115],[.025,.134],[.018,.14]],x,1.13,.22,0xc99655);
       shade.material=shade.material.clone();shade.material.side=T.DoubleSide;
@@ -280,6 +310,7 @@
       const lip=new T.Mesh(new T.TorusGeometry(.128,.003,10,64),mat(0xf5dfb8));lip.rotation.x=Math.PI/2;lip.position.set(x,1.132,.22);room.add(lip);
       const bulb=new T.Mesh(new T.SphereGeometry(.024,24,16),new T.MeshBasicMaterial({color:0xffe0a0}));
       bulb.position.set(x,1.145,.22);room.add(bulb);
+      asset('pendant',part,[x,1.13,.22]);
     }
     return room;
   };
