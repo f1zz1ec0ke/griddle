@@ -634,6 +634,8 @@
     update(state, dt, where, position, mode) {
       this.group.scale.set(1,1,1);
       const p = this.p, g = this.group;
+      // Handoffs temporarily rotate this mesh; rebuild its resting pose before animating a flip.
+      g.rotation.set(0,0,0);
       if (p.flips !== this.lastFlips) {
         this.lastFlips = p.flips;
         if (where === 'pan') { this.flipElapsed = 0; this.forceTex = true; }
@@ -656,7 +658,6 @@
       this.updateCheese();
       // Physics swaps the faces immediately. Rotate the new pose back to the old face,
       // then arc it into its final pose around the patty's centre, not its bottom edge.
-      g.rotation.z = 0;
       if (this.flipElapsed != null) {
         this.flipElapsed += dt;
         const u = clamp(this.flipElapsed / .65, 0, 1), ease = u*u*(3-2*u);
@@ -890,6 +891,7 @@
     update(state, dt, where, pos, opts) {
       const it = this.it, g = this.group;
       g.scale.set(1,1,1);
+      g.rotation.set(0,0,0);
       g.position.set(pos.x, pos.y, pos.z);
       g.visible = !(it.kind === 'bun' && where === 'cut'); // a served bun is drawn as part of the burger
       if (!g.visible) return;

@@ -15,6 +15,8 @@ const { runScenario, OUT } = require('./helper');
 const SCENARIOS = [
   require('./scenario-loading.js'),
   require('./scenario-real-render.js'),
+  require('./scenario-real-camera.js'),
+  require('./scenario-real-placement.js'),
   require('./scenario-real-final.js'),
   require('./scenario-real-craft.js'),
   require('./scenario-real.js'),
