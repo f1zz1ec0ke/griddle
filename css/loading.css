@@ -1,0 +1,23 @@
+/* A light DOM screen that can paint before WebGL or either kitchen exists. */
+#boot-screen{position:fixed;inset:0;z-index:2000;display:grid;place-items:center;background:radial-gradient(ellipse at 50% 25%,#fff9ed,#efe5cf);color:#30483b;font-family:"Segoe UI",system-ui,sans-serif}
+#boot-screen::before{content:"";position:absolute;inset:24px;border:1px solid #72816a30;pointer-events:none}
+.boot-card{width:420px;text-align:center;padding:40px 0}
+.boot-mark{position:relative;width:100px;height:112px;margin:0 auto 14px}
+.boot-mark img{width:96px;height:102px;position:absolute;bottom:0;left:2px}
+.boot-steam{position:absolute;top:-17px;left:18px;width:64px;height:40px;overflow:visible;fill:none;stroke:#b48b55;stroke-width:1.7;stroke-linecap:round}
+.boot-steam path{animation:boot-steam 2.2s ease-in-out infinite;transform-origin:center}
+.boot-steam path:nth-child(2){animation-delay:-.7s}.boot-steam path:nth-child(3){animation-delay:-1.4s}
+.boot-brand{font-size:48px;line-height:1;font-weight:800;letter-spacing:-2.5px;margin:0 0 35px}.boot-brand span{color:#b45737}
+#boot-title{font-size:21px;font-weight:600;letter-spacing:-.4px;margin:0 0 10px}
+#boot-copy{font-size:14px;color:#747968;margin:0 0 35px}
+.boot-progress-heading{display:flex;justify-content:space-between;gap:18px;text-align:left;font-size:12px;margin-bottom:11px;min-height:18px}
+#boot-percent{font-variant-numeric:tabular-nums;color:#8c6244}
+#boot-progress{display:block;width:100%;height:7px;border:0;border-radius:10px;overflow:hidden;appearance:none;background:#dedbc9;accent-color:#6d8763}
+#boot-progress::-webkit-progress-bar{background:#dedbc9;border-radius:10px}#boot-progress::-webkit-progress-value{background:#6d8763;border-radius:10px}#boot-progress::-moz-progress-bar{background:#6d8763;border-radius:10px}
+.boot-stages{display:flex;justify-content:space-between;padding:0;margin:19px 0 0;list-style:none;font-size:11px;letter-spacing:.03em;color:#929381}
+.boot-stages li{display:flex;align-items:center;gap:7px}.boot-stages li::before{content:"";width:5px;height:5px;border:1px solid currentColor;border-radius:50%}.boot-stages [data-state="active"]{color:#9c603e}.boot-stages [data-state="done"]{color:#49684b}.boot-stages [data-state="done"]::before{background:currentColor}
+#boot-detail{height:16px;margin:21px 0 0;font-size:11px;color:#858574;font-variant-numeric:tabular-nums}
+#boot-retry{margin:12px 0 0;padding:11px 24px;background:#30483b;color:#fff4df;border:0;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer}#boot-retry:focus-visible{outline:3px solid #b47548;outline-offset:4px}
+#boot-screen[data-error="true"] .boot-steam{display:none}#boot-screen[data-error="true"] #boot-copy{max-width:350px;line-height:1.6;margin:0 auto 25px}
+@keyframes boot-steam{0%,100%{opacity:.25;transform:translateY(3px)}50%{opacity:.8;transform:translateY(-4px)}}
+@media(prefers-reduced-motion:reduce){.boot-steam path{animation:none;opacity:.55}}

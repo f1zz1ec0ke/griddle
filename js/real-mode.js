@@ -4,14 +4,34 @@
   const T=root.THREE,P=root.BurgerPhysics,VA=root.KitchenAssets,$=id=>document.getElementById(id),clamp=P.clamp;
   const LABELS=root.RealBuildMethods.labels;
   class RealMode {
-    constructor(game){
+    constructor(game,deferred=false){
       this.game=game;this.canvas=$('view');this.renderer=game.vp.renderer;this.world=new root.RealKitchen.Kitchen();this.scene=new T.Scene();this.scene.background=new T.Color(0xc5dce0);this.scene.fog=new T.Fog(0xc5dce0,12,30);
       this.camera=new T.PerspectiveCamera(72,innerWidth/innerHeight,.025,40);this.scene.add(this.camera);
       this.keys=new Set();this.ray=new T.Raycaster();this.meshes=new Map();this.panTemplates=new Map();this.targets=[];this.surfaces=[];this.colliders=[];this.stations=new Map();this.held=null;this.left=false;this.active=false;this.paused=true;this.action=null;this.acc=0;this.clock=0;this.savedAt=0;this.velocityY=0;this.ground=0;this.look=new T.Vector2();
-      this.buildRoom();this.buildStations();root.RealRoomDetail.decorate(this);this.buildReflections();this.buildChef();this.contact=new root.RealContact(this);this.interaction=new root.RealInteraction(this);this.presentation=new root.RealPresentation.Presentation(this);this.audio=new root.SpatialKitchenAudio();this.bind();this.resize();
+      this.textureBudget=new root.RenderWork.TextureBudget();
+      if(!deferred)for(const step of this.buildSteps())step.run();
+    }
+    buildSteps(){return [
+      {label:'Building the Real kitchen',run:()=>this.buildRoom()},
+      ...this.world.stations.map(st=>({label:'Setting up the '+st.id+' station',run:()=>this.buildStation(st)})),
+      {label:'Setting out ingredients',run:()=>this.finishStations()},
+      {label:'Adding the finishing touches',run:()=>root.RealRoomDetail.decorate(this)},
+      {label:'Preparing kitchen surfaces',run:()=>this.batchRoom()},
+      {label:'Lighting the Real kitchen',reflection:true,run:()=>this.buildReflections()},
+      {label:'Getting the chef ready',run:()=>this.buildChef()},
+      {label:'Preparing hands and tools',run:()=>this.finishBuild()},
+    ];}
+    batchRoom(){
+      const moving=[...this.stations.values()].map(v=>v.scene).concat(this.fridgeDoor,this.ovenDoor,this.binLid,this.mince,this.waterStream,this.ovenLamp,this.windowHinges,this.ovenKnobs.map(q=>q.mesh));
+      this.staticBatches=root.RenderBatching.batchStatic(this.scene,moving);
+      const fixed=[];const collect=o=>{if(moving.includes(o))return;if(o.castShadow)fixed.push(o);for(const child of o.children)collect(child);};collect(this.scene);this.fixedShadowCasters=fixed;
+    }
+    finishBuild(){
+      this.contact=new root.RealContact(this);this.interaction=new root.RealInteraction(this);this.presentation=new root.RealPresentation.Presentation(this);this.audio=new root.SpatialKitchenAudio();this.bind();this.resize();
       this.airView={scene:this.scene,room:{userData:{windows:[]}}};root.BurgerRender.Viewport.prototype._buildRoomSmoke.call(this.airView);
       for(const cloud of this.airView.roomClouds){cloud.userData.y+=1.3;cloud.userData.x*=1.4;cloud.userData.z*=1.4;}
       this.renderEntities(0);
+      this.shadowCache=new root.RenderWork.StaticShadows(this.renderer,this.scene,this.fixedShadowCasters);
     }
     material(color,kind='paint'){const m=VA.material(kind,color);if([0xe8deca,0xf3ead9].includes(color)){m.roughness=.94;m.clearcoat=0;}return m;}
     box(w,h,d,x,y,z,color,kind='paint',parent=this.scene){const m=new T.Mesh(VA.roundedBox(w,h,d,Math.min(.018,Math.min(w,h,d)*.15),3),this.material(color,kind));m.position.set(x,y,z);m.castShadow=m.receiveShadow=true;parent.add(m);return m;}
@@ -101,10 +121,9 @@
       for(const x of [-2.77,-2.13])this.box(.022,1.8,.035,x,.9,3.84,0x819289,'steel');
       this.colliders.push({x:-2.45,z:3.65,w:.7,d:.46,y:0,top:1.8});
     }
-    buildStations(){
-      for(const st of this.world.stations){
-        const vp=new root.BurgerRender.Viewport(this.canvas,{renderer:this.renderer,textures:this.game.vp});vp.setStove(st.id==='oven'?'gas':st.id);vp.setMode('stove');vp.scene.background=null;vp.scene.fog=null;vp.scene.position.set(st.x,.94,st.z);this.scene.add(vp.scene);this.stations.set(st.id,vp);
-        if(st.id==='oven'){vp.scene.position.set(st.x,1.01,st.z);vp.stove.visible=false;vp.board.visible=false;vp.setPan('nonstick');const template=vp.panMesh.clone(true);template.position.y=0;template.traverse(o=>{if(o.geometry)o.geometry=o.geometry.clone();if(o.material)o.material=o.material.clone();});this.panTemplates.set('nonstick',template);continue;}
+    buildStation(st){
+        const vp=new root.BurgerRender.Viewport(this.canvas,{renderer:this.renderer,textures:this.game.vp,textureBudget:this.textureBudget});vp.setStove(st.id==='oven'?'gas':st.id);vp.setMode('stove');vp.scene.background=null;vp.scene.fog=null;vp.scene.position.set(st.x,.94,st.z);this.scene.add(vp.scene);this.stations.set(st.id,vp);
+        if(st.id==='oven'){vp.scene.position.set(st.x,1.01,st.z);vp.stove.visible=false;vp.board.visible=false;vp.setPan('nonstick');const template=vp.panMesh.clone(true);template.position.y=0;template.traverse(o=>{if(o.geometry)o.geometry=o.geometry.clone();if(o.material)o.material=o.material.clone();});this.panTemplates.set('nonstick',template);return;}
         if(st.panId){vp.setPan(st.state.pan.id);const template=vp.panMesh.clone(true);template.position.y=0;template.traverse(o=>{if(o.geometry)o.geometry=o.geometry.clone();if(o.material)o.material=o.material.clone();});this.panTemplates.set(st.state.pan.id,template);}
         if(st.id==='charcoal'){vp.scene.position.y=.55;for(const x of [-.25,.25])for(const z of [-.25,.25])this.box(.035,.51,.035,st.x+x,.255,st.z+z,0x354a40,'steel');this.box(.62,.025,.62,st.x,.12,st.z,0x435c4c,'steel');this.colliders.push({x:st.x,z:st.z,w:.8,d:.8,y:0,top:1.1});}
         this.target(vp.panMesh,{type:'station',id:st.id,name:st.id==='charcoal'?'grill grate':st.id+' pan'});
@@ -120,9 +139,10 @@
           this.target(this.box(.07,.035,.05,st.x,.96,st.z-.31,0xb6975c,'wood'),{type:'grillLid',id:st.id,name:'kettle lid'});
         }
         this.label(st.id.toUpperCase(),st.x,.87,st.z-.44,.045);
-      }
+    }
+    finishStations(){
       // A render adapter for loose food uses the same established cooking meshes.
-      this.looseView={scene:this.scene,panFloorY:.94,clock:0,claimTexBudget:()=>true,tinted:this.game.vp.tinted.bind(this.game.vp)};for(const k of ['noise','noiseFine','marble','marbleCut','spots','blotch'])this.looseView[k]=this.game.vp[k];
+      this.looseView={scene:this.scene,panFloorY:.94,clock:0,claimTexBudget:view=>this.textureBudget.claim(view),tinted:this.game.vp.tinted.bind(this.game.vp)};for(const k of ['noise','noiseFine','marble','marbleCut','spots','blotch'])this.looseView[k]=this.game.vp[k];
     }
     prop(kind){const model=this.propAsset(kind),group=new T.Group();group.add(model);const bounds=new T.Box3().setFromObject(model);model.position.y-=bounds.min.y;return group;}
     propAsset(kind){
@@ -180,13 +200,14 @@
     resize(){this.renderPending=true;this.camera.aspect=innerWidth/innerHeight;this.camera.updateProjectionMatrix();if(this.active)this.renderer.setSize(innerWidth,innerHeight,false);}
     start(resume=false){
       if(resume){try{const raw=localStorage.getItem('griddle.real.v1');if(!raw){$('choose-status').textContent='No Real kitchen saved yet.';return;}this.load(JSON.parse(raw));}catch(e){$('choose-status').textContent='Could not load this kitchen. Your saved file was kept.';return;}}
-      this.started=true;this.active=true;document.body.dataset.experience='real';$('mode-choice').hidden=true;$('real-hud').hidden=false;this.resize();this.move(0);this.pause();this.last=performance.now();if(!this.running){this.running=true;requestAnimationFrame(t=>this.frame(t));}
+      this.started=true;this.active=true;document.body.dataset.experience='real';$('mode-choice').hidden=true;$('real-hud').hidden=false;this.resize();this.move(0);this.pause();root.RealRender.prepare(this);this.last=performance.now();if(!this.running){this.running=true;requestAnimationFrame(t=>this.frame(t));}
     }
-    resume(){this.canvas.requestPointerLock()?.catch(()=>{this.pause();this.toast('Click Resume again to let the mouse control your view.');});if(this.presentation.preferences.sound)this.audio.start();this.paused=false;$('real-pause').hidden=true;}
+    resume(){if(this.preparing)return;this.canvas.requestPointerLock()?.catch(()=>{this.pause();this.toast('Click Resume again to let the mouse control your view.');});if(this.presentation.preferences.sound)this.audio.start();this.paused=false;$('real-pause').hidden=true;this.last=performance.now();}
     releaseHold(parkProbe=true){this.left=false;this.grabControl=null;this.activity=null;if(parkProbe)this.interaction.releaseProbe();else this.interaction.probe=null;this.interaction.techniques.end();}
     pause(){this.renderPending=true;this.paused=true;this.releaseHold(false);this.jumpQueued=false;this.keys.clear();this.walkX=this.walkZ=0;this.audio.stop();if(document.pointerLockElement===this.canvas)document.exitPointerLock();if(this.active){$('real-pause').hidden=false;this.presentation.settingLabels();$('real-resume').focus();}this.save();}
     save(){try{this.world.heldId=this.held;localStorage.setItem('griddle.real.v1',JSON.stringify(this.world.snapshot()));$('real-save-status').textContent='Kitchen saved.';}catch(e){$('real-save-status').textContent='Save unavailable—keep this tab open.';}}
     load(data){
+      this.textureBudget.clear();
       const next=root.RealKitchen.Kitchen.restore(data);this.contact.reset();this.interaction.reset();this.presentation.reset();for(const r of this.meshes.values()){r.oilView?.oilTexture.dispose();if(r.view){r.mesh.parent?.remove(r.mesh);r.view.dispose();}else this.dispose(r.mesh);}this.meshes.clear();this.world=next;this.held=next.heldId||null;this.ground=0;this.velocityY=0;this.action=null;this.left=false;this.grabControl=null;this.keys.clear();this.walkX=this.walkZ=0;this.acc=0;
       const p=next.player;if(this.colliders.some(c=>p.y<c.top&&Math.abs(p.x-c.x)<c.w/2+.20&&Math.abs(p.z-c.z)<c.d/2+.20)){p.x=0;p.z=-2.3;p.y=0;}
     }
@@ -365,6 +386,7 @@
     }
     renderEntities(dt){
       this.renderPending=true;
+      this.textureBudget.begin();
       for(const e of this.world.entities){
         let rec=this.meshes.get(e.id);
         if(e.discarded){if(rec){rec.oilView?.oilTexture.dispose();if(rec.view){rec.mesh.parent?.remove(rec.mesh);rec.view.dispose();}else this.dispose(rec.mesh);this.meshes.delete(e.id);}continue;}
@@ -530,10 +552,9 @@
         for(const e of this.world.entities)if(e.parked){const mesh=this.meshes.get(e.id)?.mesh;sources.push({id:'pan-'+e.id,state:e.parked,position:mesh?mesh.getWorldPosition(new T.Vector3()):new T.Vector3(...e.pos)});}
         this.audio.update(sources,this.camera.position,this.camera.getWorldDirection(new T.Vector3()),dt);
       }
-        if(!this.paused||this.renderPending){this.renderEntities(this.paused?0:dt);this.hint();this.renderer.render(this.scene,this.camera);this.renderPending=false;}if(now>this.toastUntil)$('real-toast').hidden=true;
+        if(!this.preparing&&(!this.paused||this.renderPending)){this.renderEntities(this.paused?0:dt);this.hint();this.renderer.render(this.scene,this.camera);this.renderPending=false;}if(now>this.toastUntil)$('real-toast').hidden=true;
       }requestAnimationFrame(t=>this.frame(t));
     }
   }
   root.RealMode=RealMode;
-  root.addEventListener('DOMContentLoaded',()=>root.RealPresentation.mount());
 })(window);

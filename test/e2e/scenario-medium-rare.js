@@ -74,7 +74,7 @@ module.exports = {
     });
     k.ok(cooked.flips >= 2, `both sides returned to the heat (${cooked.flips} flips)`);
     k.ok(Math.min(cooked.down, cooked.up) > 1.5, `crust on both faces (${cooked.down.toFixed(1)} / ${cooked.up.toFixed(1)})`);
-    k.ok(cooked.char < 0.15 && cooked.torn === 0, 'nothing burnt, nothing torn');
+    k.ok(cooked.char < 0.15 && cooked.torn === 0, `nothing burnt, nothing torn (char ${cooked.char.toFixed(4)}, torn ${cooked.torn.toFixed(4)})`);
 
     // ---- 5. off the heat, check the probe follows the meat, rest 2.5 min, then serve
     await k.click('#btn-remove');

@@ -282,9 +282,9 @@
       const tex = new T.CanvasTexture(cv);
       this.geo = new T.BufferGeometry();
       this.pos = new Float32Array(this.max * 3); this.alpha = new Float32Array(this.max); this.size = new Float32Array(this.max);
-      this.geo.setAttribute('position', new T.BufferAttribute(this.pos, 3));
-      this.geo.setAttribute('aAlpha', new T.BufferAttribute(this.alpha, 1));
-      this.geo.setAttribute('aSize', new T.BufferAttribute(this.size, 1));
+      this.geo.setAttribute('position', new T.BufferAttribute(this.pos, 3).setUsage(T.DynamicDrawUsage));
+      this.geo.setAttribute('aAlpha', new T.BufferAttribute(this.alpha, 1).setUsage(T.DynamicDrawUsage));
+      this.geo.setAttribute('aSize', new T.BufferAttribute(this.size, 1).setUsage(T.DynamicDrawUsage));
       this.mat = new T.ShaderMaterial({
         uniforms: { map: { value: tex }, color: { value: new T.Color(opts.color) }, scale: { value: 1 } },
         vertexShader: `attribute float aAlpha; attribute float aSize; varying float vA; uniform float scale;
@@ -293,7 +293,7 @@
           void main(){ vec4 t=texture2D(map,gl_PointCoord); gl_FragColor=vec4(color,t.a*vA); }`,
         transparent: true, depthWrite: false, blending: opts.additive ? T.AdditiveBlending : T.NormalBlending,
       });
-      this.points = new T.Points(this.geo, this.mat); this.points.frustumCulled = false; scene.add(this.points);
+      this.points = new T.Points(this.geo, this.mat); this.points.frustumCulled = false; this.points.visible=false; this.geo.setDrawRange(0,0); scene.add(this.points);
       this.parts = []; this.acc = 0;
     }
     spawn(x, y, z) {
@@ -316,7 +316,8 @@
         this.size[n] = p.s * (1 + t * o.grow); n++;
       }
       this.geo.setDrawRange(0, n);
-      this.geo.attributes.position.needsUpdate = true; this.geo.attributes.aAlpha.needsUpdate = true; this.geo.attributes.aSize.needsUpdate = true;
+      this.points.visible=n>0;
+      if(n)for(const attribute of Object.values(this.geo.attributes)){attribute.updateRange.offset=0;attribute.updateRange.count=n*attribute.itemSize;attribute.needsUpdate=true;}
     }
     setScale(px) { this.mat.uniforms.scale.value = px; }
   }
@@ -328,7 +329,7 @@
       const geo = new T.SphereGeometry(radius, 6, 5);
       this.mesh = new T.InstancedMesh(geo, new T.MeshPhysicalMaterial(matOpts), max);
       this.mesh.instanceMatrix.setUsage(T.DynamicDrawUsage); this.mesh.frustumCulled = false;
-      this.mesh.count = 0; scene.add(this.mesh);
+      this.mesh.count = 0; this.mesh.visible=false; scene.add(this.mesh);
       this.parts = []; this.dummy = new T.Object3D(); this.acc = 0;
     }
     spawn(p) { if (this.parts.length < this.max) this.parts.push(p); }
@@ -339,7 +340,8 @@
         this.dummy.position.set(p.x, p.y, p.z); const s = p.s || 1; this.dummy.scale.set(s, s * (p.sy || 1), s); this.dummy.updateMatrix();
         this.mesh.setMatrixAt(n++, this.dummy.matrix);
       }
-      this.mesh.count = n; this.mesh.instanceMatrix.needsUpdate = true;
+      this.mesh.count = n; this.mesh.visible=n>0;
+      if(n){this.mesh.instanceMatrix.updateRange.offset=0;this.mesh.instanceMatrix.updateRange.count=n*16;this.mesh.instanceMatrix.needsUpdate=true;}
     }
   }
 
@@ -650,7 +652,7 @@
       // Repaint at most ten times a second, and only when the meat actually looks different:
       // resting, plated or paused, nothing moves and the atlas is left alone entirely.
       if (this.forceTex) { this.texClock = 0; this.forceTex = false; this.texDirty(); this.texCommit(); this.paintTextures(); }
-      else if (this.texClock > 0.1 && this.texDirty() && this.vp.claimTexBudget()) { this.texClock = 0; this.texCommit(); this.paintTextures(); }
+      else if (this.texClock > 0.1 && this.texDirty() && this.vp.claimTexBudget(this)) { this.texClock = 0; this.texCommit(); this.paintTextures(); }
       this.updateCheese();
       // Physics swaps the faces immediately. Rotate the new pose back to the old face,
       // then arc it into its final pose around the patty's centre, not its bottom edge.
@@ -1011,7 +1013,7 @@
 
   // ------------------------------------------------------------ the viewport
   class Viewport {
-    constructor(canvas, embedded = null) {
+    constructor(canvas, embedded = null, deferred = false) {
       this.embedded=embedded;
       this.canvas = canvas;
       this.renderer = embedded?.renderer || new T.WebGLRenderer({ canvas, antialias: true, alpha: false });
@@ -1025,16 +1027,30 @@
       this.clock = 0; this.texBudget = 0;
       this.mode = 'board'; // 'board' | 'stove'
       this.cutaway = false;
-      if(embedded){this.flameLight=new T.PointLight(0xff8a2a,0,.6,2);this.scene.add(this.flameLight);}
-      else{this._buildLights(); this._buildKitchen(); this._buildReflections(); this._buildRoomSmoke();}
-      this._buildStove(); this._buildBoard(); this._buildParticles(); this._buildProbe();
-      if(embedded?.textures)for(const k of ['noise','noiseFine','marble','marbleCut','spots','blotch'])this[k]=embedded.textures[k];else this._buildTextures();
       this.views = new Map(); this.itemViews = new Map(); this.selected = null; this.selectedItem = null; this.previewPatty = null;
       this.peeks = new Map(); // patty → when the cut the cook made in it closes again (wall clock, ms)
-      this.controls = embedded?{goal:{azimuth:0},azimuth:0,reset(){},update(){}}:new Orbit(this);
-      this.resize();
-      if(!embedded)window.addEventListener('resize', () => this.resize());
-      this.setMode('board');
+      if(!deferred)for(const step of this.buildSteps())step.run();
+    }
+    // The loader yields between these jobs; embedded cooking stations can still build synchronously.
+    buildSteps() {
+      const embedded=this.embedded;
+      return [
+        {label:'Setting the lights',run:()=>{if(embedded){this.flameLight=new T.PointLight(0xff8a2a,0,.6,2);this.scene.add(this.flameLight);}else this._buildLights();}},
+        ...(embedded?[]:[
+          {label:'Building the Original kitchen',run:()=>this._buildKitchen()},
+          {label:'Lighting the Original kitchen',reflection:true,run:()=>this._buildReflections()},
+          {label:'Preparing the atmosphere',run:()=>this._buildRoomSmoke()},
+        ]),
+        {label:'Setting up the stove',run:()=>this._buildStove()},
+        {label:'Setting out the workbench',run:()=>this._buildBoard()},
+        {label:'Preparing steam and splashes',run:()=>this._buildParticles()},
+        {label:'Setting out the tools',run:()=>this._buildProbe()},
+        {label:'Preparing food textures',run:()=>{if(embedded?.textures)for(const k of ['noise','noiseFine','marble','marbleCut','spots','blotch'])this[k]=embedded.textures[k];else this._buildTextures();}},
+        {label:'Framing the Original kitchen',run:()=>{
+          this.controls=embedded?{goal:{azimuth:0},azimuth:0,reset(){},update(){}}:new Orbit(this);
+          this.resize();if(!embedded)window.addEventListener('resize',()=>this.resize());this.setMode('board');
+        }},
+      ];
     }
     resize() {
       if(this.embedded)return;
@@ -1761,7 +1777,7 @@
      * come due on the same frame and paint three megapixel canvases back to back; staggered, each
      * still gets its ten repaints a second and no single frame carries more than one.
      */
-    claimTexBudget() { if (this.texBudget <= 0) return false; this.texBudget--; return true; }
+    claimTexBudget(view) { if(this.embedded?.textureBudget)return this.embedded.textureBudget.claim(view);if (this.texBudget <= 0) return false; this.texBudget--; return true; }
     update(state, dt, cameraDt = dt) {
       this.clock += dt; this.texBudget = 1;
       const pan = state.pan, p = state.patty;
