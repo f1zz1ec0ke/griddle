@@ -22,6 +22,7 @@
     peel(){
       const r=this.r,w=r.world,h=r.heldEntity(),e=r.foodAt(r.hover),stack=w.layers(e);
       if(r.action||!stack?.length&&!w.topPart(e)?.cheeseCarrier)return;
+      const blocked=r.blocked(e);if(blocked){r.toast(blocked);return;}
       const top=w.topPart(e),compatible=h&&!h.payload&&({spatula:['patty','bun','egg','cheese'],tongs:['bacon'],spoon:['onions']}[h.kind]||[]).includes(top?.kind);
       if(h&&!compatible){r.toast('Free your hands or use the matching utensil.');return;}
       if(!h&&top&&r.hot(top)){r.toast('Hot! Use the matching utensil to lift this layer.');return;}

@@ -77,11 +77,14 @@
     },
     drain(pan,dt,destination,point){
       if(pan?.kind!=='pan'||!pan.parked||pan.parked.lid||pan.inOven)return {error:'Lift an uncovered pan first.'};
+      const to=this.cooking(destination);
+      if(to?.pan?.inOven&&!this.doors.oven)return {error:'Open the oven first.'};
+      if(to?.state.lid)return {error:'Aim at an uncovered cooking surface.'};
+      if(to?.state===pan.parked)return {error:'Pour into another pan or the sink.'};
       const p=pan.pan,angle=Math.abs(pan.tilt||0),fraction=P.clamp((angle-.25)/.7,0,1)*(-Math.expm1(-dt*1.6));
       if(!fraction)return {water:0,oil:0};
       const water=p.water*fraction,oil=p.oil*fraction;Water.ensure(p);p.water-=water;p.waterTracked=p.water;p.oil-=oil;Oil.sync(p);
       if(water+oil<1e-8)return {water,oil};
-      const to=this.cooking(destination);
       if(to?.state.grill&&!to.state.lid){to.state.grill.fatOnCoals+=oil;to.state.grill.juiceOnCoals=(to.state.grill.juiceOnCoals||0)+water;}
       else if(to?.panId&&to.state!==pan.parked&&!to.state.lid){
         const dest=to.state.pan;Water.add(dest,water,p.waterT);
@@ -108,7 +111,12 @@
         const mass=meats.reduce((n,p)=>n+p.massKg0*1000,0),salt=meats.reduce((n,p)=>n+(p.saltGrams?.mixed||0)+(p.saltGrams?.surface||0),0);saltPercent=salt/mass*100;
         for(const p of meats)for(let i=0;i<p.w.length;i++){water.now+=p.w[i];water.start+=p.w0c[i];}
         temperature=Math.min(...meats.map(P.centerT));const retained=water.now/water.start;
-        notes.push(temperature<35?'Cold at the centre.':temperature<48?'The centre is still raw.':P.donenessOf(temperature).label+' at the centre.',
+        for(const [i,p] of meats.entries()){
+          const peak=Math.max(p.peakCenter,P.centerT(p)),prefix=meats.length>1?'Patty '+(i+1)+': ':'';
+          notes.push(prefix+(peak<48?'The centre is still raw.':P.donenessOf(peak).label+' at the centre.'));
+        }
+        if(temperature<48)notes.push(temperature<35?'Cold at the centre.':'Lukewarm at the centre.');
+        notes.push(
           meats.some(p=>Math.max(p.faceDown.char,p.faceUp.char)>.3)?'Bitter, burnt crust.':meats.some(p=>Math.min(p.faceDown.brown,p.faceUp.brown)<1)?'Needs more sear.':'A good sear on both sides.',
           saltPercent<.35?'Underseasoned.':saltPercent>1.8?'Far too salty.':saltPercent>1.25?'A little heavy on the salt.':'Nicely seasoned.',
           retained<.55?'Dry inside.':retained>.72?'Plenty of juice.':'Some juice left.',

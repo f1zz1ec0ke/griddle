@@ -15,7 +15,7 @@
       return !l?null:l.item?this.entities.find(e=>e.food===l.item):this.entities.find(e=>e.stackRoot===base.id&&e.layer===stack.length-1);
     },
     peel(base){
-      base=this.rootOf(base);const stack=this.layers(base);if(!base||base.held)return null;
+      base=this.rootOf(base);const stack=this.layers(base);if(!base||base.held||this.accessProblem(base))return null;
       const slice=this.topPart(base);if(slice?.cheeseCarrier){const meat=this.get(slice.cheeseCarrier);meat.food.cheeses=meat.food.cheeses.filter(ch=>ch!==slice.sliceState);slice.cheeseCarrier=null;slice.pos=meat.pos.slice();return slice;}
       if(!stack.length||base.station||base.panCarrier)return null;
       const l=stack.at(-1),part=this.topPart(base);if(!part||part===base&&base.prep)return null;

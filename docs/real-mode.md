@@ -12,9 +12,11 @@ Controls: WASD, Shift jog, Space jump, C crouch. Left-hold reaches/turns/pours/s
 
 Endless fridge ingredients require preparation: crack eggs, slice whole buns, tomatoes, pickles, cheese and onions. Salt added to mince uses the existing mixed-salt model; surface seasoning updates the existing water-holding term. Actual salt quantities are retained in the portion ledger; Real interpolates the existing water-holding endpoints by dose; this is a gameplay response, not a calibrated chemistry model.
 
-Dress the bottom bun before or after adding the patty, then finish with its matching crown. Rebuild directly on a plate. Cheese keeps its mass and temperature when moved; surface seasoning reaches exposed meat. Eggs flatten under the stack and individual pickle slices fan across the bun. Use the knife to inspect the centre. Tools return to their rests; precarious placement can slide and fall. This is controlled placement, not a general rigid-body solver.
+Dress the bottom bun in any order, then finish with a top bun. Meat is optional. Rebuild directly on a plate. Cheese keeps its mass and temperature when moved; surface seasoning reaches exposed meat. Eggs flatten under the stack and individual pickle slices fan across the bun. Use the knife to inspect the centre. Tools return to their rests; precarious placement can slide and fall. This is controlled placement, not a general rigid-body solver.
 
-The oven has separate power and temperature dials. It finishes up to four patties on the rack, or takes one tray. Tray placement checks food footprints; toppings cook on hobs. Tray temperature is a handling cue, separate from the food heat solver. Real has no orders, scoring UI or multiplayer.
+The oven has separate power and temperature dials. Its rack accepts patties and buns, or one tray or metal-handled pan. Prepared toppings cook in trays and pans. Tray temperature is a handling cue, separate from the food heat solver. Real has no orders, scoring UI or multiplayer.
+
+Butter melts before it becomes pan fat; the spoon bastes with that fat. A rake banks coals, a brush cleans the grate, and the cold ash catcher empties into the bin. Tilt a held pan to drain into the sink, another pan or onto a counter; the cloth clears spills. H restores tasting notes. The physical timer retains its remaining time in saves.
 
 Covered pans travel with their lids. Put carried food down before reusing its utensil. Egg cracking and bun splitting check for space first; eggs lost through the grill leave cooking debris, not inventory items.
 

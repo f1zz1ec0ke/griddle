@@ -2,6 +2,11 @@
 (function(root){
   'use strict';
   const T=root.THREE,P=root.BurgerPhysics,A=root.BurgerAssembly;
+  function clearClip(rec){
+    if(!rec.clip)return;
+    rec.mesh.traverse(o=>{for(const material of Array.isArray(o.material)?o.material:o.material?[o.material]:[])if(material.clippingPlanes?.includes(rec.clip)){material.clippingPlanes=null;material.needsUpdate=true;}});
+    rec.clip=null;
+  }
   function render(r,dt){
     const w=r.world;
     for(const base of w.entities.filter(e=>!e.discarded&&!e.stackRoot&&w.layers(e).length)){
@@ -33,5 +38,5 @@
       if(base.trayCarrier){const plate=r.meshes.get(base.trayCarrier)?.mesh;if(plate){plate.updateWorldMatrix(true,false);base.pos=plate.localToWorld(new T.Vector3(0,.008,0)).toArray();}}
     }
   }
-  root.RealStackView={render};
+  root.RealStackView={render,clearClip};
 })(window);

@@ -13,6 +13,7 @@ const path = require('path');
 const { runScenario, OUT } = require('./helper');
 
 const SCENARIOS = [
+  require('./scenario-real-final.js'),
   require('./scenario-real-craft.js'),
   require('./scenario-real.js'),
   require('./scenario-real-visuals.js'),

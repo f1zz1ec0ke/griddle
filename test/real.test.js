@@ -1,5 +1,27 @@
 const test=require('node:test'),assert=require('node:assert/strict'),{Kitchen}=require('../js/real-model'),P=require('../js/physics');
 const A=require('../js/assembly');
+test('resting changes serving warmth without undoing the recorded doneness',()=>{
+ const k=new Kitchen(),meat=patty(k);meat.food.T.fill(40);meat.food.peakCenter=73;
+ const report=k.taste(meat);assert.match(report.notes.join(' '),/well done/i);assert.match(report.notes.join(' '),/lukewarm/i);assert.doesNotMatch(report.notes.join(' '),/still raw/i);assert.equal(report.temperature,40);
+ const [bottom]=k.slice(k.addIngredient('bunWhole',[1,.96,0]));k.assemble(meat,bottom);const second=patty(k);second.food.T.fill(55);second.food.peakCenter=56;k.assemble(second,meat);
+ const double=k.taste(meat).notes.join(' ');assert.match(double,/Patty 1:.*well done/i);assert.match(double,/Patty 2:.*medium-rare/i);
+});
+test('covered food retains its cheese until the lid is lifted',()=>{
+ const k=new Kitchen(),meat=patty(k),cheese=k.addIngredient('cheese',[0,.96,0]);k.placeFood(meat,'gas');k.addCheese(cheese,meat);k.station('gas').state.lid=true;
+ const other=k.addIngredient('cheese',[0,.96,0]);assert.equal(k.addCheese(other,meat),false);assert.equal(k.peel(meat),null);assert.equal(cheese.cheeseCarrier,meat.id);assert.equal(meat.food.cheeses.length,1);
+ k.station('gas').state.lid=false;assert.equal(k.peel(meat),cheese);assert.ok(Kitchen.restore(k.snapshot()));
+});
+test('an invalid draining destination leaves the source liquid intact',()=>{
+ const k=new Kitchen(),from=k.entities.find(e=>e.panType==='nonstick'),to=k.get(k.station('gas').panId);k.pourInto(from.id,'water',30);k.pourInto(from.id,'canola',10);from.tilt=.8;
+ k.station('gas').state.lid=true;assert.match(k.drain(from,.5,'gas').error,/uncovered/i);
+ k.station('gas').state.lid=false;k.doors.oven=true;k.ovenPan(to);k.doors.oven=false;assert.match(k.drain(from,.5,to.id).error,/Open the oven/);
+ assert.equal(from.pan.water,.03);assert.equal(from.pan.oil,.01);assert.equal(to.pan.water,0);assert.equal(k.spills.length,0);
+});
+test('docking a smoky pan preserves smoke already released into the kitchen',()=>{
+ const k=new Kitchen(),pan=k.entities.find(e=>e.panType==='nonstick'),hob=k.station('gas');k.liftPan(k.get(hob.panId));
+ Object.assign(P.roomAir(pan.parked),{upper:.8,lower:.2});Object.assign(P.roomAir(hob.state),{upper:.1,lower:.05});
+ k.dockPan(pan,'gas');assert.equal(P.roomAir(hob.state).upper,.9);assert.equal(P.roomAir(hob.state).lower,.25);assert.ok(Kitchen.restore(k.snapshot()));
+});
 test('a counter pan accepts cooking, liquids and removable cheese without a hob',()=>{
  const k=new Kitchen(),pan=k.entities.find(e=>e.kind==='pan'&&!e.station),egg=k.addIngredient('egg',[0,.96,0]),p=patty(k);
  assert.equal(k.crackEgg(egg,pan.id,{x:.055,y:0}),null);assert.equal(egg.panCarrier,pan.id);assert.equal(k.owner(egg),pan.parked);

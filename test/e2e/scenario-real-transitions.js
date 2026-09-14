@@ -32,7 +32,7 @@ module.exports={name:'real-transitions',experience:'real',description:'covered c
   check('a full pan rejects cracking before the shell animation',!whole.food&&!r.action&&!r.interaction.shells);p.food.D=diameter;w.detach(p);
   // Build, close, plate and taste through the live input handlers.
   const buns=w.slice(w.addIngredient('bunWhole',[0,.95,-.88]));hold(null);r.paused=false;
-  function click(button){if(button===2)r.toggleGrab();else{r.left=true;r.use();}window.dispatchEvent(new PointerEvent('pointerup',{button,bubbles:true}));for(let i=0;i<30;i++)r.animateHands(.05);r.renderEntities(0);}
+  function click(button){if(button===2)r.toggleGrab();else{r.left=true;r.use();}window.dispatchEvent(new MouseEvent('mouseup',{button,bubbles:true}));for(let i=0;i<30;i++)r.animateHands(.05);r.renderEntities(0);}
   aim(get('spatula'));click(2);aim(p);click(2);aim(buns[0]);click(2);
   check('spatula places the patty onto its bottom bun',p.food.assembly?.length===2&&!get('spatula').payload);
   aim(buns[1]);click(2);aim(p);click(2);check('spatula closes the burger without duplicating its bun',p.food.assembly?.length===3&&buns[1].stackRoot===p.id);

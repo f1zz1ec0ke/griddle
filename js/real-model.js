@@ -48,6 +48,11 @@
     setOvenPower(on){P.setOven(this.station('oven').state,on?this.settings.ovenSetpoint:0);}
     setOvenTemperature(value){this.settings.ovenSetpoint=P.clamp(value,40,250);if(this.station('oven').state.oven.target>0)P.setOven(this.station('oven').state,this.settings.ovenSetpoint);}
     owner(e){return e.parked|| (e.panCarrier?this.get(e.panCarrier).parked:e.station?this.station(e.station).state:this.loose);}
+    accessProblem(e){
+      if((e?.station==='oven'||e?.inOven||e?.panCarrier&&this.get(e.panCarrier)?.inOven)&&!this.doors.oven)return 'Open the oven first.';
+      if(e?.kind!=='pan'&&e?.food&&(e.station||e.panCarrier)&&this.owner(e).lid)return 'Lift the lid first.';
+      return null;
+    }
     addIngredient(kind,pos){
       const e=this.entity(kind,kind,pos);e.temperature=kind==='bunWhole'||kind==='bun'?21:6;
       const cold={tomatoSlice:'tomato',pickleSlice:'pickles',lettuce:'lettuce'}[kind];if(cold)e.coldState={cold,T:e.temperature,age:0};
@@ -113,7 +118,7 @@
       p.whc0=.98-.05*p.work+.08*mixed+.02*surface;p.saltStructure=.3*mixed;
     }
     exposedPatty(e){const stack=e?.food?.assembly;if(e?.kind!=='patty')return null;if(!stack?.length)return e;const top=stack.at(-1);return top.patty?(top.meat?this.entities.find(q=>q.food===top.meat):e):null;}
-    cheeseTarget(e){const target=this.exposedPatty(e),p=target?.food;return p&&['pan','rest'].includes(p.where)&&this.cheeseCount(e)<4&&!this.attachedProbe(e)?target:null;}
+    cheeseTarget(e){const target=this.exposedPatty(e),p=target?.food;return p&&['pan','rest'].includes(p.where)&&!this.accessProblem(target)&&this.cheeseCount(e)<4&&!this.attachedProbe(e)?target:null;}
     addCheese(held,patty){
       const target=this.cheeseTarget(patty);if(held.kind!=='cheese'||held.discarded||held.cheeseCarrier||held.stackRoot||!target)return false;const p=target.food;
       if(p.where==='pan'){if(!P.addCheese(this.owner(target),p))return false;}
@@ -206,7 +211,7 @@
     dockPan(e,id){
       const st=this.station(id);if(!st||st.panId||['charcoal','oven'].includes(id))return 'That station cannot take this pan.';
       if(e.station)this.liftPan(e);e.inOven=false;st.panId=e.id;st.state.pan=e.pan;e.station=id;e.held=false;e.pos=[st.x,.93,st.z];
-      if(e.parked){st.state.lid=e.parked.lid;st.state.patties=e.parked.patties;st.state.items=e.parked.items;for(const n of e.food){const q=this.get(n);if(q){q.station=id;q.panCarrier=null;}}if(e.lidId){const lid=this.get(e.lidId);lid.station=id;lid.panCarrier=null;}e.parked=null;}return null;
+      if(e.parked){const room=P.roomAir(st.state),released=P.roomAir(e.parked);room.upper+=released.upper;room.lower+=released.lower;st.state.lid=e.parked.lid;st.state.patties=e.parked.patties;st.state.items=e.parked.items;for(const n of e.food){const q=this.get(n);if(q){q.station=id;q.panCarrier=null;}}if(e.lidId){const lid=this.get(e.lidId);lid.station=id;lid.panCarrier=null;}e.parked=null;}return null;
     }
     trayPlacement(e,tray){
       if(!['tray','plate'].includes(tray.kind)||!e.food&&!(tray.kind==='plate'&&(e.coldState||e.sliceState||e.kind==='cheese'))||e.kind==='pan'||e.stackRoot||e.cheeseCarrier||tray.station||(this.layers(e).length&&tray.kind!=='plate'))return null;

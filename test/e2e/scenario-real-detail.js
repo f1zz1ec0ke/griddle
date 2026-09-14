@@ -9,7 +9,7 @@ module.exports={name:'real-detail',experience:'real',description:'preparation, p
   function hover(e,point){r.hover={data:e?{type:'entity',entity:e.id}:{type:'board'},point:new T.Vector3(...point)};}
   function finish(){for(let i=0;i<30;i++){if(r.interaction.probe)r.move(.05);r.animateHands(.05);}r.renderEntities(0);}
   function left(){r.left=true;r.use();}
-  function up(){window.dispatchEvent(new PointerEvent('pointerup',{button:0,bubbles:true}));}
+  function up(){window.dispatchEvent(new MouseEvent('mouseup',{button:0,bubbles:true}));}
   function wheel(deltaY){r.canvas.dispatchEvent(new WheelEvent('wheel',{deltaY,bubbles:true,cancelable:true}));}
   r.paused=false;
   w.bowl={mass:150,salt:0,work:0,fatFrac:.1};w.scoop(2);hold(null);hover(null,[0,.96,-.88]);wheel(-1);left();finish();up();

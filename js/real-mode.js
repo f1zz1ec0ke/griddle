@@ -168,8 +168,11 @@
       window.addEventListener('blur',()=>{if(this.active)this.pause();});document.addEventListener('visibilitychange',()=>{if(document.hidden&&this.active)this.pause();});
       document.addEventListener('pointerlockchange',()=>{if(this.active&&document.pointerLockElement!==this.canvas)this.pause();});
       this.canvas.addEventListener('pointermove',e=>{if(!gate(e)||this.paused)return;e.stopImmediatePropagation();if(this.interaction.drag(e))return;if(this.left&&this.grabControl){this.turn(this.grabControl,e.movementX);return;}const sensitivity=.0022*this.presentation.preferences.sensitivity;this.world.player.yaw-=e.movementX*sensitivity;this.world.player.pitch=clamp(this.world.player.pitch-e.movementY*sensitivity,-1.43,1.35);},true);
-      this.canvas.addEventListener('pointerdown',e=>{if(!gate(e))return;e.preventDefault();e.stopImmediatePropagation();if(this.paused)return;this.hover=this.focus();if(e.button===2)this.toggleGrab();else if(e.button===0){this.left=true;this.use();}},true);
-      window.addEventListener('pointerup',e=>{if(gate(e)){e.stopImmediatePropagation();if(e.button===0){this.left=false;this.interaction.releaseProbe();this.grabControl=null;}}},true);
+      // Mouse events report each button in a chord; pointerdown/up only report the first/last.
+      this.canvas.addEventListener('pointerdown',e=>{if(gate(e))e.stopImmediatePropagation();},true);
+      window.addEventListener('pointerup',e=>{if(gate(e))e.stopImmediatePropagation();},true);
+      this.canvas.addEventListener('mousedown',e=>{if(!gate(e))return;e.preventDefault();e.stopImmediatePropagation();if(this.paused)return;this.hover=this.focus();if(e.button===2)this.toggleGrab();else if(e.button===0){this.left=true;this.use();}},true);
+      window.addEventListener('mouseup',e=>{if(gate(e)){e.stopImmediatePropagation();if(e.button===0)this.releaseHold();}},true);
       this.canvas.addEventListener('contextmenu',e=>{if(gate(e)){e.preventDefault();e.stopImmediatePropagation();}},true);
       this.canvas.addEventListener('wheel',e=>{if(gate(e)){e.preventDefault();e.stopImmediatePropagation();if(!this.paused)this.interaction.wheel(e);}},{capture:true,passive:false});
       window.addEventListener('resize',()=>this.resize());
@@ -180,7 +183,8 @@
       this.started=true;this.active=true;document.body.dataset.experience='real';$('mode-choice').hidden=true;$('real-hud').hidden=false;this.resize();this.move(0);this.pause();this.last=performance.now();if(!this.running){this.running=true;requestAnimationFrame(t=>this.frame(t));}
     }
     resume(){this.canvas.requestPointerLock()?.catch(()=>{this.pause();this.toast('Click Resume again to let the mouse control your view.');});if(this.presentation.preferences.sound)this.audio.start();this.paused=false;$('real-pause').hidden=true;}
-    pause(){this.renderPending=true;this.paused=true;this.left=false;this.grabControl=null;this.jumpQueued=false;this.keys.clear();this.walkX=this.walkZ=0;this.activity=null;this.audio.stop();this.interaction.probe=null;if(document.pointerLockElement===this.canvas)document.exitPointerLock();if(this.active){$('real-pause').hidden=false;this.presentation.settingLabels();$('real-resume').focus();}this.save();}
+    releaseHold(parkProbe=true){this.left=false;this.grabControl=null;this.activity=null;if(parkProbe)this.interaction.releaseProbe();else this.interaction.probe=null;this.interaction.techniques.end();}
+    pause(){this.renderPending=true;this.paused=true;this.releaseHold(false);this.jumpQueued=false;this.keys.clear();this.walkX=this.walkZ=0;this.audio.stop();if(document.pointerLockElement===this.canvas)document.exitPointerLock();if(this.active){$('real-pause').hidden=false;this.presentation.settingLabels();$('real-resume').focus();}this.save();}
     save(){try{this.world.heldId=this.held;localStorage.setItem('griddle.real.v1',JSON.stringify(this.world.snapshot()));$('real-save-status').textContent='Kitchen saved.';}catch(e){$('real-save-status').textContent='Save unavailable—keep this tab open.';}}
     load(data){
       const next=root.RealKitchen.Kitchen.restore(data);this.contact.reset();this.interaction.reset();this.presentation.reset();for(const r of this.meshes.values()){r.oilView?.oilTexture.dispose();if(r.view){r.mesh.parent?.remove(r.mesh);r.view.dispose();}else this.dispose(r.mesh);}this.meshes.clear();this.world=next;this.held=next.heldId||null;this.ground=0;this.velocityY=0;this.action=null;this.left=false;this.grabControl=null;this.keys.clear();this.walkX=this.walkZ=0;this.acc=0;
@@ -217,9 +221,9 @@
       if(layers[0]?.item?.half==='bottom'&&layers.at(-1)?.item?.half==='top')return Math.max(itemHeat(layers[0].item),itemHeat(layers.at(-1).item))>55;
       return Math.max(P.centerT(p),P.layerMean(p,p.T,0),P.layerMean(p,p.T,p.Nz-1))>55;
     }
-    blocked(e){if((e?.station==='oven'||e?.inOven||e?.panCarrier&&this.world.get(e.panCarrier)?.inOven)&&!this.world.doors.oven)return 'Open the oven first.';if(e?.kind!=='pan'&&e?.food&&(e.station||e.panCarrier)&&this.world.owner(e).lid)return 'Lift the lid first.';return null;}
+    blocked(e){return this.world.accessProblem(e);}
     toggleGrab(){
-      if(this.action)return;this.interaction.probe=null;const h=this.heldEntity(),t=this.hover;
+      if(this.action)return;this.releaseHold(false);const h=this.heldEntity(),t=this.hover;
       if(h){if(!t){this.toast('Look at a counter, tool rest or cooking surface.');return;}
         const food=this.foodAt(t),pan=t.data.type==='station'?this.world.get(this.world.station(t.data.id).panId):food,picked=h.kind==='glove'?pan:food;
         if(!h.payload&&picked&&((h.kind==='glove'&&['pan','tray','ashpan'].includes(picked.kind))||(h.kind==='spatula'&&['patty','egg','bun','cheese'].includes(picked.kind))||(h.kind==='tongs'&&picked.kind==='bacon')||(h.kind==='spoon'&&picked.kind==='onions'))){if(picked.kind!=='pan'&&picked.station&&this.world.owner(picked).lid){this.toast('Lift the lid first.');return;}this.grab(picked,h);return;}
@@ -281,7 +285,7 @@
         if(h?.kind==='spoon'||h?.kind==='salt'||!h)return;
         this.toast('Add mince and salt, mix with the spoon, or hold left click with an empty hand to portion.');return;
       }
-      if(h?.kind==='knife'&&e){if(e.station||e.held){this.toast('Put it on the chopping board first.');return;}if(e.kind==='patty'){if(this.world.attachedProbe(e)){this.toast('Remove the probe before cutting.');return;}this.animate('slice',()=>{P.peek(this.world.owner(e),e.food);e.cut=true;this.toast(P.donenessOf(P.centerT(e.food)).label+' · '+Math.round(P.centerT(e.food))+' °C at the centre');});}else this.animate('slice',()=>this.world.cut(e,this.world.settings.sliceMm,this.interaction.supportAt(e.pos)),.9);return;}
+      if(h?.kind==='knife'&&e){if(e.station||e.panCarrier||e.held){this.toast('Put it on the chopping board first.');return;}if(e.kind==='patty'){if(this.world.attachedProbe(e)){this.toast('Remove the probe before cutting.');return;}this.animate('slice',()=>{P.peek(this.world.owner(e),e.food);e.cut=true;this.toast(P.donenessOf(Math.max(e.food.peakCenter,P.centerT(e.food))).label+' · '+Math.round(P.centerT(e.food))+' °C at the centre');});}else this.animate('slice',()=>this.world.cut(e,this.world.settings.sliceMm,this.interaction.supportAt(e.pos)),.9);return;}
       if(h&&['ketchup','mayo','mustard'].includes(h.kind)&&e){const error=this.world.assemblyProblem(h,e);if(error){this.toast(error);return;}this.animate('pour',()=>this.world.assemble(h,e));return;}
       if(h?.kind==='glove'){
         const pan=d.type==='station'?this.world.get(this.world.station(d.id).panId):e;
@@ -379,6 +383,7 @@
           root.BurgerRender.Viewport.prototype._updateOil.call(rec.oilView,{pan:e.pan,t:this.world.time});
         }
         const m=rec.mesh;m.visible=true;
+        if(rec.clip&&(!e.stackRoot||!this.world.rootOf(e)?.cut))root.RealStackView.clearClip(rec);
         if(!e.stackRoot&&!this.world.layers(e).length){rec.stackOwner=null;rec.stackLift=null;}
         if(e.fall&&!e.held){if(e.slide){e.pos[0]+=e.slide[0]*dt*.9;e.pos[2]+=e.slide[1]*dt*.9;}e.fall+=9.8*dt;e.pos[1]-=e.fall*dt;m.rotation.z=Math.min(.7,m.rotation.z+dt*2);if(e.pos[1]<.035){e.pos[1]=.035;e.fall=0;e.slide=null;if(e.kind==='pan'&&e.parked){e.tilt=.95;this.world.drain(e,1,null,[e.pos[0],.007,e.pos[2]]);}}}
         if(rec.view){const where=e.panCarrier?'pan':'rest';if(e.kind==='patty'){if(rec.view.cutaway!==!!e.cut)rec.view.setCutaway(!!e.cut,0);rec.view.update(this.world.owner(e),dt,where,{x:e.pos[0],y:e.pos[1],z:e.pos[2],lift:e.panCarrier?e.pos[1]-this.looseView.panFloorY:0},'stove');}else rec.view.update(this.world.owner(e),dt,where,{x:e.pos[0],y:e.pos[1],z:e.pos[2]},'stove');}
