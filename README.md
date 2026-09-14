@@ -50,4 +50,8 @@ npm run perf      # simulation performance
 
 ## You got a loicense for that burger mate?
 
-You may not sell this or repurpose/reuse it in any way with the intention of selling it. Beyond that I don’t care.
+Copyright © 2026 f1zz1ec0ke. **All rights reserved.**
+
+You may read the source and play the unmodified game, locally or on the official site. Any other copying, modification, redistribution, sale, sublicensing or reuse of Griddle's original code or assets requires prior written permission from the copyright holder.
+
+Third-party components, including Three.js, retain their own licenses. These terms do not restrict rights granted by law, [GitHub's Terms of Service](https://docs.github.com/en/site-policy/github-terms/github-terms-of-service#d-user-generated-content) or licenses previously granted for earlier versions.
